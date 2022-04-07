@@ -1,0 +1,5 @@
+build/
+data/
+lib/
+*.swp
+*.rdbg
