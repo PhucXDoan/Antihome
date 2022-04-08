@@ -75,7 +75,7 @@ int main(int, char**)
 	}
 	DEFER { Mix_CloseAudio(); };
 
-	SDL_Window* window = SDL_CreateWindow("Antihome", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, static_cast<i32>(WIN_DIM.x), static_cast<i32>(WIN_DIM.y), 0);
+	SDL_Window* window = SDL_CreateWindow("Antihome", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, WIN_DIM.x, WIN_DIM.y, 0);
 	DEFER { SDL_DestroyWindow(window); };
 	if (!window)
 	{
