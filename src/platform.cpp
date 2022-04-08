@@ -84,24 +84,10 @@ int main(int, char**)
 		exit(-1);
 	}
 
-	SDL_Renderer* window_renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
-	DEFER { SDL_DestroyRenderer(window_renderer); };
-	if (!window_renderer)
-	{
-		DEBUG_printf("SDL_Error: '%s'\n", SDL_GetError());
-		ASSERT(false);
-		exit(-1);
-	}
-
-	if (SDL_SetRenderDrawBlendMode(window_renderer, SDL_BLENDMODE_BLEND))
-	{
-		DEBUG_printf("SDL_Error: '%s'\n", SDL_GetError());
-		ASSERT(false);
-		exit(-1);
-	}
+	SDL_Surface* surface = SDL_GetWindowSurface(window);
 
 	Platform platform        = {};
-	platform.renderer        = window_renderer;
+	platform.surface         = surface;
 	platform.memory_capacity = MEBIBYTES_OF(1);
 	platform.memory          = reinterpret_cast<byte*>(malloc(platform.memory_capacity));
 	DEFER { free(platform.memory); };
@@ -202,6 +188,7 @@ int main(int, char**)
 			while (frame_time >= SECONDS_PER_UPDATE);
 
 			render(&platform);
+			SDL_UpdateWindowSurface(window);
 		}
 
 		SDL_Delay(1);

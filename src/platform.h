@@ -4,7 +4,7 @@
 #include <SDL_FontCache.h>
 #include <SDL_Mixer.h>
 
-global constexpr vf2 WIN_DIM            = { 960.0f, 720.0f };
+global constexpr vf2 WIN_DIM            = { 800.0f, 600.0f };
 global constexpr f32 SECONDS_PER_UPDATE = 1.0f / 30.0f;
 
 enum_loose (Input, u32)
@@ -51,10 +51,10 @@ enum struct UpdateCode : u32
 
 struct Platform
 {
-	SDL_Renderer* renderer;
-	memsize       memory_capacity;
-	byte*         memory;
-	InputState    inputs[Input::CAPACITY];
+	SDL_Surface* surface;
+	memsize      memory_capacity;
+	byte*        memory;
+	InputState   inputs[Input::CAPACITY];
 };
 
 #define PROTOTYPE_INITIALIZE(NAME) void NAME(Platform* platform)
