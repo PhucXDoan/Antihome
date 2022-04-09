@@ -145,10 +145,6 @@ internal TYPE* memory_arena_push(MemoryArena* arena, i32 count = 1)
 // Math.
 //
 
-#define vf2(X, Y      ) (vf2 { static_cast<f32>(X), static_cast<f32>(Y)                                           })
-#define vf3(X, Y, Z   ) (vf2 { static_cast<f32>(X), static_cast<f32>(Y), static_cast<f32>(Z)                      })
-#define vf4(X, Y, Z, W) (vf2 { static_cast<f32>(X), static_cast<f32>(Y), static_cast<f32>(Z), static_cast<f32>(W) })
-
 struct vf2 { f32 x; f32 y;               };
 struct vf3 { f32 x; f32 y; f32 z;        };
 struct vf4 { f32 x; f32 y; f32 z; f32 w; };

@@ -101,19 +101,46 @@ internal bool32 ray_cast_to_wall(f32* scalar, f32* portion, vf2 position, vf2 ra
 	return 0.0f <= *portion && *portion <= 1.0f;
 }
 
-internal void set_pixel(SDL_Surface* surface, i32 x, i32 y, vf4 color)
+internal vf4 to_color(SDL_Surface* surface, u32 pixel)
+{
+	return
+		vf4 {
+			static_cast<f32>((pixel & surface->format->Rmask) << __lzcnt(surface->format->Rmask) >> 24),
+			static_cast<f32>((pixel & surface->format->Gmask) << __lzcnt(surface->format->Gmask) >> 24),
+			static_cast<f32>((pixel & surface->format->Bmask) << __lzcnt(surface->format->Bmask) >> 24),
+			static_cast<f32>((pixel & surface->format->Amask) << __lzcnt(surface->format->Amask) >> 24)
+		} / 255.0f;
+}
+
+internal u32 to_pixel(SDL_Surface* surface, vf4 color)
+{
+	return
+		(static_cast<u32>(static_cast<u8>(color.x * 255.0f)) << 24 >> __lzcnt(surface->format->Rmask)) |
+		(static_cast<u32>(static_cast<u8>(color.y * 255.0f)) << 24 >> __lzcnt(surface->format->Gmask)) |
+		(static_cast<u32>(static_cast<u8>(color.z * 255.0f)) << 24 >> __lzcnt(surface->format->Bmask)) |
+		(static_cast<u32>(static_cast<u8>(color.w * 255.0f)) << 24 >> __lzcnt(surface->format->Amask));
+}
+
+internal vf4 get_color(SDL_Surface* surface, i32 x, i32 y)
 {
 	ASSERT(IN_RANGE(x, 0, surface->w) && IN_RANGE(y, 0, surface->h));
-	*reinterpret_cast<u32*>(reinterpret_cast<u8*>(surface->pixels) + y * surface->pitch + x * surface->format->BytesPerPixel) =
-		(static_cast<u32>(static_cast<u8>(color.w * 255.0f)) << 24) |
-		(static_cast<u32>(static_cast<u8>(color.z * 255.0f)) << 16) |
-		(static_cast<u32>(static_cast<u8>(color.y * 255.0f)) <<  8) |
-		(static_cast<u32>(static_cast<u8>(color.x * 255.0f)) <<  0);
+	return to_color(surface, *reinterpret_cast<u32*>(reinterpret_cast<u8*>(surface->pixels) + (surface->h - 1 - y) * surface->pitch + x * surface->format->BytesPerPixel));
+}
+
+internal void set_color(SDL_Surface* surface, i32 x, i32 y, vf4 color)
+{
+	ASSERT(IN_RANGE(x, 0, surface->w) && IN_RANGE(y, 0, surface->h));
+	*reinterpret_cast<u32*>(reinterpret_cast<u8*>(surface->pixels) + (surface->h - 1 - y) * surface->pitch + x * surface->format->BytesPerPixel) = to_pixel(surface, color);
+}
+
+internal vf4 get_sample(SDL_Surface* surface, vf2 uv)
+{
+	return get_color(surface, static_cast<i32>(surface->w * uv.x), static_cast<i32>(surface->h * uv.y));
 }
 
 internal void fill_rect(SDL_Surface* surface, vf2 position, vf2 dimensions, vf4 color)
 {
-	SDL_Rect rect = { static_cast<i32>(position.x), static_cast<i32>(surface->h - 1 - position.y - dimensions.y), static_cast<i32>(dimensions.x), static_cast<i32>(dimensions.y) };
+	SDL_Rect rect = { static_cast<i32>(position.x), static_cast<i32>(surface->h - position.y - dimensions.y), static_cast<i32>(dimensions.x), static_cast<i32>(dimensions.y) };
 	SDL_FillRect
 	(
 		surface,

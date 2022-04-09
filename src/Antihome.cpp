@@ -13,6 +13,8 @@ struct State
 	f32          lucia_angle_velocity;
 	f32          lucia_angle;
 	f32          lucia_fov;
+
+	SDL_Surface* wall;
 };
 
 extern "C" PROTOTYPE_INITIALIZE(initialize)
@@ -44,6 +46,15 @@ extern "C" PROTOTYPE_BOOT_UP(boot_up)
 			0x00FF0000,
 			0xFF000000
 		);
+
+	{
+		SDL_Surface* bmp = SDL_LoadBMP(DATA_DIR "wall1.bmp");
+		ASSERT(bmp);
+		DEFER { SDL_FreeSurface(bmp); };
+
+		state->wall = SDL_ConvertSurfaceFormat(bmp, SDL_PIXELFORMAT_RGBA8888, 0);
+		ASSERT(state->wall);
+	}
 }
 
 extern "C" PROTOTYPE_BOOT_DOWN(boot_down)
@@ -51,6 +62,7 @@ extern "C" PROTOTYPE_BOOT_DOWN(boot_down)
 	ASSERT(sizeof(State) <= platform->memory_capacity);
 	State* state = reinterpret_cast<State*>(platform->memory);
 
+	SDL_FreeSurface(state->wall);
 	SDL_FreeSurface(state->view);
 }
 
@@ -100,48 +112,52 @@ extern "C" PROTOTYPE_RENDER(render)
 
 	constexpr vf4 BG_COLOR = { 0.1f, 0.2f, 0.3f, 1.0f };
 
-	fill_rect(platform->surface, { 0.0f, 0.0f }, WIN_DIM, { 0.0f, 0.0f, 0.0f, 1.0f });
+	fill_rect(platform->surface, { 0.0f, 0.0f }, WIN_DIM, { 0.1f, 0.1f, 0.1f, 1.0f });
 	fill_rect(state->view, { 0.0f, 0.0f }, GAME_VIEW_RESOLUTION, BG_COLOR);
 
 	constexpr i32 GAME_VIEW_PADDING = 10;
 
 	FOR_RANGE(x, GAME_VIEW_RESOLUTION.x)
 	{
-		f32 angle_offset  = -(static_cast<f32>(x) / GAME_VIEW_RESOLUTION.x - 0.5f) * state->lucia_fov;
-		vf2 ray_direction = { -sinf(state->lucia_angle + angle_offset), cosf(state->lucia_angle + angle_offset) };
-		vf4 color         = { 0.0f, 0.0f, 0.0f, 0.0f };
-
-		f32 best_scalar = INFINITY;
-		f32 best_portion;
-		f32 scalar;
-		f32 portion;
-
-		if (ray_cast_to_wall(&scalar, &portion, state->lucia_position, ray_direction, { -1.0f, 3.0f }, { 1.0f, 3.0f }) && scalar < best_scalar)
+		f32    angle_offset  = -(static_cast<f32>(x) / GAME_VIEW_RESOLUTION.x - 0.5f) * state->lucia_fov;
+		vf2    ray_direction = { -sinf(state->lucia_angle + angle_offset), cosf(state->lucia_angle + angle_offset) };
+		bool32 intersected   = false;
+		f32    scalar        = INFINITY;
+		f32    portion       = 0.0f;
 		{
-			color        = { 1.0f, 0.0f, 0.0f, 1.0f };
-			best_scalar  = scalar;
-			best_portion = portion;
-		}
-		if (ray_cast_to_wall(&scalar, &portion, state->lucia_position, ray_direction, { -1.0f, 4.0f }, { 1.0f, 4.0f }) && scalar < best_scalar)
-		{
-			color        = { 0.0f, 1.0f, 0.0f, 1.0f };
-			best_scalar  = scalar;
-			best_portion = portion;
-		}
-		if (ray_cast_to_wall(&scalar, &portion, state->lucia_position, ray_direction, { 1.0f, -4.0f }, { 1.0f, 4.0f }) && scalar < best_scalar)
-		{
-			color        = { 0.0f, 0.0f, 1.0f, 1.0f };
-			best_scalar  = scalar;
-			best_portion = portion;
-		}
-
-		if (best_scalar != INFINITY)
-		{
-			i32 height = static_cast<i32>(100.0f * state->lucia_fov / (best_scalar + 0.01f));
-
-			FOR_RANGE(y, MAXIMUM(static_cast<i32>((GAME_VIEW_RESOLUTION.y - height) / 2.0f), 0), MINIMUM(static_cast<i32>((GAME_VIEW_RESOLUTION.y - height) / 2.0f) + height, GAME_VIEW_RESOLUTION.y - 1))
+			f32 test_scalar  = INFINITY;
+			f32 test_portion = 0.0f;
+			if (ray_cast_to_wall(&test_scalar, &test_portion, state->lucia_position, ray_direction, { -1.0f, 3.0f }, { 1.0f, 3.0f }) && (!intersected || test_scalar < scalar))
 			{
-				set_pixel(state->view, x, y, color);
+				intersected = true;
+				scalar      = test_scalar;
+				portion     = test_portion;
+			}
+			if (ray_cast_to_wall(&test_scalar, &test_portion, state->lucia_position, ray_direction, { -1.0f, 4.0f }, { 1.0f, 4.0f }) && (!intersected || test_scalar < scalar))
+			{
+				intersected = true;
+				scalar      = test_scalar;
+				portion     = test_portion;
+			}
+			if (ray_cast_to_wall(&test_scalar, &test_portion, state->lucia_position, ray_direction, { 1.0f, -4.0f }, { 1.0f, 4.0f }) && (!intersected || test_scalar < scalar))
+			{
+				intersected = true;
+				scalar      = test_scalar;
+				portion     = test_portion;
+			}
+		}
+
+		if (intersected)
+		{
+			i32 height = static_cast<i32>(100.0f * state->lucia_fov / (scalar + 0.01f));
+
+			FOR_RANGE(i, height)
+			{
+				i32 y = static_cast<i32>((GAME_VIEW_RESOLUTION.y - height) / 2.0f) + i;
+				if (IN_RANGE(y, 0, GAME_VIEW_RESOLUTION.y))
+				{
+					set_color(state->view, x, y, get_sample(state->wall, { portion, static_cast<f32>(i) / height }));
+				}
 			}
 		}
 	}
