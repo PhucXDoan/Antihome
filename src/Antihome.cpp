@@ -1,10 +1,11 @@
 #include "unified.h"
 #include "platform.h"
 
-#define PRESSED(INPUT) (platform->inputs[+(INPUT)].curr && !platform->inputs[+(INPUT)].prev)
-#define HELD(INPUT)    (platform->inputs[+(INPUT)].curr)
+#define PRESSED(INPUT)  (platform->inputs[+(INPUT)].curr && !platform->inputs[+(INPUT)].prev)
+#define HOLDING(INPUT)  (platform->inputs[+(INPUT)].curr)
+#define RELEASED(INPUT) (!platform->inputs[+(INPUT)].curr && platform->inputs[+(INPUT)].prev)
 
-constexpr vi2 VIEW_RESOLUTION = { WIN_DIM.x / 10, WIN_DIM.x / 18 };
+constexpr vf2 VIEW_RESOLUTION = { WIN_DIM.x / 2, WIN_DIM.x / 4 };
 
 // @TODO@ Use an actual RNG lol.
 // @NOTE@ Is in interval [0, 65536).
@@ -44,6 +45,24 @@ global constexpr u16 RAND_TABLE[] =
 		0xda05, 0xd0df, 0x0cbf, 0x2efe, 0x38aa, 0xbd2d, 0x1a53, 0x0f2b
 	};
 
+struct State
+{
+	u32          seed;
+	SDL_Surface* view;
+	vf2          lucia_position;
+	f32          lucia_angle;
+};
+
+internal f32 norm(vf2 v)
+{
+	return sqrtf(v.x * v.x + v.y * v.y);
+}
+
+internal vf2 normalize(vf2 v)
+{
+	return v / norm(v);
+}
+
 internal f32 rng(u32* seed)
 {
 	return RAND_TABLE[++*seed % ARRAY_CAPACITY(RAND_TABLE)] / 65536.0f;
@@ -61,6 +80,7 @@ internal f32 rng(u32* seed, f32 start, f32 end)
 
 internal void set_pixel(SDL_Surface* surface, i32 x, i32 y, vf4 color)
 {
+	ASSERT(IN_RANGE(x, 0, surface->w) && IN_RANGE(y, 0, surface->h));
 	*reinterpret_cast<u32*>(reinterpret_cast<u8*>(surface->pixels) + y * surface->pitch + x * surface->format->BytesPerPixel) =
 		(static_cast<u32>(static_cast<u8>(color.w * 255.0f)) << 24) |
 		(static_cast<u32>(static_cast<u8>(color.z * 255.0f)) << 16) |
@@ -68,11 +88,48 @@ internal void set_pixel(SDL_Surface* surface, i32 x, i32 y, vf4 color)
 		(static_cast<u32>(static_cast<u8>(color.x * 255.0f)) <<  0);
 }
 
-struct State
+internal void fill_rect(SDL_Surface* surface, vf2 position, vf2 dimensions, vf4 color)
 {
-	u32          seed;
-	SDL_Surface* view;
-};
+	SDL_Rect rect = { static_cast<i32>(position.x), static_cast<i32>(surface->h - 1 - position.y - dimensions.y), static_cast<i32>(dimensions.x), static_cast<i32>(dimensions.y) };
+	SDL_FillRect
+	(
+		surface,
+		&rect,
+		(static_cast<u32>(static_cast<u8>(color.w * 255.0f)) << 24) |
+		(static_cast<u32>(static_cast<u8>(color.z * 255.0f)) << 16) |
+		(static_cast<u32>(static_cast<u8>(color.y * 255.0f)) <<  8) |
+		(static_cast<u32>(static_cast<u8>(color.x * 255.0f)) <<  0)
+	);
+}
+
+internal bool32 ray_cast_to_wall(f32* scalar, f32* portion, vf2 position, vf2 ray, vf2 start, vf2 end)
+{
+	f32 scalar_denom = (start.x - end.x) * ray.y - (start.y - end.y) * ray.x;
+
+	if (fabs(scalar_denom) < 0.01f)
+	{
+		return false;
+	}
+
+	*scalar = ((start.x - end.x) * (start.y - position.y) - (start.y - end.y) * (start.x - position.x)) / scalar_denom;
+
+	if (*scalar < 0.0f)
+	{
+		return false;
+	}
+
+	f32 portion_c     = start.x * ray.y - start.y * ray.x;
+	f32 portion_denom = portion_c + ray.x * end.y - ray.y * end.x;
+
+	if (fabs(portion_denom) < 0.01f)
+	{
+		return false;
+	}
+
+	*portion = (portion_c + ray.x * position.y - ray.y * position.x) / portion_denom;
+
+	return 0.0f <= *portion && *portion <= 1.0f;
+}
 
 extern "C" PROTOTYPE_INITIALIZE(initialize)
 {
@@ -92,22 +149,14 @@ extern "C" PROTOTYPE_BOOT_UP(boot_up)
 		SDL_CreateRGBSurface
 		(
 			0,
-			VIEW_RESOLUTION.x,
-			VIEW_RESOLUTION.y,
+			static_cast<i32>(VIEW_RESOLUTION.x),
+			static_cast<i32>(VIEW_RESOLUTION.y),
 			32,
 			0x000000FF,
 			0x0000FF00,
 			0x00FF0000,
 			0xFF000000
 		);
-
-	FOR_RANGE(y, VIEW_RESOLUTION.y)
-	{
-		FOR_RANGE(x, VIEW_RESOLUTION.x)
-		{
-			set_pixel(state->view, x, y, { rng(&state->seed), rng(&state->seed), rng(&state->seed), 1.0f });
-		}
-	}
 }
 
 extern "C" PROTOTYPE_BOOT_DOWN(boot_down)
@@ -122,14 +171,34 @@ extern "C" PROTOTYPE_UPDATE(update)
 {
 	State* state = reinterpret_cast<State*>(platform->memory);
 
-	if (PRESSED(Input::q))
+	constexpr f32 LUCIA_SPEED = 0.7f;
+
+	if (HOLDING(Input::a))
 	{
-		DEBUG_printf("q\n");
+		state->lucia_position.x -= LUCIA_SPEED * SECONDS_PER_UPDATE;
+	}
+	if (HOLDING(Input::d))
+	{
+		state->lucia_position.x += LUCIA_SPEED * SECONDS_PER_UPDATE;
+	}
+	if (HOLDING(Input::s))
+	{
+		state->lucia_position.y -= LUCIA_SPEED * SECONDS_PER_UPDATE;
+	}
+	if (HOLDING(Input::w))
+	{
+		state->lucia_position.y += LUCIA_SPEED * SECONDS_PER_UPDATE;
 	}
 
-	if (HELD(Input::e))
+	constexpr f32 LUCIA_TURN_SPEED = 0.4f;
+
+	if (HOLDING(Input::left))
 	{
-		DEBUG_printf("e\n");
+		state->lucia_angle -= LUCIA_TURN_SPEED * SECONDS_PER_UPDATE;
+	}
+	if (HOLDING(Input::right))
+	{
+		state->lucia_angle += LUCIA_TURN_SPEED * SECONDS_PER_UPDATE;
 	}
 
 	return UpdateCode::resume;
@@ -139,10 +208,31 @@ extern "C" PROTOTYPE_RENDER(render)
 {
 	State* state = reinterpret_cast<State*>(platform->memory);
 
-	SDL_FillRect(platform->surface, 0, 0);
+	fill_rect(platform->surface, { 0.0f, 0.0f }, WIN_DIM, { 0.0f, 0.0f, 0.0f, 1.0f });
+	fill_rect(state->view, { 0.0f, 0.0f }, VIEW_RESOLUTION, { 0.1f, 0.2f, 0.3f, 1.0f });
 
 	constexpr i32 VIEW_PADDING = 10;
 
-	SDL_Rect dst = { VIEW_PADDING, VIEW_PADDING, WIN_DIM.x - VIEW_PADDING * 2, (WIN_DIM.x - VIEW_PADDING * 2) * VIEW_RESOLUTION.y / VIEW_RESOLUTION.x };
+	FOR_RANGE(x, VIEW_RESOLUTION.x)
+	{
+		f32 angle_offset = static_cast<f32>(x) / VIEW_RESOLUTION.x - 0.5f;
+		f32 scalar;
+		f32 portion;
+		if (ray_cast_to_wall(&scalar, &portion, state->lucia_position, { cosf(state->lucia_angle + angle_offset), sinf(state->lucia_angle + angle_offset) }, { 3.0f, -1.0f }, { 3.0f, 1.0f }))
+		{
+			FOR_RANGE(i, 0, static_cast<i32>(75.0f / (scalar + 1.0f)))
+			{
+				set_pixel(state->view, x, static_cast<i32>(VIEW_RESOLUTION.y / 2.0f) - i, { 1.0f, 1.0f, 1.0f, 1.0f });
+				set_pixel(state->view, x, static_cast<i32>(VIEW_RESOLUTION.y / 2.0f) + i, { 1.0f, 1.0f, 1.0f, 1.0f });
+			}
+		}
+		else
+		{
+			set_pixel(state->view, x, static_cast<i32>(VIEW_RESOLUTION.y / 2.0f), { 0.0f, 0.0f, 0.0f, 1.0f });
+		}
+
+	}
+
+	SDL_Rect dst = { static_cast<i32>(VIEW_PADDING), static_cast<i32>(VIEW_PADDING), static_cast<i32>(WIN_DIM.x - VIEW_PADDING * 2), static_cast<i32>((WIN_DIM.x - VIEW_PADDING * 2) * VIEW_RESOLUTION.y / VIEW_RESOLUTION.x) };
 	SDL_BlitScaled(state->view, 0, platform->surface, &dst);
 }
