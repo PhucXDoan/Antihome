@@ -5,7 +5,7 @@
 #include <SDL_Mixer.h>
 
 global constexpr vf2 WIN_DIM            = { 800, 600 }; // @TODO@ WTF is going on with SDL and not making an accurate window of these dimensions?
-global constexpr f32 SECONDS_PER_UPDATE = 1.0f / 30.0f;
+global constexpr f32 SECONDS_PER_UPDATE = 1.0f / 24.0f;
 
 enum_loose (Input, u32)
 {
