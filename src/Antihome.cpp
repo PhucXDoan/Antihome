@@ -131,6 +131,11 @@ internal bool32 ray_cast_to_wall(f32* scalar, f32* portion, vf2 position, vf2 ra
 	return 0.0f <= *portion && *portion <= 1.0f;
 }
 
+internal vf2 rotate(vf2 v, f32 angle)
+{
+	return { v.x * cosf(angle) - v.y * sinf(angle), v.x * sinf(angle) + v.y * cosf(angle) };
+}
+
 extern "C" PROTOTYPE_INITIALIZE(initialize)
 {
 	ASSERT(sizeof(State) <= platform->memory_capacity);
@@ -171,34 +176,39 @@ extern "C" PROTOTYPE_UPDATE(update)
 {
 	State* state = reinterpret_cast<State*>(platform->memory);
 
-	constexpr f32 LUCIA_SPEED = 0.7f;
+	constexpr f32 LUCIA_TURN_SPEED = 1.8f;
 
-	if (HOLDING(Input::a))
-	{
-		state->lucia_position.x -= LUCIA_SPEED * SECONDS_PER_UPDATE;
-	}
-	if (HOLDING(Input::d))
-	{
-		state->lucia_position.x += LUCIA_SPEED * SECONDS_PER_UPDATE;
-	}
-	if (HOLDING(Input::s))
-	{
-		state->lucia_position.y -= LUCIA_SPEED * SECONDS_PER_UPDATE;
-	}
-	if (HOLDING(Input::w))
-	{
-		state->lucia_position.y += LUCIA_SPEED * SECONDS_PER_UPDATE;
-	}
-
-	constexpr f32 LUCIA_TURN_SPEED = 0.4f;
-
-	if (HOLDING(Input::left))
+	if (HOLDING(Input::right))
 	{
 		state->lucia_angle -= LUCIA_TURN_SPEED * SECONDS_PER_UPDATE;
 	}
-	if (HOLDING(Input::right))
+	if (HOLDING(Input::left))
 	{
 		state->lucia_angle += LUCIA_TURN_SPEED * SECONDS_PER_UPDATE;
+	}
+
+	vf2 lucia_move = { 0.0f, 0.0f };
+
+	if (HOLDING(Input::a))
+	{
+		lucia_move.x -= 1.0f;
+	}
+	if (HOLDING(Input::d))
+	{
+		lucia_move.x += 1.0f;
+	}
+	if (HOLDING(Input::s))
+	{
+		lucia_move.y -= 1.0f;
+	}
+	if (HOLDING(Input::w))
+	{
+		lucia_move.y += 1.0f;
+	}
+
+	if (+lucia_move)
+	{
+		state->lucia_position += 0.1f * rotate(normalize(lucia_move), state->lucia_angle);
 	}
 
 	return UpdateCode::resume;
@@ -218,9 +228,9 @@ extern "C" PROTOTYPE_RENDER(render)
 		f32 angle_offset = static_cast<f32>(x) / VIEW_RESOLUTION.x - 0.5f;
 		f32 scalar;
 		f32 portion;
-		if (ray_cast_to_wall(&scalar, &portion, state->lucia_position, { cosf(state->lucia_angle + angle_offset), sinf(state->lucia_angle + angle_offset) }, { 3.0f, -1.0f }, { 3.0f, 1.0f }))
+		if (ray_cast_to_wall(&scalar, &portion, state->lucia_position, { -sinf(state->lucia_angle - angle_offset), cosf(state->lucia_angle - angle_offset) }, { -1.0f, 3.0f }, { 1.0f, 3.0f }))
 		{
-			FOR_RANGE(i, 0, static_cast<i32>(75.0f / (scalar + 1.0f)))
+			FOR_RANGE(i, 0, MINIMUM(static_cast<i32>(75.0f / (scalar + 0.1f)), static_cast<i32>(VIEW_RESOLUTION.y / 2.0f) - 1))
 			{
 				set_pixel(state->view, x, static_cast<i32>(VIEW_RESOLUTION.y / 2.0f) - i, { 1.0f, 1.0f, 1.0f, 1.0f });
 				set_pixel(state->view, x, static_cast<i32>(VIEW_RESOLUTION.y / 2.0f) + i, { 1.0f, 1.0f, 1.0f, 1.0f });
@@ -230,7 +240,6 @@ extern "C" PROTOTYPE_RENDER(render)
 		{
 			set_pixel(state->view, x, static_cast<i32>(VIEW_RESOLUTION.y / 2.0f), { 0.0f, 0.0f, 0.0f, 1.0f });
 		}
-
 	}
 
 	SDL_Rect dst = { static_cast<i32>(VIEW_PADDING), static_cast<i32>(VIEW_PADDING), static_cast<i32>(WIN_DIM.x - VIEW_PADDING * 2), static_cast<i32>((WIN_DIM.x - VIEW_PADDING * 2) * VIEW_RESOLUTION.y / VIEW_RESOLUTION.x) };
