@@ -3,7 +3,6 @@
 #include "utilities.cpp"
 
 constexpr vf2 GAME_VIEW_RESOLUTION = { WIN_DIM.x / 2, WIN_DIM.x / 4 };
-constexpr f32 FOV                  = TAU / 4.0f;
 
 struct State
 {
@@ -13,6 +12,7 @@ struct State
 	vf2          lucia_position;
 	f32          lucia_angle_velocity;
 	f32          lucia_angle;
+	f32          lucia_fov;
 };
 
 extern "C" PROTOTYPE_INITIALIZE(initialize)
@@ -21,6 +21,9 @@ extern "C" PROTOTYPE_INITIALIZE(initialize)
 	State* state = reinterpret_cast<State*>(platform->memory);
 
 	*state = {};
+	state->lucia_fov = TAU / 4.0f;
+
+	SDL_SetRelativeMouseMode(SDL_TRUE);
 }
 
 extern "C" PROTOTYPE_BOOT_UP(boot_up)
@@ -55,17 +58,9 @@ extern "C" PROTOTYPE_UPDATE(update)
 {
 	State* state = reinterpret_cast<State*>(platform->memory);
 
-	f32 lucia_turn = 0.0f;
-	if (HOLDING(Input::left))
-	{
-		lucia_turn += 1.0f;
-	}
-	if (HOLDING(Input::right))
-	{
-		lucia_turn -= 1.0f;
-	}
+	state->lucia_fov = CLAMP(state->lucia_fov - platform->scroll * 0.1f, 0.5f, 5.0f);
 
-	state->lucia_angle_velocity += 3.0f * FOV * lucia_turn;
+	state->lucia_angle_velocity -= 0.04f * state->lucia_fov * platform->cursor_delta.x;
 	state->lucia_angle_velocity *= 0.5f;
 	state->lucia_angle          += state->lucia_angle_velocity * SECONDS_PER_UPDATE;
 
@@ -112,7 +107,7 @@ extern "C" PROTOTYPE_RENDER(render)
 
 	FOR_RANGE(x, GAME_VIEW_RESOLUTION.x)
 	{
-		f32 angle_offset  = -(static_cast<f32>(x) / GAME_VIEW_RESOLUTION.x - 0.5f) * FOV;
+		f32 angle_offset  = -(static_cast<f32>(x) / GAME_VIEW_RESOLUTION.x - 0.5f) * state->lucia_fov;
 		vf2 ray_direction = { -sinf(state->lucia_angle + angle_offset), cosf(state->lucia_angle + angle_offset) };
 		vf4 color         = { 0.0f, 0.0f, 0.0f, 0.0f };
 
@@ -142,7 +137,7 @@ extern "C" PROTOTYPE_RENDER(render)
 
 		if (best_scalar != INFINITY)
 		{
-			i32 height = static_cast<i32>(100.0f / (best_scalar + 0.01f));
+			i32 height = static_cast<i32>(100.0f * state->lucia_fov / (best_scalar + 0.01f));
 
 			FOR_RANGE(y, MAXIMUM(static_cast<i32>((GAME_VIEW_RESOLUTION.y - height) / 2.0f), 0), MINIMUM(static_cast<i32>((GAME_VIEW_RESOLUTION.y - height) / 2.0f) + height, GAME_VIEW_RESOLUTION.y - 1))
 			{

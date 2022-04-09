@@ -92,6 +92,13 @@ int main(int, char**)
 	platform.memory          = reinterpret_cast<byte*>(malloc(platform.memory_capacity));
 	DEFER { free(platform.memory); };
 
+	{
+		i32 cursor_x;
+		i32 cursor_y;
+		SDL_GetMouseState(&cursor_x, &cursor_y);
+		platform.cursor = { cursor_x - platform.cursor.x, platform.surface->h - 1.0f - cursor_y - platform.cursor.y };
+	}
+
 	reload_dll();
 	DEFER { SDL_UnloadObject(dll); };
 
@@ -109,40 +116,66 @@ int main(int, char**)
 
 		for (SDL_Event event; SDL_PollEvent(&event);)
 		{
-			if ((event.type == SDL_KEYDOWN || event.type == SDL_KEYUP) && !event.key.repeat)
+			switch (event.type)
 			{
-				switch (event.key.keysym.sym)
+				case SDL_KEYDOWN:
+				case SDL_KEYUP:
 				{
-					case SDLK_a         : ++platform.inputs[+Input::a        ].curr; break;
-					case SDLK_d         : ++platform.inputs[+Input::d        ].curr; break;
-					case SDLK_e         : ++platform.inputs[+Input::e        ].curr; break;
-					case SDLK_q         : ++platform.inputs[+Input::q        ].curr; break;
-					case SDLK_s         : ++platform.inputs[+Input::s        ].curr; break;
-					case SDLK_w         : ++platform.inputs[+Input::w        ].curr; break;
-					case SDLK_0         : ++platform.inputs[+Input::n0       ].curr; break;
-					case SDLK_1         : ++platform.inputs[+Input::n1       ].curr; break;
-					case SDLK_2         : ++platform.inputs[+Input::n2       ].curr; break;
-					case SDLK_3         : ++platform.inputs[+Input::n3       ].curr; break;
-					case SDLK_4         : ++platform.inputs[+Input::n4       ].curr; break;
-					case SDLK_5         : ++platform.inputs[+Input::n5       ].curr; break;
-					case SDLK_6         : ++platform.inputs[+Input::n6       ].curr; break;
-					case SDLK_7         : ++platform.inputs[+Input::n7       ].curr; break;
-					case SDLK_8         : ++platform.inputs[+Input::n8       ].curr; break;
-					case SDLK_9         : ++platform.inputs[+Input::n9       ].curr; break;
-					case SDLK_LEFT      : ++platform.inputs[+Input::left     ].curr; break;
-					case SDLK_RIGHT     : ++platform.inputs[+Input::right    ].curr; break;
-					case SDLK_DOWN      : ++platform.inputs[+Input::down     ].curr; break;
-					case SDLK_UP        : ++platform.inputs[+Input::up       ].curr; break;
-					case SDLK_SPACE     : ++platform.inputs[+Input::space    ].curr; break;
-					case SDLK_BACKSPACE : ++platform.inputs[+Input::backspace].curr; break;
-					case SDLK_RSHIFT    :
-					case SDLK_LSHIFT    : ++platform.inputs[+Input::shift    ].curr; break;
-					case SDLK_ESCAPE    : ++platform.inputs[+Input::escape   ].curr; break;
-				}
-			}
-			else if (event.type == SDL_WINDOWEVENT && event.window.event == SDL_WINDOWEVENT_CLOSE)
-			{
-				goto TERMINATE;
+					if (!event.key.repeat)
+					{
+						switch (event.key.keysym.sym)
+						{
+							case SDLK_a         : ++platform.inputs[+Input::a        ].curr; break;
+							case SDLK_d         : ++platform.inputs[+Input::d        ].curr; break;
+							case SDLK_e         : ++platform.inputs[+Input::e        ].curr; break;
+							case SDLK_q         : ++platform.inputs[+Input::q        ].curr; break;
+							case SDLK_s         : ++platform.inputs[+Input::s        ].curr; break;
+							case SDLK_w         : ++platform.inputs[+Input::w        ].curr; break;
+							case SDLK_0         : ++platform.inputs[+Input::n0       ].curr; break;
+							case SDLK_1         : ++platform.inputs[+Input::n1       ].curr; break;
+							case SDLK_2         : ++platform.inputs[+Input::n2       ].curr; break;
+							case SDLK_3         : ++platform.inputs[+Input::n3       ].curr; break;
+							case SDLK_4         : ++platform.inputs[+Input::n4       ].curr; break;
+							case SDLK_5         : ++platform.inputs[+Input::n5       ].curr; break;
+							case SDLK_6         : ++platform.inputs[+Input::n6       ].curr; break;
+							case SDLK_7         : ++platform.inputs[+Input::n7       ].curr; break;
+							case SDLK_8         : ++platform.inputs[+Input::n8       ].curr; break;
+							case SDLK_9         : ++platform.inputs[+Input::n9       ].curr; break;
+							case SDLK_LEFT      : ++platform.inputs[+Input::left     ].curr; break;
+							case SDLK_RIGHT     : ++platform.inputs[+Input::right    ].curr; break;
+							case SDLK_DOWN      : ++platform.inputs[+Input::down     ].curr; break;
+							case SDLK_UP        : ++platform.inputs[+Input::up       ].curr; break;
+							case SDLK_SPACE     : ++platform.inputs[+Input::space    ].curr; break;
+							case SDLK_BACKSPACE : ++platform.inputs[+Input::backspace].curr; break;
+							case SDLK_RSHIFT    :
+							case SDLK_LSHIFT    : ++platform.inputs[+Input::shift    ].curr; break;
+							case SDLK_ESCAPE    : ++platform.inputs[+Input::escape   ].curr; break;
+						}
+					}
+				} break;
+
+				case SDL_MOUSEBUTTONDOWN:
+				case SDL_MOUSEBUTTONUP:
+				{
+					switch (event.button.button)
+					{
+						case SDL_BUTTON_LEFT  : ++platform.inputs[+Input::left_mouse ].curr; break;
+						case SDL_BUTTON_RIGHT : ++platform.inputs[+Input::right_mouse].curr; break;
+					}
+				} break;
+
+				case SDL_MOUSEWHEEL:
+				{
+					platform.scroll += event.wheel.preciseY * (event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED ? -1.0f : 1.0f);
+				} break;
+
+				case SDL_WINDOWEVENT:
+				{
+					if (event.window.event == SDL_WINDOWEVENT_CLOSE)
+					{
+						goto TERMINATE;
+					}
+				} break;
 			}
 		}
 
@@ -172,6 +205,16 @@ int main(int, char**)
 					}
 				}
 
+				i32 cursor_delta_x;
+				i32 cursor_delta_y;
+				SDL_GetRelativeMouseState(&cursor_delta_x, &cursor_delta_y);
+				platform.cursor_delta = { static_cast<f32>(cursor_delta_x), -static_cast<f32>(cursor_delta_y) };
+
+				i32 cursor_x;
+				i32 cursor_y;
+				SDL_GetMouseState(&cursor_x, &cursor_y);
+				platform.cursor = { static_cast<f32>(cursor_x), platform.surface->h - 1.0f - cursor_y };
+
 				if (update(&platform) == UpdateCode::terminate)
 				{
 					goto TERMINATE;
@@ -189,6 +232,8 @@ int main(int, char**)
 
 			render(&platform);
 			SDL_UpdateWindowSurface(window);
+
+			platform.scroll = 0.0f;
 		}
 
 		SDL_Delay(1);

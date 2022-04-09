@@ -33,6 +33,8 @@ enum_loose (Input, u32)
 	backspace,
 	shift,
 	escape,
+	left_mouse,
+	right_mouse,
 
 	CAPACITY
 };
@@ -55,6 +57,9 @@ struct Platform
 	memsize      memory_capacity;
 	byte*        memory;
 	InputState   inputs[Input::CAPACITY];
+	vf2          cursor_delta;
+	vf2          cursor;
+	f32          scroll;
 };
 
 #define PROTOTYPE_INITIALIZE(NAME) void NAME(Platform* platform)
