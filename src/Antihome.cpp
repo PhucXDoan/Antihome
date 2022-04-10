@@ -13,8 +13,7 @@ struct State
 	f32          lucia_angle_velocity;
 	f32          lucia_angle;
 	f32          lucia_fov;
-
-	SDL_Surface* wall;
+	Mipmap       wall;
 };
 
 extern "C" PROTOTYPE_INITIALIZE(initialize)
@@ -47,14 +46,7 @@ extern "C" PROTOTYPE_BOOT_UP(boot_up)
 			0xFF000000
 		);
 
-	{
-		SDL_Surface* bmp = SDL_LoadBMP(DATA_DIR "wall1.bmp");
-		ASSERT(bmp);
-		DEFER { SDL_FreeSurface(bmp); };
-
-		state->wall = SDL_ConvertSurfaceFormat(bmp, SDL_PIXELFORMAT_RGBA8888, 0);
-		ASSERT(state->wall);
-	}
+	state->wall = init_mipmap(DATA_DIR "wooden_wall_mipmap.bmp", 6, 1.0f);
 }
 
 extern "C" PROTOTYPE_BOOT_DOWN(boot_down)
@@ -62,7 +54,7 @@ extern "C" PROTOTYPE_BOOT_DOWN(boot_down)
 	ASSERT(sizeof(State) <= platform->memory_capacity);
 	State* state = reinterpret_cast<State*>(platform->memory);
 
-	SDL_FreeSurface(state->wall);
+	deinit_mipmap(&state->wall);
 	SDL_FreeSurface(state->view);
 }
 
@@ -75,6 +67,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 	state->lucia_angle_velocity -= 0.04f * state->lucia_fov * platform->cursor_delta.x;
 	state->lucia_angle_velocity *= 0.5f;
 	state->lucia_angle          += state->lucia_angle_velocity * SECONDS_PER_UPDATE;
+	state->lucia_angle           = fmodf(state->lucia_angle, TAU);
 
 	vf2 lucia_move = { 0.0f, 0.0f };
 	if (HOLDING(Input::a))
@@ -112,10 +105,11 @@ extern "C" PROTOTYPE_RENDER(render)
 
 	constexpr vf4 BG_COLOR = { 0.1f, 0.2f, 0.3f, 1.0f };
 
-	fill_rect(platform->surface, { 0.0f, 0.0f }, WIN_DIM, { 0.1f, 0.1f, 0.1f, 1.0f });
+	fill_rect(platform->surface, { 0.0f, 0.0f }, WIN_DIM, { 0.0f, 0.0f, 0.0f, 1.0f });
 	fill_rect(state->view, { 0.0f, 0.0f }, GAME_VIEW_RESOLUTION, BG_COLOR);
 
 	constexpr i32 GAME_VIEW_PADDING = 10;
+	constexpr vf2 ORB_POSITION = { 0.0f, 0.0f };
 
 	FOR_RANGE(x, GAME_VIEW_RESOLUTION.x)
 	{
@@ -151,12 +145,21 @@ extern "C" PROTOTYPE_RENDER(render)
 		{
 			i32 height = static_cast<i32>(100.0f * state->lucia_fov / (scalar + 0.01f));
 
+			vf2 intersected_position = state->lucia_position + ray_direction * scalar;
+			vf4 light_color;
+			light_color.x = powf(1.0f - MINIMUM(distance(ORB_POSITION, intersected_position) / 16.0f, 1.0f), 4);
+			light_color.y = light_color.x;
+			light_color.z = light_color.x;
+			light_color.w = light_color.x;
+
 			FOR_RANGE(i, height)
 			{
 				i32 y = static_cast<i32>((GAME_VIEW_RESOLUTION.y - height) / 2.0f) + i;
 				if (IN_RANGE(y, 0, GAME_VIEW_RESOLUTION.y))
 				{
-					set_color(state->view, x, y, get_sample(state->wall, { portion, static_cast<f32>(i) / height }));
+					vf4 sample_color = get_mipmap_sample(&state->wall, { portion, static_cast<f32>(i) / height }, scalar);
+
+					set_color(state->view, x, y, hadamard_product(sample_color, light_color));
 				}
 			}
 		}
