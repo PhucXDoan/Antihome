@@ -6,7 +6,8 @@ struct Mipmap
 {
 	SDL_Surface* surface;
 	i32          levels;
-	f32          threshold;
+	i32          level_xs[8];
+	i32          level_ys[8];
 };
 
 global constexpr f32 TAU = 6.28318530717958647692f;
@@ -71,6 +72,8 @@ internal constexpr vf4 lerp(vf4 a, vf4 b, f32 t) { return a * (1.0f - t) + b * t
 internal constexpr f32 dampen(f32 a, f32 b, f32 k, f32 dt) { return lerp(a, b, 1.0f - expf(-k * dt)); }
 internal constexpr vf4 dampen(vf4 a, vf4 b, f32 k, f32 dt) { return lerp(a, b, 1.0f - expf(-k * dt)); }
 
+internal constexpr f32 dot(vf2 u, vf2 v) { return u.x * v.x + u.y * v.y; }
+
 internal constexpr vf4 hadamard_product(vf4 u, vf4 v) { return { u.x * v.x, u.y * v.y, u.z * v.z, u.w * v.w }; }
 
 internal f32 norm(vf2 v)
@@ -84,6 +87,8 @@ internal vf2 normalize(vf2 v)
 }
 
 internal f32 distance(vf2 u, vf2 v) { return norm(u - v); }
+
+internal vf2 polar(f32 angle) { return { cosf(angle), sinf(angle) }; }
 
 internal vf2 rotate(vf2 v, f32 angle)
 {
@@ -151,56 +156,6 @@ internal void set_color(SDL_Surface* surface, i32 x, i32 y, vf4 color)
 	*reinterpret_cast<u32*>(reinterpret_cast<u8*>(surface->pixels) + (surface->h - 1 - y) * surface->pitch + x * surface->format->BytesPerPixel) = to_pixel(surface, color);
 }
 
-internal vf4 get_mipmap_sample_at_level(Mipmap* mipmap, vf2 uv, i32 level)
-{
-	ASSERT(0.0f <= uv.x && uv.x <= 1.0f);
-	ASSERT(0.0f <= uv.y && uv.y <= 1.0f);
-	ASSERT(IN_RANGE(level, 0, mipmap->levels));
-
-	i32 x;
-	i32 y = 0;
-	i32 w;
-	i32 h;
-	if (level)
-	{
-		x = mipmap->surface->w * 2 / 3;
-		w = mipmap->surface->w     / 3;
-		h = mipmap->surface->h     / 2;
-		FOR_RANGE(i, level - 1)
-		{
-			y += h;
-			w /= 2;
-			h /= 2;
-		}
-	}
-	else
-	{
-		x = 0;
-		w = mipmap->surface->w * 2 / 3;
-		h = mipmap->surface->h;
-	}
-
-	return get_color(mipmap->surface, static_cast<i32>(x + (w - 1.0f) * uv.x), static_cast<i32>(mipmap->surface->h - h - y + (h - 1.0f) * uv.y));
-}
-
-internal vf4 get_mipmap_sample(Mipmap* mipmap, vf2 uv, f32 distance)
-{
-	ASSERT(distance >= 0.0f);
-
-	f32 interpolated_level = distance / mipmap->threshold;
-	i32 level              = static_cast<i32>(interpolated_level);
-	f32 interpolation      = interpolated_level - level;
-
-	if (level < mipmap->levels - 1)
-	{
-		return lerp(get_mipmap_sample_at_level(mipmap, uv, level), get_mipmap_sample_at_level(mipmap, uv, level + 1), interpolation);
-	}
-	else
-	{
-		return get_mipmap_sample_at_level(mipmap, uv, mipmap->levels - 1);
-	}
-}
-
 internal void fill_rect(SDL_Surface* surface, vf2 position, vf2 dimensions, vf4 color)
 {
 	SDL_Rect rect = { static_cast<i32>(position.x), static_cast<i32>(surface->h - position.y - dimensions.y), static_cast<i32>(dimensions.x), static_cast<i32>(dimensions.y) };
@@ -215,7 +170,7 @@ internal void fill_rect(SDL_Surface* surface, vf2 position, vf2 dimensions, vf4 
 	);
 }
 
-internal Mipmap init_mipmap(strlit file_path, i32 levels, f32 threshold)
+internal Mipmap init_mipmap(strlit file_path, i32 levels)
 {
 	Mipmap mipmap;
 
@@ -226,8 +181,7 @@ internal Mipmap init_mipmap(strlit file_path, i32 levels, f32 threshold)
 	mipmap.surface = SDL_ConvertSurfaceFormat(bmp, SDL_PIXELFORMAT_RGBA8888, 0);
 	ASSERT(mipmap.surface);
 
-	mipmap.levels    = levels;
-	mipmap.threshold = threshold;
+	mipmap.levels = levels;
 
 	return mipmap;
 }
@@ -235,4 +189,55 @@ internal Mipmap init_mipmap(strlit file_path, i32 levels, f32 threshold)
 internal void deinit_mipmap(Mipmap* mipmap)
 {
 	SDL_FreeSurface(mipmap->surface);
+}
+
+internal vf4 get_mipmap_sample_at_level(Mipmap* mipmap, vf2 uv, i32 level)
+{
+	ASSERT(0.0f <= uv.x && uv.x <= 1.0f);
+	ASSERT(0.0f <= uv.y && uv.y <= 1.0f);
+	ASSERT(IN_RANGE(level, 0, mipmap->levels));
+
+	i32 x;
+	i32 y;
+	if (level)
+	{
+		x = mipmap->surface->w * 2 / 3;
+		y = mipmap->surface->h - mipmap->surface->h / (1 << (level - 1));
+	}
+	else
+	{
+		x = 0;
+		y = 0;
+	}
+
+	i32 w = (mipmap->surface->w * 2 / 3) / (1 << level);
+	i32 h = (mipmap->surface->h        ) / (1 << level);
+
+	#if 1
+	return get_color(mipmap->surface, static_cast<i32>(x + (w - 1.0f) * uv.x), static_cast<i32>(mipmap->surface->h - h - y + (h - 1.0f) * uv.y));
+	#else
+	vf4 c = get_color(mipmap->surface, static_cast<i32>(x + (w - 1.0f) * uv.x), static_cast<i32>(mipmap->surface->h - h - y + (h - 1.0f) * uv.y));
+
+	if (level == 1)
+	{
+		c = hadamard_product(c, { 1.0f, 0.1f, 0.1f, 1.0f });
+	}
+	else if (level == 2)
+	{
+		c = hadamard_product(c, { 1.0f, 1.0f, 0.1f, 1.0f });
+	}
+	else if (level == 3)
+	{
+		c = hadamard_product(c, { 0.1f, 1.0f, 0.1f, 1.0f });
+	}
+	else if (level == 4)
+	{
+		c = hadamard_product(c, { 0.1f, 1.0f, 1.0f, 1.0f });
+	}
+	else if (level == 5)
+	{
+		c = hadamard_product(c, { 0.1f, 0.1f, 1.0f, 1.0f });
+	}
+	return c;
+	#endif
 }
