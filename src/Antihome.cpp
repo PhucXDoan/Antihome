@@ -4,16 +4,19 @@
 #include "platform.h"
 #include "utilities.cpp"
 
-constexpr vf2 VIEW_DIM = { WIN_DIM.x / 4, WIN_DIM.x / 8 };
-constexpr f32 LUCIA_HEIGHT    = 1.4986f;
+global constexpr vf2 VIEW_DIM         = { 350.0f, 175.0f };
+global constexpr f32 PIXELS_PER_METER = 128.0f;
+global constexpr f32 WALL_HEIGHT      = 2.7432f;
+global constexpr f32 LUCIA_HEIGHT     = 1.4986f;
+global constexpr f32 MAGIC_K          = 0.927295218f * VIEW_DIM.x;
 
 struct State
 {
 	u32                seed;
 	SDL_Surface*       view;
 
-	vf2                lucia_velocity;
-	vf2                lucia_position;
+	vf3                lucia_velocity;
+	vf3                lucia_position;
 	f32                lucia_angle_velocity;
 	f32                lucia_angle;
 	f32                lucia_fov;
@@ -28,7 +31,8 @@ extern "C" PROTOTYPE_INITIALIZE(initialize)
 
 	*state = {};
 
-	state->lucia_fov = TAU / 3.0f;
+	state->lucia_position.y = LUCIA_HEIGHT;
+	state->lucia_fov        = TAU / 3.0f;
 
 	SDL_SetRelativeMouseMode(SDL_TRUE);
 }
@@ -72,21 +76,21 @@ extern "C" PROTOTYPE_UPDATE(update)
 	state->lucia_angle          += state->lucia_angle_velocity * SECONDS_PER_UPDATE;
 
 	vf2 lucia_move = { 0.0f, 0.0f };
-	if (HOLDING(Input::w))
+	if (HOLDING(Input::a))
+	{
+		lucia_move.x -= 1.0f;
+	}
+	if (HOLDING(Input::d))
 	{
 		lucia_move.x += 1.0f;
 	}
 	if (HOLDING(Input::s))
 	{
-		lucia_move.x -= 1.0f;
+		lucia_move.y -= 1.0f;
 	}
-	if (HOLDING(Input::a))
+	if (HOLDING(Input::w))
 	{
 		lucia_move.y += 1.0f;
-	}
-	if (HOLDING(Input::d))
-	{
-		lucia_move.y -= 1.0f;
 	}
 
 	if (+lucia_move)
@@ -94,9 +98,16 @@ extern "C" PROTOTYPE_UPDATE(update)
 		lucia_move = rotate(normalize(lucia_move), state->lucia_angle);
 	}
 
-	state->lucia_velocity += lucia_move; // @TODO@ Framerate independence?
+	state->lucia_velocity += { lucia_move.x, 0, -lucia_move.y }; // @TODO@ Framerate independence?
 	state->lucia_velocity *= 0.5f;
 	state->lucia_position += state->lucia_velocity * SECONDS_PER_UPDATE;
+
+	if (state->lucia_position.y < LUCIA_HEIGHT)
+	{
+		state->lucia_position.y = LUCIA_HEIGHT;
+	}
+
+	state->lucia_fov += platform->scroll * 0.1f;
 
 	return UpdateCode::resume;
 }
@@ -112,23 +123,23 @@ extern "C" PROTOTYPE_RENDER(render)
 
 	FOR_RANGE(x, VIEW_DIM.x)
 	{
-		vf2 ray = polar(state->lucia_angle + (0.5f - x / VIEW_DIM.x) * state->lucia_fov);
+		vf2 ray = polar(-TAU / 4.0f - state->lucia_angle + (x / VIEW_DIM.x - 0.5f) * state->lucia_fov);
 
-		f32 scalar;
+		f32 distance;
 		f32 portion;
-		if (ray_cast_to_wall(&scalar, &portion, state->lucia_position, ray, { -0.5f, 1.0f }, { 0.5f, 1.0f }))
+		if (ray_cast_to_wall(&distance, &portion, { state->lucia_position.x, state->lucia_position.z }, ray, { -0.5f, -1.0f }, { 0.5f, -1.0f }))
 		{
-			i32 projected_wall_height = static_cast<i32>(50.0f / scalar);
-			i32 starting_y            = static_cast<i32>((VIEW_DIM.y - projected_wall_height) / 2.0f);
+			i32 starting_y = static_cast<i32>(VIEW_DIM.y / 2.0f - MAGIC_K / state->lucia_fov * (WALL_HEIGHT - state->lucia_position.y) / distance);
+			i32 ending_y   = static_cast<i32>(VIEW_DIM.y / 2.0f + MAGIC_K / state->lucia_fov * LUCIA_HEIGHT / distance);
 
-			vf4* texture_column = &state->wall.colors[static_cast<i32>(portion * state->wall.w) * state->wall.h];
-			FOR_RANGE(i, MAXIMUM(0, -starting_y), MINIMUM(projected_wall_height, VIEW_DIM.y - starting_y))
+			vf4* texture_column = &state->wall.colors[static_cast<i32>(portion * (state->wall.w - 1)) * state->wall.h];
+			FOR_RANGE(y, MAXIMUM(0, starting_y), MINIMUM(ending_y, VIEW_DIM.y))
 			{
-				*(reinterpret_cast<u32*>(state->view->pixels) + (starting_y + i) * state->view->w + x) =
+				*(reinterpret_cast<u32*>(state->view->pixels) + y * state->view->w + x) =
 					to_pixel
 					(
 						state->view,
-						texture_column[static_cast<i32>(static_cast<f32>(i) / projected_wall_height * state->wall.h)]
+						texture_column[static_cast<i32>(static_cast<f32>(y - starting_y) / (ending_y - starting_y) * state->wall.h)]
 					);
 			}
 		}
