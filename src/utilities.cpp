@@ -2,14 +2,6 @@
 #define HOLDING(INPUT)  (platform->inputs[+(INPUT)].curr)
 #define RELEASED(INPUT) (!platform->inputs[+(INPUT)].curr && platform->inputs[+(INPUT)].prev)
 
-struct Mipmap
-{
-	SDL_Surface* surface;
-	i32          levels;
-	i32          level_xs[8];
-	i32          level_ys[8];
-};
-
 global constexpr f32 TAU = 6.28318530717958647692f;
 
 // @TODO@ Use an actual RNG lol.
@@ -76,15 +68,9 @@ internal constexpr f32 dot(vf2 u, vf2 v) { return u.x * v.x + u.y * v.y; }
 
 internal constexpr vf4 hadamard_product(vf4 u, vf4 v) { return { u.x * v.x, u.y * v.y, u.z * v.z, u.w * v.w }; }
 
-internal f32 norm(vf2 v)
-{
-	return sqrtf(v.x * v.x + v.y * v.y);
-}
+internal f32 norm(vf2 v) { return sqrtf(v.x * v.x + v.y * v.y); }
 
-internal vf2 normalize(vf2 v)
-{
-	return v / norm(v);
-}
+internal vf2 normalize(vf2 v) { return v / norm(v); }
 
 internal f32 distance(vf2 u, vf2 v) { return norm(u - v); }
 
@@ -124,17 +110,6 @@ internal bool32 ray_cast_to_wall(f32* scalar, f32* portion, vf2 position, vf2 ra
 	return 0.0f <= *portion && *portion <= 1.0f;
 }
 
-internal vf4 to_color(SDL_Surface* surface, u32 pixel)
-{
-	return
-		vf4 {
-			static_cast<f32>((pixel & surface->format->Rmask) << __lzcnt(surface->format->Rmask) >> 24),
-			static_cast<f32>((pixel & surface->format->Gmask) << __lzcnt(surface->format->Gmask) >> 24),
-			static_cast<f32>((pixel & surface->format->Bmask) << __lzcnt(surface->format->Bmask) >> 24),
-			static_cast<f32>((pixel & surface->format->Amask) << __lzcnt(surface->format->Amask) >> 24)
-		} / 255.0f;
-}
-
 internal u32 to_pixel(SDL_Surface* surface, vf4 color)
 {
 	return
@@ -144,21 +119,9 @@ internal u32 to_pixel(SDL_Surface* surface, vf4 color)
 		(static_cast<u32>(static_cast<u8>(color.w * 255.0f)) << 24 >> __lzcnt(surface->format->Amask));
 }
 
-internal vf4 get_color(SDL_Surface* surface, i32 x, i32 y)
+internal void fill(SDL_Surface* surface, vf2 position, vf2 dimensions, vf4 color)
 {
-	ASSERT(IN_RANGE(x, 0, surface->w) && IN_RANGE(y, 0, surface->h));
-	return to_color(surface, *reinterpret_cast<u32*>(reinterpret_cast<u8*>(surface->pixels) + (surface->h - 1 - y) * surface->pitch + x * surface->format->BytesPerPixel));
-}
-
-internal void set_color(SDL_Surface* surface, i32 x, i32 y, vf4 color)
-{
-	ASSERT(IN_RANGE(x, 0, surface->w) && IN_RANGE(y, 0, surface->h));
-	*reinterpret_cast<u32*>(reinterpret_cast<u8*>(surface->pixels) + (surface->h - 1 - y) * surface->pitch + x * surface->format->BytesPerPixel) = to_pixel(surface, color);
-}
-
-internal void fill_rect(SDL_Surface* surface, vf2 position, vf2 dimensions, vf4 color)
-{
-	SDL_Rect rect = { static_cast<i32>(position.x), static_cast<i32>(surface->h - position.y - dimensions.y), static_cast<i32>(dimensions.x), static_cast<i32>(dimensions.y) };
+	SDL_Rect rect = { static_cast<i32>(position.x), static_cast<i32>(position.y), static_cast<i32>(dimensions.x), static_cast<i32>(dimensions.y) };
 	SDL_FillRect
 	(
 		surface,
@@ -170,74 +133,62 @@ internal void fill_rect(SDL_Surface* surface, vf2 position, vf2 dimensions, vf4 
 	);
 }
 
-internal Mipmap init_mipmap(strlit file_path, i32 levels)
+internal void fill(SDL_Surface* surface, vf4 color)
 {
-	Mipmap mipmap;
-
-	SDL_Surface* bmp = SDL_LoadBMP(file_path);
-	ASSERT(bmp);
-	DEFER { SDL_FreeSurface(bmp); };
-
-	mipmap.surface = SDL_ConvertSurfaceFormat(bmp, SDL_PIXELFORMAT_RGBA8888, 0);
-	ASSERT(mipmap.surface);
-
-	mipmap.levels = levels;
-
-	return mipmap;
+	SDL_Rect rect = { 0, 0, surface->w, surface->h };
+	SDL_FillRect
+	(
+		surface,
+		&rect,
+		(static_cast<u32>(static_cast<u8>(color.w * 255.0f)) << 24) |
+		(static_cast<u32>(static_cast<u8>(color.z * 255.0f)) << 16) |
+		(static_cast<u32>(static_cast<u8>(color.y * 255.0f)) <<  8) |
+		(static_cast<u32>(static_cast<u8>(color.x * 255.0f)) <<  0)
+	);
 }
 
-internal void deinit_mipmap(Mipmap* mipmap)
+
+struct ColumnMajorTexture
 {
-	SDL_FreeSurface(mipmap->surface);
+	i32  w;
+	i32  h;
+	vf4* colors;
+};
+
+// @TODO@ Use arena.
+internal ColumnMajorTexture init_column_major_texture(strlit filepath)
+{
+	ColumnMajorTexture texture;
+
+	i32  iw;
+	i32  ih;
+	u32* img = reinterpret_cast<u32*>(stbi_load(filepath, &iw, &ih, 0, STBI_rgb_alpha));
+	DEFER { stbi_image_free(img); };
+	ASSERT(img);
+
+	texture.w      = iw;
+	texture.h      = ih;
+	texture.colors = reinterpret_cast<vf4*>(malloc(texture.w * texture.h * sizeof(vf4)));
+
+	FOR_RANGE(y, texture.h)
+	{
+		FOR_RANGE(x, texture.w)
+		{
+			u32 pixel = *(img + y * texture.w + x);
+			*(texture.colors + x * texture.h + y) =
+				{
+					static_cast<f32>(pixel >>  0 & 0xFF) / 0xFF,
+					static_cast<f32>(pixel >>  8 & 0xFF) / 0xFF,
+					static_cast<f32>(pixel >> 16 & 0xFF) / 0xFF,
+					static_cast<f32>(pixel >> 24 & 0xFF) / 0xFF
+				};
+		}
+	}
+
+	return texture;
 }
 
-internal vf4 get_mipmap_sample_at_level(Mipmap* mipmap, vf2 uv, i32 level)
+internal void deinit_column_major_texture(ColumnMajorTexture* texture)
 {
-	ASSERT(0.0f <= uv.x && uv.x <= 1.0f);
-	ASSERT(0.0f <= uv.y && uv.y <= 1.0f);
-	ASSERT(IN_RANGE(level, 0, mipmap->levels));
-
-	i32 x;
-	i32 y;
-	if (level)
-	{
-		x = mipmap->surface->w * 2 / 3;
-		y = mipmap->surface->h - mipmap->surface->h / (1 << (level - 1));
-	}
-	else
-	{
-		x = 0;
-		y = 0;
-	}
-
-	i32 w = (mipmap->surface->w * 2 / 3) / (1 << level);
-	i32 h = (mipmap->surface->h        ) / (1 << level);
-
-	#if 1
-	return get_color(mipmap->surface, static_cast<i32>(x + (w - 1.0f) * uv.x), static_cast<i32>(mipmap->surface->h - h - y + (h - 1.0f) * uv.y));
-	#else
-	vf4 c = get_color(mipmap->surface, static_cast<i32>(x + (w - 1.0f) * uv.x), static_cast<i32>(mipmap->surface->h - h - y + (h - 1.0f) * uv.y));
-
-	if (level == 1)
-	{
-		c = hadamard_product(c, { 1.0f, 0.1f, 0.1f, 1.0f });
-	}
-	else if (level == 2)
-	{
-		c = hadamard_product(c, { 1.0f, 1.0f, 0.1f, 1.0f });
-	}
-	else if (level == 3)
-	{
-		c = hadamard_product(c, { 0.1f, 1.0f, 0.1f, 1.0f });
-	}
-	else if (level == 4)
-	{
-		c = hadamard_product(c, { 0.1f, 1.0f, 1.0f, 1.0f });
-	}
-	else if (level == 5)
-	{
-		c = hadamard_product(c, { 0.1f, 0.1f, 1.0f, 1.0f });
-	}
-	return c;
-	#endif
+	free(texture->colors);
 }

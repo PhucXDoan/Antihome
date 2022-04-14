@@ -1,6 +1,6 @@
 @echo off
 
-set INCLUDES=-I W:\lib\SDL2\include\ -I W:\lib\SDL2_ttf\include\ -I W:\lib\SDL_FontCache\ -I W:\lib\SDL2_mixer\include\
+set INCLUDES=-I W:\lib\SDL2\include\ -I W:\lib\SDL2_ttf\include\ -I W:\lib\SDL_FontCache\ -I W:\lib\SDL2_mixer\include\ -I W:\lib\stb\
 set LIBRARIES=shell32.lib W:\lib\SDL2\lib\x64\SDL2main.lib W:\lib\SDL2\lib\x64\SDL2.lib W:\lib\SDL2_ttf\lib\x64\SDL2_ttf.lib W:\lib\SDL_FontCache\SDL_FontCache.lib W:\lib\SDL2_mixer\lib\x64\SDL2_mixer.lib
 set WARNINGS=-W4 -wd4702 -wd4100 -wd4201 -wd4127 -wd4505
 REM Set wd4505 off when release, checks for unused procedures with internal linkage.
