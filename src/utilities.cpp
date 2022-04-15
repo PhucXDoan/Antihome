@@ -83,7 +83,7 @@ internal vf2 rotate(vf2 v, f32 angle)
 	return { v.x * cosf(angle) - v.y * sinf(angle), v.x * sinf(angle) + v.y * cosf(angle) };
 }
 
-internal bool32 ray_cast_to_wall(f32* scalar, f32* portion, vf2 position, vf2 ray, vf2 start, vf2 end)
+internal bool32 ray_cast_line_segment(f32* scalar, f32* portion, vf2 position, vf2 ray, vf2 start, vf2 end)
 {
 	f32 scalar_denom = (start.x - end.x) * ray.y - (start.y - end.y) * ray.x;
 
@@ -149,7 +149,6 @@ internal void fill(SDL_Surface* surface, vf4 color)
 	);
 }
 
-
 struct ColumnMajorTexture
 {
 	i32  w;
@@ -177,7 +176,7 @@ internal ColumnMajorTexture init_column_major_texture(strlit filepath)
 		FOR_RANGE(x, texture.w)
 		{
 			u32 pixel = *(img + y * texture.w + x);
-			*(texture.colors + x * texture.h + y) =
+			*(texture.colors + x * texture.h + (texture.h - 1 - y)) =
 				{
 					static_cast<f32>(pixel >>  0 & 0xFF) / 0xFF,
 					static_cast<f32>(pixel >>  8 & 0xFF) / 0xFF,

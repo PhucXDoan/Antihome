@@ -21,6 +21,7 @@ struct State
 	f32                lucia_head_bob_keytime;
 
 	ColumnMajorTexture wall;
+	ColumnMajorTexture floor;
 };
 
 extern "C" PROTOTYPE_INITIALIZE(initialize)
@@ -54,7 +55,8 @@ extern "C" PROTOTYPE_BOOT_UP(boot_up)
 			0xFF000000
 		);
 
-	state->wall = init_column_major_texture(DATA_DIR "wall.bmp");
+	state->wall  = init_column_major_texture(DATA_DIR "wall.bmp");
+	state->floor = init_column_major_texture(DATA_DIR "floor.bmp");
 }
 
 extern "C" PROTOTYPE_BOOT_DOWN(boot_down)
@@ -62,6 +64,7 @@ extern "C" PROTOTYPE_BOOT_DOWN(boot_down)
 	ASSERT(sizeof(State) <= platform->memory_capacity);
 	State* state = reinterpret_cast<State*>(platform->memory);
 
+	deinit_column_major_texture(&state->floor);
 	deinit_column_major_texture(&state->wall);
 }
 
@@ -144,17 +147,22 @@ extern "C" PROTOTYPE_RENDER(render)
 		{
 			f32 pitch = (0.5f - y / VIEW_DIM.y) * state->lucia_fov / MAGIC_K * VIEW_DIM.y;
 
-			f32 x_distance;
-			f32 x_portion;
-			f32 y_distance;
-			f32 y_portion;
+			f32 floor_distance_x;
+			f32 floor_portion_x;
+			f32 floor_distance_y;
+			f32 floor_portion_y;
 			if
 			(
-				ray_cast_to_wall(&x_distance, &x_portion, { state->lucia_position.x, lucia_eye_level }, normalize(vf2 { ray_horizontal.x, pitch }), { 1.0f + -0.5f, 0.0f }, { 1.0f + 0.5f, 0.0f }) &&
-				ray_cast_to_wall(&y_distance, &y_portion, { state->lucia_position.y, lucia_eye_level }, normalize(vf2 { ray_horizontal.y, pitch }), { -0.5f, 0.0f }, { 0.5f, 0.0f })
+				ray_cast_line_segment(&floor_distance_x, &floor_portion_x, { state->lucia_position.x, lucia_eye_level }, normalize(vf2 { ray_horizontal.x, pitch }), { -1.5f, 0.0f }, { 1.5f, 0.0f }) &&
+				ray_cast_line_segment(&floor_distance_y, &floor_portion_y, { state->lucia_position.y, lucia_eye_level }, normalize(vf2 { ray_horizontal.y, pitch }), { -1.5f, 0.0f }, { 1.5f, 0.0f })
 			)
 			{
-				*(reinterpret_cast<u32*>(state->view->pixels) + y * state->view->w + x) = to_pixel(state->view, { 1.0f, 1.0f, 1.0f, 1.0f });
+				*(reinterpret_cast<u32*>(state->view->pixels) + y * state->view->w + x) =
+					to_pixel
+					(
+						state->view,
+						*(state->floor.colors + static_cast<i32>(floor_portion_x * (state->floor.w - 1.0f)) * state->floor.h + static_cast<i32>(floor_portion_y * state->floor.h))
+					);
 			}
 		}
 
@@ -166,7 +174,7 @@ extern "C" PROTOTYPE_RENDER(render)
 		{
 			f32 distance;
 			f32 portion;
-			if (ray_cast_to_wall(&distance, &portion, state->lucia_position, ray_horizontal, (*it)[0], (*it)[1]) && (wall_index == -1 || distance < wall_distance))
+			if (ray_cast_line_segment(&distance, &portion, state->lucia_position, ray_horizontal, (*it)[0], (*it)[1]) && (wall_index == -1 || distance < wall_distance))
 			{
 				wall_index    = it_index;
 				wall_distance = distance;
@@ -179,14 +187,14 @@ extern "C" PROTOTYPE_RENDER(render)
 			i32 starting_y = static_cast<i32>(VIEW_DIM.y / 2.0f - MAGIC_K / state->lucia_fov * (WALL_HEIGHT - lucia_eye_level) / wall_distance);
 			i32 ending_y   = static_cast<i32>(VIEW_DIM.y / 2.0f + MAGIC_K / state->lucia_fov * lucia_eye_level / wall_distance);
 
-			vf4* texture_column = &state->wall.colors[static_cast<i32>(wall_portion * (state->wall.w - 1)) * state->wall.h];
+			vf4* texture_column = &state->wall.colors[static_cast<i32>(wall_portion * (state->wall.w - 1.0f)) * state->wall.h];
 			FOR_RANGE(y, MAXIMUM(0, starting_y), MINIMUM(ending_y, VIEW_DIM.y))
 			{
 				*(reinterpret_cast<u32*>(state->view->pixels) + y * state->view->w + x) =
 					to_pixel
 					(
 						state->view,
-						texture_column[static_cast<i32>(static_cast<f32>(y - starting_y) / (ending_y - starting_y) * state->wall.h)]
+						texture_column[static_cast<i32>(static_cast<f32>(ending_y - y) / (ending_y - starting_y) * state->wall.h)]
 					);
 			}
 		}
