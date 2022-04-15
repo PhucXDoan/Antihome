@@ -68,9 +68,11 @@ internal constexpr f32 dot(vf2 u, vf2 v) { return u.x * v.x + u.y * v.y; }
 
 internal constexpr vf4 hadamard_product(vf4 u, vf4 v) { return { u.x * v.x, u.y * v.y, u.z * v.z, u.w * v.w }; }
 
-internal f32 norm(vf2 v) { return sqrtf(v.x * v.x + v.y * v.y); }
+internal f32 norm(vf2 v) { return sqrtf(v.x * v.x + v.y * v.y            ); }
+internal f32 norm(vf3 v) { return sqrtf(v.x * v.x + v.y * v.y + v.z * v.z); }
 
 internal vf2 normalize(vf2 v) { return v / norm(v); }
+internal vf3 normalize(vf3 v) { return v / norm(v); }
 
 internal f32 distance(vf2 u, vf2 v) { return norm(u - v); }
 
