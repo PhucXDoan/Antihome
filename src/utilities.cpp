@@ -57,6 +57,8 @@ internal f32 rng(u32* seed, f32 start, f32 end)
 	return rng(seed) * (end - start) + start;
 }
 
+internal constexpr f32 square(f32 x) { return x * x; }
+
 internal constexpr f32 lerp(f32 a, f32 b, f32 t) { return a * (1.0f - t) + b * t; }
 internal constexpr vf2 lerp(vf2 a, vf2 b, f32 t) { return a * (1.0f - t) + b * t; }
 internal constexpr vf4 lerp(vf4 a, vf4 b, f32 t) { return a * (1.0f - t) + b * t; }

@@ -129,10 +129,17 @@ extern "C" PROTOTYPE_RENDER(render)
 	constexpr i32 VIEW_PADDING = 10;
 	constexpr vf2 WALLS[][2]   =
 		{
-			{ { -1.5f, -1.5f }, {  1.5f, -1.5f } },
-			{ { -1.5f,  1.5f }, {  1.5f,  1.5f } },
+			{ { -1.5f, -1.5f }, {  8.5f, -1.5f } },
+			{ { -1.5f,  1.5f }, {  8.5f,  1.5f } },
 			{ { -1.5f, -1.5f }, { -1.5f,  1.5f } },
-			{ {  1.5f, -1.5f }, {  1.5f,  1.5f } },
+			{ {  8.5f, -1.5f }, {  8.5f,  1.5f } },
+		};
+	constexpr vf2 FLOORS[][2]   =
+		{
+			{ { -1.5f + 3.0f * 0.0f, -1.5f }, { 1.5f + 3.0f * 0.0f, 1.5f } },
+			{ { -1.5f + 3.0f * 1.0f, -1.5f }, { 1.5f + 3.0f * 1.0f, 1.5f } },
+			{ { -1.5f + 3.0f * 2.0f, -1.5f }, { 1.5f + 3.0f * 2.0f, 1.5f } },
+			{ { -1.5f + 3.0f * 3.0f, -1.5f }, { 1.5f + 3.0f * 3.0f, 1.5f } }
 		};
 
 	fill(platform->surface, { 0.0f, 0.0f, 0.0f, 1.0f });
@@ -145,30 +152,45 @@ extern "C" PROTOTYPE_RENDER(render)
 		vf2 ray_horizontal = polar(state->lucia_angle + (0.5f - x / VIEW_DIM.x) * state->lucia_fov);
 		FOR_RANGE(y, VIEW_DIM.y)
 		{
-			f32 pitch = (0.5f - y / VIEW_DIM.y) * state->lucia_fov / MAGIC_K * VIEW_DIM.y;
+			f32 pitch          = (VIEW_DIM.y / 2.0f - y) * state->lucia_fov / MAGIC_K;
+			i32 floor_index    = -1;
+			f32 floor_distance = NAN;
+			vf2 floor_portion  = { NAN, NAN };
 
-			f32 floor_distance_x;
-			f32 floor_portion_x;
-			f32 floor_distance_y;
-			f32 floor_portion_y;
-			if
-			(
-				ray_cast_line_segment(&floor_distance_x, &floor_portion_x, { state->lucia_position.x, lucia_eye_level }, normalize(vf2 { ray_horizontal.x, pitch }), { -1.5f, 0.0f }, { 1.5f, 0.0f }) &&
-				ray_cast_line_segment(&floor_distance_y, &floor_portion_y, { state->lucia_position.y, lucia_eye_level }, normalize(vf2 { ray_horizontal.y, pitch }), { -1.5f, 0.0f }, { 1.5f, 0.0f })
-			)
+			FOR_ELEMS(it, FLOORS)
+			{
+				vf2 ortho_distance;
+				vf2 ortho_portion;
+				if
+				(
+					ray_cast_line_segment(&ortho_distance.x, &ortho_portion.x, { state->lucia_position.x, lucia_eye_level }, normalize(vf2 { ray_horizontal.x, pitch }), { (*it)[0].x, 0.0f }, { (*it)[1].x, 0.0f }) &&
+					ray_cast_line_segment(&ortho_distance.y, &ortho_portion.y, { state->lucia_position.y, lucia_eye_level }, normalize(vf2 { ray_horizontal.y, pitch }), { (*it)[0].y, 0.0f }, { (*it)[1].y, 0.0f })
+				)
+				{
+					f32 distance = sqrtf(square(ortho_distance.x) + square(ortho_distance.y) - square(lucia_eye_level));
+					if (floor_index == -1 || distance < floor_distance)
+					{
+						floor_index    = it_index;
+						floor_distance = distance;
+						floor_portion  = ortho_portion;
+					}
+				}
+			}
+
+			if (floor_index != -1)
 			{
 				*(reinterpret_cast<u32*>(state->view->pixels) + y * state->view->w + x) =
 					to_pixel
 					(
 						state->view,
-						*(state->floor.colors + static_cast<i32>(floor_portion_x * (state->floor.w - 1.0f)) * state->floor.h + static_cast<i32>(floor_portion_y * state->floor.h))
+						*(state->floor.colors + static_cast<i32>(floor_portion.x * (state->floor.w - 1.0f)) * state->floor.h + static_cast<i32>(floor_portion.y * state->floor.h))
 					);
 			}
 		}
 
 		i32 wall_index    = -1;
-		f32 wall_distance = -0.f;
-		f32 wall_portion  = -0.f;
+		f32 wall_distance = NAN;
+		f32 wall_portion  = NAN;
 
 		FOR_ELEMS(it, WALLS)
 		{
