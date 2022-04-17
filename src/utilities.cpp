@@ -114,6 +114,75 @@ internal bool32 ray_cast_line_segment(f32* scalar, f32* portion, vf2 position, v
 	return 0.0f <= *portion && *portion <= 1.0f;
 }
 
+internal bool32 intersect_thick_line_segment(vf2* intersection, vf2* normal, bool32* is_inside, vf2 position, vf2 ray, vf2 start, vf2 end, f32 thickness)
+{
+	vf2 dir        = normalize(end - start);
+	vf2 vertices[] =
+		{
+			start + (-dir + vf2 {  dir.y, -dir.x }) * thickness,
+			end   + ( dir + vf2 {  dir.y, -dir.x }) * thickness,
+			end   + ( dir + vf2 { -dir.y,  dir.x }) * thickness,
+			start + (-dir + vf2 { -dir.y,  dir.x }) * thickness
+		};
+
+	bool32 inside      = false;
+	vf2    current_dir = dir;
+	f32    best_delta  = -1.0f;
+	vf2    best_point  = { NAN, NAN };
+	vf2    best_normal = { NAN, NAN };
+	FOR_RANGE(i, 4)
+	{
+		refering u     = vertices[i];
+		refering v     = vertices[(i + 1) % 4];
+		f32      delta = -1.0f;
+		vf2      point = { NAN, NAN };
+
+		if (!inside && dot(position - u, { current_dir.y, -current_dir.x }) >= 0.0f)
+		{
+			if (dot(ray, { current_dir.y, -current_dir.x }) < 0.0f)
+			{
+				f32 denom = ray.x * (u.y - v.y) - ray.y * (u.x - v.x);
+				if (fabs(denom) > 0.001f)
+				{
+					point = (ray * (u.y * v.x - u.x * v.y) + (ray.x * position.y - ray.y * position.x) * (u - v)) / denom;
+					delta = norm(point - position);
+				}
+			}
+		}
+		else if (IN_RANGE(dot(position - u, { -current_dir.y, current_dir.x }), 0.0f, thickness))
+		{
+			point  = dot(position - u, current_dir) * current_dir + u;
+			delta  = norm(point - position);
+
+			if (IN_RANGE(dot(point - u, current_dir), 0.0f, norm(u - v)))
+			{
+				inside = true;
+			}
+		}
+
+		if (delta != -1.0f && IN_RANGE(dot(point - u, current_dir), 0.0f, norm(u - v)) && (best_delta == -1.0f || delta < best_delta))
+		{
+			best_delta  = delta;
+			best_point  = point;
+			best_normal = { current_dir.y, -current_dir.x };
+		}
+
+		current_dir = { -current_dir.y, current_dir.x };
+	}
+
+	if (best_delta != -1.0f && (inside || best_delta <= norm(ray)))
+	{
+		*intersection = best_point;
+		*normal       = best_normal;
+		*is_inside    = inside;
+		return true;
+	}
+	else
+	{
+		return false;
+	}
+}
+
 internal u32 to_pixel(SDL_Surface* surface, vf4 color)
 {
 	return
@@ -194,4 +263,22 @@ internal ColumnMajorTexture init_column_major_texture(strlit filepath)
 internal void deinit_column_major_texture(ColumnMajorTexture* texture)
 {
 	free(texture->colors);
+}
+
+internal void draw_line(SDL_Surface* surface, vf2 start, vf2 end, vf4 color)
+{
+	u32 pixel  = to_pixel(surface, color);
+	vf2 p      = end - start;
+	f32 length = norm(p);
+	vf2 np     = p / length;
+	p = start;
+
+	FOR_RANGE(length)
+	{
+		if (IN_RANGE(p.x, 0.0f, surface->w) && IN_RANGE(p.y, 0.0f, surface->h))
+		{
+			*(reinterpret_cast<u32*>(surface->pixels) + static_cast<i32>(p.y) * surface->w + static_cast<i32>(p.x)) = pixel;
+		}
+		p += np;
+	}
 }
