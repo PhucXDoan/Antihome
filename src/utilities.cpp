@@ -42,6 +42,28 @@ global constexpr u16 RAND_TABLE[] =
 		0xda05, 0xd0df, 0x0cbf, 0x2efe, 0x38aa, 0xbd2d, 0x1a53, 0x0f2b
 	};
 
+enum struct IntersectionStatus : u32
+{
+	none,
+	outside,
+	inside
+};
+
+struct Intersection
+{
+	IntersectionStatus status;
+	vf2                position;
+	vf2                normal;
+	f32                distance;
+};
+
+struct ColumnMajorTexture
+{
+	i32  w;
+	i32  h;
+	vf3* colors;
+};
+
 internal f32 rng(u32* seed)
 {
 	return RAND_TABLE[++*seed % ARRAY_CAPACITY(RAND_TABLE)] / 65536.0f;
@@ -114,21 +136,6 @@ internal bool32 ray_cast_line(f32* scalar, f32* portion, vf2 position, vf2 ray, 
 	return true;
 }
 
-enum struct IntersectionStatus : u32
-{
-	none,
-	outside,
-	inside
-};
-
-struct Intersection
-{
-	IntersectionStatus status;
-	vf2                position;
-	vf2                normal;
-	f32                distance;
-};
-
 internal Intersection intersect_thick_line_segment(vf2 position, vf2 ray, vf2 start, vf2 end, f32 thickness)
 {
 	vf2 dir        = normalize(end - start);
@@ -199,49 +206,22 @@ internal Intersection intersect_thick_line_segment(vf2 position, vf2 ray, vf2 st
 	return closest_intersection;
 }
 
-internal u32 to_pixel(SDL_Surface* surface, vf4 color)
+internal u32 to_pixel(SDL_Surface* surface, vf3 color)
 {
-	return
-		(static_cast<u32>(static_cast<u8>(color.x * 255.0f)) << 24 >> __lzcnt(surface->format->Rmask)) |
-		(static_cast<u32>(static_cast<u8>(color.y * 255.0f)) << 24 >> __lzcnt(surface->format->Gmask)) |
-		(static_cast<u32>(static_cast<u8>(color.z * 255.0f)) << 24 >> __lzcnt(surface->format->Bmask)) |
-		(static_cast<u32>(static_cast<u8>(color.w * 255.0f)) << 24 >> __lzcnt(surface->format->Amask));
+	return SDL_MapRGB(surface->format, static_cast<u8>(color.x * 255.0f), static_cast<u8>(color.y * 255.0f), static_cast<u8>(color.z * 255.0f));
 }
 
-internal void fill(SDL_Surface* surface, vf2 position, vf2 dimensions, vf4 color)
+internal void fill(SDL_Surface* surface, vf2 position, vf2 dimensions, vf3 color)
 {
 	SDL_Rect rect = { static_cast<i32>(position.x), static_cast<i32>(position.y), static_cast<i32>(dimensions.x), static_cast<i32>(dimensions.y) };
-	SDL_FillRect
-	(
-		surface,
-		&rect,
-		(static_cast<u32>(static_cast<u8>(color.w * 255.0f)) << 24) |
-		(static_cast<u32>(static_cast<u8>(color.z * 255.0f)) << 16) |
-		(static_cast<u32>(static_cast<u8>(color.y * 255.0f)) <<  8) |
-		(static_cast<u32>(static_cast<u8>(color.x * 255.0f)) <<  0)
-	);
+	SDL_FillRect(surface, &rect, to_pixel(surface, color));
 }
 
-internal void fill(SDL_Surface* surface, vf4 color)
+internal void fill(SDL_Surface* surface, vf3 color)
 {
 	SDL_Rect rect = { 0, 0, surface->w, surface->h };
-	SDL_FillRect
-	(
-		surface,
-		&rect,
-		(static_cast<u32>(static_cast<u8>(color.w * 255.0f)) << 24) |
-		(static_cast<u32>(static_cast<u8>(color.z * 255.0f)) << 16) |
-		(static_cast<u32>(static_cast<u8>(color.y * 255.0f)) <<  8) |
-		(static_cast<u32>(static_cast<u8>(color.x * 255.0f)) <<  0)
-	);
+	SDL_FillRect(surface, &rect, to_pixel(surface, color));
 }
-
-struct ColumnMajorTexture
-{
-	i32  w;
-	i32  h;
-	vf4* colors;
-};
 
 // @TODO@ Use arena.
 internal ColumnMajorTexture init_column_major_texture(strlit filepath)
@@ -256,7 +236,7 @@ internal ColumnMajorTexture init_column_major_texture(strlit filepath)
 
 	texture.w      = iw;
 	texture.h      = ih;
-	texture.colors = reinterpret_cast<vf4*>(malloc(texture.w * texture.h * sizeof(vf4)));
+	texture.colors = reinterpret_cast<vf3*>(malloc(texture.w * texture.h * sizeof(vf3)));
 
 	FOR_RANGE(y, texture.h)
 	{
@@ -268,7 +248,6 @@ internal ColumnMajorTexture init_column_major_texture(strlit filepath)
 					static_cast<f32>(pixel >>  0 & 0xFF) / 0xFF,
 					static_cast<f32>(pixel >>  8 & 0xFF) / 0xFF,
 					static_cast<f32>(pixel >> 16 & 0xFF) / 0xFF,
-					static_cast<f32>(pixel >> 24 & 0xFF) / 0xFF
 				};
 		}
 	}
@@ -281,7 +260,7 @@ internal void deinit_column_major_texture(ColumnMajorTexture* texture)
 	free(texture->colors);
 }
 
-internal void draw_line(SDL_Surface* surface, vf2 start, vf2 end, vf4 color)
+internal void draw_line(SDL_Surface* surface, vf2 start, vf2 end, vf3 color)
 {
 	u32 pixel  = to_pixel(surface, color);
 	vf2 p      = end - start;

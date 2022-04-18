@@ -174,8 +174,8 @@ extern "C" PROTOTYPE_RENDER(render)
 
 	constexpr i32 VIEW_PADDING = 10;
 
-	fill(platform->surface, { 0.0f, 0.0f, 0.0f, 1.0f });
-	fill(state->view      , { 1.0f, 0.0f, 0.0f, 1.0f });
+	fill(platform->surface, { 0.0f, 0.0f, 0.0f });
+	fill(state->view      , { 1.0f, 1.0f, 1.0f });
 
 	#if 1
 	f32 lucia_eye_level = LUCIA_HEIGHT + 0.025f * (cosf(state->lucia_head_bob_keytime * TAU) - 1.0f);
@@ -205,19 +205,18 @@ extern "C" PROTOTYPE_RENDER(render)
 		if (wall_index != -1)
 		{
 			i32 starting_y = static_cast<i32>(VIEW_DIM.y / 2.0f - HORT_TO_VERT_K / state->lucia_fov * (WALL_HEIGHT - lucia_eye_level) / wall_distance);
-			i32 ending_y   = static_cast<i32>(VIEW_DIM.y / 2.0f + HORT_TO_VERT_K / state->lucia_fov * lucia_eye_level / wall_distance);
+			i32 ending_y   = static_cast<i32>(VIEW_DIM.y / 2.0f + HORT_TO_VERT_K / state->lucia_fov *                lucia_eye_level  / wall_distance);
 
 			pixel_starting_y = MAXIMUM(0, starting_y);
 			pixel_ending_y   = MINIMUM(ending_y, static_cast<i32>(VIEW_DIM.y));
 
-			vf4* texture_column = &state->wall.colors[static_cast<i32>(wall_portion * (state->wall.w - 1.0f)) * state->wall.h];
 			FOR_RANGE(y, pixel_starting_y, pixel_ending_y)
 			{
 				*(reinterpret_cast<u32*>(state->view->pixels) + y * state->view->w + x) =
 					to_pixel
 					(
 						state->view,
-						texture_column[static_cast<i32>(static_cast<f32>(ending_y - y) / (ending_y - starting_y) * state->wall.h)]
+						*(state->wall.colors + static_cast<i32>(wall_portion * (state->wall.w - 1.0f)) * state->wall.h + static_cast<i32>(static_cast<f32>(ending_y - y) / (ending_y - starting_y) * state->wall.h))
 					);
 			}
 		}
@@ -262,13 +261,13 @@ extern "C" PROTOTYPE_RENDER(render)
 					if (portions.x < 0.0f) { portions.x += 1.0f; }
 					if (portions.y < 0.0f) { portions.y += 1.0f; }
 
-					f32 k     = CLAMP(1.0f - distance / 16.0f, 0.0f, 1.0f);
-					vf4 color = *(texture->colors + static_cast<i32>(portions.x * (texture->w - 1.0f)) * texture->h + static_cast<i32>(portions.y * texture->h));
-					color.x  *= k;
-					color.y  *= k;
-					color.z  *= k;
-
-					*(reinterpret_cast<u32*>(state->view->pixels) + y * state->view->w + x) = to_pixel(state->view, color);
+					*(reinterpret_cast<u32*>(state->view->pixels) + y * state->view->w + x) =
+						to_pixel
+						(
+							state->view,
+							*(texture->colors + static_cast<i32>(portions.x * (texture->w - 1.0f)) * texture->h + static_cast<i32>(portions.y * texture->h))
+								* CLAMP(1.0f - distance / 16.0f, 0.0f, 1.0f)
+						);
 				}
 			}
 		}
@@ -295,7 +294,7 @@ extern "C" PROTOTYPE_RENDER(render)
 			state->view,
 			VIEW_DIM / 2.0f + CONJUGATE(-ORIGIN + (*it)[0]) * PIXELS_PER_METER,
 			VIEW_DIM / 2.0f + CONJUGATE(-ORIGIN + (*it)[1]) * PIXELS_PER_METER,
-			{ 1.0f, 1.0f, 1.0f, 1.0f }
+			{ 0.0f, 0.0f, 0.0f }
 		);
 
 		FOR_RANGE(i, 4)
@@ -305,19 +304,19 @@ extern "C" PROTOTYPE_RENDER(render)
 				state->view,
 				VIEW_DIM / 2.0f + CONJUGATE(-ORIGIN + VERTICES[i]          ) * PIXELS_PER_METER,
 				VIEW_DIM / 2.0f + CONJUGATE(-ORIGIN + VERTICES[(i + 1) % 4]) * PIXELS_PER_METER,
-				{ 1.0f, 0.9f, 0.4f, 1.0f }
+				{ 1.0f, 0.0f, 0.0f }
 			);
 		}
 	}
 
 	constexpr f32 LUCIA_DIM = 4.0f;
-	fill(state->view, VIEW_DIM / 2.0f + CONJUGATE(-ORIGIN + state->lucia_position) * PIXELS_PER_METER - vf2 { LUCIA_DIM, LUCIA_DIM } / 2.0f, vf2 { LUCIA_DIM, LUCIA_DIM }, { 0.8f, 0.4f, 0.6f, 1.0f });
+	fill(state->view, VIEW_DIM / 2.0f + CONJUGATE(-ORIGIN + state->lucia_position) * PIXELS_PER_METER - vf2 { LUCIA_DIM, LUCIA_DIM } / 2.0f, vf2 { LUCIA_DIM, LUCIA_DIM }, { 0.0f, 0.0f, 1.0f });
 	draw_line
 	(
 		state->view,
 		VIEW_DIM / 2.0f + CONJUGATE(-ORIGIN + state->lucia_position                                   ) * PIXELS_PER_METER,
 		VIEW_DIM / 2.0f + CONJUGATE(-ORIGIN + state->lucia_position + polar(state->lucia_angle) * 1.0f) * PIXELS_PER_METER,
-		{ 0.4f, 0.8f, 0.6f, 1.0f }
+		{ 0.4f, 0.8f, 0.6f }
 	);
 	#endif
 
