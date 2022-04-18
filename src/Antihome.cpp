@@ -56,26 +56,6 @@ extern "C" PROTOTYPE_INITIALIZE(initialize)
 	state->lucia_fov = TAU / 3.0f;
 
 	SDL_SetRelativeMouseMode(SDL_TRUE);
-
-
-
-
-
-
-
-	#if 0
-	DEBUG_printf(">>>>\n");
-	vf2 intersection;
-	if (intersect_thick_line_segment(&intersection, { 2.65f, 1.01f }, { 0.07f, -3.17f }, { 2.99f, 3.75f }, { 1.42f, -1.89f }, 0.697f))
-	{
-		DEBUG_printf("Intersection at (%f, %f).\n", intersection.x, intersection.y);
-	}
-	else
-	{
-		DEBUG_printf("No intersection.\n");
-	}
-	DEBUG_printf("<<<<\n");
-	#endif
 }
 
 extern "C" PROTOTYPE_BOOT_UP(boot_up)
@@ -156,50 +136,37 @@ extern "C" PROTOTYPE_UPDATE(update)
 	vf2 displacement = state->lucia_velocity * SECONDS_PER_UPDATE;
 	FOR_RANGE(4)
 	{
-		f32    intersection_distance = -1.0f;
-		vf2    intersection          = { NAN, NAN };
-		vf2    intersection_normal   = { NAN, NAN };
-		bool32 is_inside             = false;
+		Intersection closest_intersection;
+		closest_intersection.status   = IntersectionStatus::none;
+		closest_intersection.position = { NAN, NAN };
+		closest_intersection.normal   = { NAN, NAN };
+		closest_intersection.distance = NAN;
 
 		FOR_ELEMS(it, WALLS)
 		{
-			vf2    probing_intersection;
-			vf2    probing_normal;
-			bool32 probing_inside;
-			if (intersect_thick_line_segment(&probing_intersection, &probing_normal, &probing_inside, state->lucia_position, displacement, (*it)[0], (*it)[1], WALL_THICKNESS))
-			{
-				f32 probing_distance = norm(probing_intersection - state->lucia_position);
+			Intersection intersection = intersect_thick_line_segment(state->lucia_position, displacement, (*it)[0], (*it)[1], WALL_THICKNESS);
 
-				if (probing_inside)
-				{
-					if (!is_inside || probing_distance > intersection_distance)
-					{
-						intersection_distance = probing_distance;
-						intersection          = probing_intersection;
-						intersection_normal   = probing_normal;
-						is_inside             = true;
-					}
-				}
-				else if (!is_inside && (intersection_distance == -1.0f || probing_distance < intersection_distance))
-				{
-					intersection_distance = probing_distance;
-					intersection          = probing_intersection;
-					intersection_normal   = probing_normal;
-				}
+			if
+			(
+				closest_intersection.status == IntersectionStatus::none    ||
+				intersection.status         == IntersectionStatus::outside &&  closest_intersection.status == IntersectionStatus::outside && intersection.distance < closest_intersection.distance ||
+				intersection.status         == IntersectionStatus::inside  && (closest_intersection.status == IntersectionStatus::outside || intersection.distance > closest_intersection.distance)
+			)
+			{
+				closest_intersection = intersection;
 			}
 		}
 
-		if (intersection_distance == -1.0f)
+		if (closest_intersection.status == IntersectionStatus::none)
 		{
 			break;
 		}
 		else
 		{
-			state->lucia_position = intersection;
-			displacement          = dot(state->lucia_position + displacement - intersection, { -intersection_normal.y, intersection_normal.x }) * vf2 { -intersection_normal.y, intersection_normal.x };
+			state->lucia_position = closest_intersection.position;
+			displacement          = dot(state->lucia_position + displacement - closest_intersection.position, { -closest_intersection.normal.y, closest_intersection.normal.x }) * vf2 { -closest_intersection.normal.y, closest_intersection.normal.x };
 		}
 	}
-
 	state->lucia_position += displacement;
 
 	state->lucia_head_bob_keytime += 0.5f * norm(state->lucia_velocity) * SECONDS_PER_UPDATE;

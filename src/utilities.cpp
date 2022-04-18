@@ -114,7 +114,22 @@ internal bool32 ray_cast_line_segment(f32* scalar, f32* portion, vf2 position, v
 	return 0.0f <= *portion && *portion <= 1.0f;
 }
 
-internal bool32 intersect_thick_line_segment(vf2* intersection, vf2* normal, bool32* is_inside, vf2 position, vf2 ray, vf2 start, vf2 end, f32 thickness)
+enum_loose (IntersectionStatus, u32)
+{
+	none,
+	outside,
+	inside
+};
+
+struct Intersection
+{
+	IntersectionStatus status;
+	vf2                position;
+	vf2                normal;
+	f32                distance;
+};
+
+internal Intersection intersect_thick_line_segment(vf2 position, vf2 ray, vf2 start, vf2 end, f32 thickness)
 {
 	vf2 dir        = normalize(end - start);
 	vf2 vertices[] =
@@ -170,17 +185,19 @@ internal bool32 intersect_thick_line_segment(vf2* intersection, vf2* normal, boo
 		current_dir = { -current_dir.y, current_dir.x };
 	}
 
+	Intersection intersection;
 	if (best_delta != -1.0f && (inside || best_delta <= norm(ray)))
 	{
-		*intersection = best_point;
-		*normal       = best_normal;
-		*is_inside    = inside;
-		return true;
+		intersection.status   = inside ? IntersectionStatus::inside : IntersectionStatus::outside;
+		intersection.position = best_point;
+		intersection.normal   = best_normal;
+		intersection.distance = best_delta;
 	}
 	else
 	{
-		return false;
+		intersection.status = IntersectionStatus::none;
 	}
+	return intersection;
 }
 
 internal u32 to_pixel(SDL_Surface* surface, vf4 color)
