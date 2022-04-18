@@ -189,7 +189,7 @@ extern "C" PROTOTYPE_RENDER(render)
 	fill(platform->surface, { 0.0f, 0.0f, 0.0f, 1.0f });
 	fill(state->view      , { 0.1f, 0.2f, 0.3f, 1.0f });
 
-	#if 1
+	#if 0
 	constexpr f32 MAGIC_K = 0.927295218f * VIEW_DIM.x;
 	f32 lucia_eye_level = LUCIA_HEIGHT + 0.025f * (cosf(state->lucia_head_bob_keytime * TAU) - 1.0f);
 

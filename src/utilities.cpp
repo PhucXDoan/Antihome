@@ -114,7 +114,7 @@ internal bool32 ray_cast_line_segment(f32* scalar, f32* portion, vf2 position, v
 	return 0.0f <= *portion && *portion <= 1.0f;
 }
 
-enum_loose (IntersectionStatus, u32)
+enum struct IntersectionStatus : u32
 {
 	none,
 	outside,
@@ -140,64 +140,63 @@ internal Intersection intersect_thick_line_segment(vf2 position, vf2 ray, vf2 st
 			start + (-dir + vf2 { -dir.y,  dir.x }) * thickness
 		};
 
-	bool32 inside      = false;
-	vf2    current_dir = dir;
-	f32    best_delta  = -1.0f;
-	vf2    best_point  = { NAN, NAN };
-	vf2    best_normal = { NAN, NAN };
+	Intersection closest_intersection;
+	closest_intersection.status   = IntersectionStatus::none;
+	closest_intersection.position = { NAN, NAN };
+	closest_intersection.normal   = { NAN, NAN };
+	closest_intersection.distance = NAN;
+
+	vf2 current_dir = dir;
 	FOR_RANGE(i, 4)
 	{
-		refering u     = vertices[i];
-		refering v     = vertices[(i + 1) % 4];
-		f32      delta = -1.0f;
-		vf2      point = { NAN, NAN };
+		refering u = vertices[i];
+		refering v = vertices[(i + 1) % 4];
+		vf2      n = { current_dir.y, -current_dir.x };
 
-		if (!inside && dot(position - u, { current_dir.y, -current_dir.x }) >= 0.0f)
+		Intersection intersection;
+		intersection.status   = IntersectionStatus::none;
+		intersection.position = { NAN, NAN };
+		intersection.normal   = { NAN, NAN };
+		intersection.distance = NAN;
+
+		if (closest_intersection.status != IntersectionStatus::inside && dot(position - u, n) >= 0.0f)
 		{
-			if (dot(ray, { current_dir.y, -current_dir.x }) < 0.0f)
+			if (dot(ray, n) < 0.0f)
 			{
 				f32 denom = ray.x * (u.y - v.y) - ray.y * (u.x - v.x);
 				if (fabs(denom) > 0.001f)
 				{
-					point = (ray * (u.y * v.x - u.x * v.y) + (ray.x * position.y - ray.y * position.x) * (u - v)) / denom;
-					delta = norm(point - position);
+					intersection.position = (ray * (u.y * v.x - u.x * v.y) + (ray.x * position.y - ray.y * position.x) * (u - v)) / denom;
+					intersection.distance = norm(intersection.position - position);
+
+					if (IN_RANGE(dot(intersection.position - u, current_dir), 0.0f, norm(u - v)) && intersection.distance < norm(ray))
+					{
+						intersection.status = IntersectionStatus::outside;
+					}
 				}
 			}
 		}
-		else if (IN_RANGE(dot(position - u, { -current_dir.y, current_dir.x }), 0.0f, thickness))
+		else if (IN_RANGE(dot(position - u, -n), 0.0f, thickness))
 		{
-			point  = dot(position - u, current_dir) * current_dir + u;
-			delta  = norm(point - position);
+			intersection.position = dot(position - u, current_dir) * current_dir + u;
 
-			if (IN_RANGE(dot(point - u, current_dir), 0.0f, norm(u - v)))
+			if (IN_RANGE(dot(intersection.position - u, current_dir), 0.0f, norm(u - v)))
 			{
-				inside = true;
+				intersection.status   = IntersectionStatus::inside;
+				intersection.distance = norm(intersection.position - position);
 			}
 		}
 
-		if (delta != -1.0f && IN_RANGE(dot(point - u, current_dir), 0.0f, norm(u - v)) && (best_delta == -1.0f || delta < best_delta))
+		if (intersection.status != IntersectionStatus::none && (closest_intersection.status == IntersectionStatus::none || intersection.distance < closest_intersection.distance))
 		{
-			best_delta  = delta;
-			best_point  = point;
-			best_normal = { current_dir.y, -current_dir.x };
+			closest_intersection        = intersection;
+			closest_intersection.normal = n;
 		}
 
 		current_dir = { -current_dir.y, current_dir.x };
 	}
 
-	Intersection intersection;
-	if (best_delta != -1.0f && (inside || best_delta <= norm(ray)))
-	{
-		intersection.status   = inside ? IntersectionStatus::inside : IntersectionStatus::outside;
-		intersection.position = best_point;
-		intersection.normal   = best_normal;
-		intersection.distance = best_delta;
-	}
-	else
-	{
-		intersection.status = IntersectionStatus::none;
-	}
-	return intersection;
+	return closest_intersection;
 }
 
 internal u32 to_pixel(SDL_Surface* surface, vf4 color)
