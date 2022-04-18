@@ -85,7 +85,7 @@ internal vf2 rotate(vf2 v, f32 angle)
 	return { v.x * cosf(angle) - v.y * sinf(angle), v.x * sinf(angle) + v.y * cosf(angle) };
 }
 
-internal bool32 ray_cast_line_segment(f32* scalar, f32* portion, vf2 position, vf2 ray, vf2 start, vf2 end)
+internal bool32 ray_cast_line(f32* scalar, f32* portion, vf2 position, vf2 ray, vf2 start, vf2 end)
 {
 	f32 scalar_denom = (start.x - end.x) * ray.y - (start.y - end.y) * ray.x;
 
@@ -111,7 +111,7 @@ internal bool32 ray_cast_line_segment(f32* scalar, f32* portion, vf2 position, v
 
 	*portion = (portion_c + ray.x * position.y - ray.y * position.x) / portion_denom;
 
-	return 0.0f <= *portion && *portion <= 1.0f;
+	return true;
 }
 
 enum struct IntersectionStatus : u32

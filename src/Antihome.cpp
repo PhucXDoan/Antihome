@@ -13,20 +13,7 @@ global constexpr vf2 WALLS[][2]     =
 		{ { -1.5f, -1.5f }, {  8.5f, -1.5f } },
 		{ { -1.5f,  1.5f }, {  4.5f,  7.5f } },
 		{ {  4.5f,  7.5f }, {  8.5f,  1.5f } },
-		{ { -1.5f, -1.5f }, { -1.5f,  1.5f } },
 		{ {  8.5f, -1.5f }, {  8.5f,  1.5f } }
-	};
-global constexpr vf2 FLOORS[][2] =
-	{
-		{ { -1.5f + 3.0f * 0.0f, -1.5f }, { 1.5f + 3.0f * 0.0f, 1.5f } },
-		{ { -1.5f + 3.0f * 1.0f, -1.5f }, { 1.5f + 3.0f * 1.0f, 1.5f } },
-		{ { -1.5f + 3.0f * 2.0f, -1.5f }, { 1.5f + 3.0f * 2.0f, 1.5f } },
-		{ { -1.5f + 3.0f * 3.0f, -1.5f }, { 1.5f + 3.0f * 3.0f, 1.5f } }
-	};
-global constexpr vf2 CEILINGS[][2] =
-	{
-		{ { -1.5f + 3.0f * 0.0f, -1.5f }, { 1.5f + 3.0f * 0.0f, 1.5f } },
-		{ { -1.5f + 3.0f * 2.0f, -1.5f }, { 1.5f + 3.0f * 2.0f, 1.5f } }
 	};
 
 struct State
@@ -189,7 +176,7 @@ extern "C" PROTOTYPE_RENDER(render)
 	fill(platform->surface, { 0.0f, 0.0f, 0.0f, 1.0f });
 	fill(state->view      , { 0.1f, 0.2f, 0.3f, 1.0f });
 
-	#if 0
+	#if 1
 	constexpr f32 MAGIC_K = 0.927295218f * VIEW_DIM.x;
 	f32 lucia_eye_level = LUCIA_HEIGHT + 0.025f * (cosf(state->lucia_head_bob_keytime * TAU) - 1.0f);
 
@@ -197,78 +184,34 @@ extern "C" PROTOTYPE_RENDER(render)
 	{
 		vf2 ray_horizontal = polar(state->lucia_angle + (0.5f - x / VIEW_DIM.x) * state->lucia_fov);
 
-		FOR_RANGE(y, 0, static_cast<i32>(VIEW_DIM.y / 2.0f))
-		{
-			f32 pitch            = (VIEW_DIM.y / 2.0f - y) * state->lucia_fov / MAGIC_K;
-			i32 ceiling_index    = -1;
-			f32 ceiling_distance = NAN;
-			vf2 ceiling_portion  = { NAN, NAN };
-
-			FOR_ELEMS(it, CEILINGS)
-			{
-				vf2 ortho_distance;
-				vf2 ortho_portion;
-				if
-				(
-					ray_cast_line_segment(&ortho_distance.x, &ortho_portion.x, { state->lucia_position.x, lucia_eye_level }, normalize(vf2 { ray_horizontal.x, pitch }), { (*it)[0].x, WALL_HEIGHT }, { (*it)[1].x, WALL_HEIGHT }) &&
-					ray_cast_line_segment(&ortho_distance.y, &ortho_portion.y, { state->lucia_position.y, lucia_eye_level }, normalize(vf2 { ray_horizontal.y, pitch }), { (*it)[0].y, WALL_HEIGHT }, { (*it)[1].y, WALL_HEIGHT })
-				)
-				{
-					f32 distance = sqrtf(square(ortho_distance.x) + square(ortho_distance.y) - square(lucia_eye_level));
-					if (ceiling_index == -1 || distance < ceiling_distance)
-					{
-						ceiling_index    = it_index;
-						ceiling_distance = distance;
-						ceiling_portion  = ortho_portion;
-					}
-				}
-			}
-
-			if (ceiling_index != -1)
-			{
-				*(reinterpret_cast<u32*>(state->view->pixels) + y * state->view->w + x) =
-					to_pixel
-					(
-						state->view,
-						*(state->ceiling.colors + static_cast<i32>(ceiling_portion.x * (state->ceiling.w - 1.0f)) * state->ceiling.h + static_cast<i32>(ceiling_portion.y * state->ceiling.h))
-					);
-			}
-		}
 		FOR_RANGE(y, static_cast<i32>(VIEW_DIM.y / 2.0f), VIEW_DIM.y)
 		{
-			f32 pitch          = (VIEW_DIM.y / 2.0f - y) * state->lucia_fov / MAGIC_K;
-			i32 floor_index    = -1;
-			f32 floor_distance = NAN;
-			vf2 floor_portion  = { NAN, NAN };
-
-			FOR_ELEMS(it, FLOORS)
+			f32 pitch = (VIEW_DIM.y / 2.0f - y) * state->lucia_fov / MAGIC_K;
+			vf2 distances;
+			vf2 portions;
+			if
+			(
+				ray_cast_line(&distances.x, &portions.x, { state->lucia_position.x, lucia_eye_level }, normalize(vf2 { ray_horizontal.x, pitch }), { 0.0f, 0.0f }, { 1.0f, 0.0f }) &&
+				ray_cast_line(&distances.y, &portions.y, { state->lucia_position.y, lucia_eye_level }, normalize(vf2 { ray_horizontal.y, pitch }), { 0.0f, 0.0f }, { 1.0f, 0.0f })
+			)
 			{
-				vf2 ortho_distance;
-				vf2 ortho_portion;
-				if
-				(
-					ray_cast_line_segment(&ortho_distance.x, &ortho_portion.x, { state->lucia_position.x, lucia_eye_level }, normalize(vf2 { ray_horizontal.x, pitch }), { (*it)[0].x, 0.0f }, { (*it)[1].x, 0.0f }) &&
-					ray_cast_line_segment(&ortho_distance.y, &ortho_portion.y, { state->lucia_position.y, lucia_eye_level }, normalize(vf2 { ray_horizontal.y, pitch }), { (*it)[0].y, 0.0f }, { (*it)[1].y, 0.0f })
-				)
-				{
-					f32 distance = sqrtf(square(ortho_distance.x) + square(ortho_distance.y) - square(lucia_eye_level));
-					if (floor_index == -1 || distance < floor_distance)
-					{
-						floor_index    = it_index;
-						floor_distance = distance;
-						floor_portion  = ortho_portion;
-					}
-				}
-			}
+				f32 distance = sqrtf(square(distances.x) + square(distances.y) - square(lucia_eye_level));
 
-			if (floor_index != -1)
-			{
-				*(reinterpret_cast<u32*>(state->view->pixels) + y * state->view->w + x) =
-					to_pixel
-					(
-						state->view,
-						*(state->floor.colors + static_cast<i32>(floor_portion.x * (state->floor.w - 1.0f)) * state->floor.h + static_cast<i32>(floor_portion.y * state->floor.h))
-					);
+				constexpr f32 FLOOR_DIMENSION = 4.0f;
+
+				portions.x = fmodf(portions.x, FLOOR_DIMENSION);
+				portions.y = fmodf(portions.y, FLOOR_DIMENSION);
+				if (portions.x < 0.0f) { portions.x += FLOOR_DIMENSION; }
+				if (portions.y < 0.0f) { portions.y += FLOOR_DIMENSION; }
+				portions /= FLOOR_DIMENSION;
+
+				f32 k     = CLAMP(1.0f - distance / 16.0f, 0.0f, 1.0f);
+				vf4 color = *(state->floor.colors + static_cast<i32>(portions.x * (state->floor.w - 1.0f)) * state->floor.h + static_cast<i32>(portions.y * state->floor.h));
+				color.x  *= k;
+				color.y  *= k;
+				color.z  *= k;
+
+				*(reinterpret_cast<u32*>(state->view->pixels) + y * state->view->w + x) = to_pixel(state->view, color);
 			}
 		}
 
@@ -280,7 +223,7 @@ extern "C" PROTOTYPE_RENDER(render)
 		{
 			f32 distance;
 			f32 portion;
-			if (ray_cast_line_segment(&distance, &portion, state->lucia_position, ray_horizontal, (*it)[0], (*it)[1]) && (wall_index == -1 || distance < wall_distance))
+			if (ray_cast_line(&distance, &portion, state->lucia_position, ray_horizontal, (*it)[0], (*it)[1]) && IN_RANGE(portion, 0.0f, 1.0f) && (wall_index == -1 || distance < wall_distance))
 			{
 				wall_index    = it_index;
 				wall_distance = distance;
