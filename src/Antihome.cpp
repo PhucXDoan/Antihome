@@ -4,19 +4,20 @@
 #include "platform.h"
 #include "utilities.cpp"
 
-global constexpr vf2 VIEW_DIM       = { 350.0f, 175.0f };
-global constexpr f32 HORT_TO_VERT_K = 0.927295218f * VIEW_DIM.x;
-global constexpr f32 WALL_HEIGHT    = 2.7432f;
-global constexpr f32 WALL_THICKNESS = 0.5f;
-global constexpr f32 LUCIA_HEIGHT   = 1.4986f;
-global constexpr vf2 WALLS[][2]     =
+global constexpr vf2 VIEW_DIM                    = { 350.0f, 175.0f };
+global constexpr f32 HORT_TO_VERT_K              = 0.927295218f * VIEW_DIM.x;
+global constexpr f32 WALL_HEIGHT                 = 2.7432f;
+global constexpr f32 WALL_THICKNESS              = 0.1f;
+global constexpr f32 LUCIA_HEIGHT                = 1.4986f;
+global constexpr i32 MAP_DIM                     = 32;
+global constexpr f32 WALL_SPACING                = 3.0f;
+global constexpr vf2 WALL_LAYOUT_POSITIONS[4][2] =
 	{
-		{ { -1.5f, -1.5f }, {  8.5f, -1.5f } },
-		{ { -1.5f,  1.5f }, {  4.5f,  7.5f } },
-		{ {  4.5f,  7.5f }, {  8.5f,  1.5f } },
-		{ {  8.5f, -1.5f }, {  8.5f,  1.5f } }
+		{ { 0.0f, 0.0f }, { 0.0f, 1.0f } },
+		{ { 0.0f, 0.0f }, { 1.0f, 0.0f } },
+		{ { 1.0f, 0.0f }, { 0.0f, 1.0f } },
+		{ { 0.0f, 0.0f }, { 1.0f, 1.0f } }
 	};
-global constexpr i32 MAP_DIM = 32;
 
 flag_struct (WallLayout, u8)
 {
@@ -30,16 +31,13 @@ struct State
 {
 	u32                seed;
 	SDL_Surface*       view;
-
 	vf2                lucia_velocity;
 	vf2                lucia_position;
 	f32                lucia_angle_velocity;
 	f32                lucia_angle;
 	f32                lucia_fov;
 	f32                lucia_head_bob_keytime;
-
 	WallLayout         wall_layouts[MAP_DIM * MAP_DIM];
-
 	ColumnMajorTexture wall;
 	ColumnMajorTexture floor;
 	ColumnMajorTexture ceiling;
@@ -57,39 +55,8 @@ extern "C" PROTOTYPE_INITIALIZE(initialize)
 
 	*state = {};
 
-	state->lucia_fov = TAU / 3.0f;
-
-	SDL_SetRelativeMouseMode(SDL_TRUE);
-}
-
-extern "C" PROTOTYPE_BOOT_UP(boot_up)
-{
-	ASSERT(sizeof(State) <= platform->memory_capacity);
-	State* state = reinterpret_cast<State*>(platform->memory);
-
-	// @TODO@ More robustiness needed here.
-	state->view =
-		SDL_CreateRGBSurface
-		(
-			0,
-			static_cast<i32>(VIEW_DIM.x),
-			static_cast<i32>(VIEW_DIM.y),
-			32,
-			0x000000FF,
-			0x0000FF00,
-			0x00FF0000,
-			0xFF000000
-		);
-
-	state->wall    = init_column_major_texture(DATA_DIR "wall.bmp");
-	state->floor   = init_column_major_texture(DATA_DIR "floor.bmp");
-	state->ceiling = init_column_major_texture(DATA_DIR "ceiling.bmp");
-
-	state->seed = 0;
-	FOR_ELEMS(it, state->wall_layouts)
-	{
-		*it = {};
-	}
+	state->lucia_position = { 0.5f, 0.5f };
+	state->lucia_fov      = TAU / 3.0f;
 
 	FOR_RANGE(start_walk_y, MAP_DIM)
 	{
@@ -172,6 +139,32 @@ extern "C" PROTOTYPE_BOOT_UP(boot_up)
 			}
 		}
 	}
+
+	SDL_SetRelativeMouseMode(SDL_TRUE);
+}
+
+extern "C" PROTOTYPE_BOOT_UP(boot_up)
+{
+	ASSERT(sizeof(State) <= platform->memory_capacity);
+	State* state = reinterpret_cast<State*>(platform->memory);
+
+	// @TODO@ More robustiness needed here.
+	state->view =
+		SDL_CreateRGBSurface
+		(
+			0,
+			static_cast<i32>(VIEW_DIM.x),
+			static_cast<i32>(VIEW_DIM.y),
+			32,
+			0x000000FF,
+			0x0000FF00,
+			0x00FF0000,
+			0xFF000000
+		);
+
+	state->wall    = init_column_major_texture(DATA_DIR "wall.bmp");
+	state->floor   = init_column_major_texture(DATA_DIR "floor.bmp");
+	state->ceiling = init_column_major_texture(DATA_DIR "ceiling.bmp");
 }
 
 extern "C" PROTOTYPE_BOOT_DOWN(boot_down)
@@ -226,6 +219,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 	state->lucia_velocity *= HOLDING(Input::shift) ? 0.75f : 0.6f;
 
 	vf2 displacement = state->lucia_velocity * SECONDS_PER_UPDATE;
+
 	FOR_RANGE(4)
 	{
 		Intersection closest_intersection;
@@ -234,18 +228,30 @@ extern "C" PROTOTYPE_UPDATE(update)
 		closest_intersection.normal   = { NAN, NAN };
 		closest_intersection.distance = NAN;
 
-		FOR_ELEMS(it, WALLS)
+		FOR_RANGE(y, MAP_DIM)
 		{
-			Intersection intersection = intersect_thick_line_segment(state->lucia_position, displacement, (*it)[0], (*it)[1], WALL_THICKNESS);
-
-			if
-			(
-				closest_intersection.status == IntersectionStatus::none    ||
-				intersection.status         == IntersectionStatus::outside &&  closest_intersection.status == IntersectionStatus::outside && intersection.distance < closest_intersection.distance ||
-				intersection.status         == IntersectionStatus::inside  && (closest_intersection.status == IntersectionStatus::outside || intersection.distance > closest_intersection.distance)
-			)
+			FOR_RANGE(x, MAP_DIM)
 			{
-				closest_intersection = intersection;
+				FOR_ELEMS(layout_position, WALL_LAYOUT_POSITIONS)
+				{
+					if (+(*get_wall_layout(state, x, y) & static_cast<WallLayout>(1 << layout_position_index)))
+					{
+						vf2 start = (vf2 { static_cast<f32>(x), static_cast<f32>(y) } + (*layout_position)[0]) * WALL_SPACING;
+						vf2 end   = (vf2 { static_cast<f32>(x), static_cast<f32>(y) } + (*layout_position)[1]) * WALL_SPACING;
+
+						Intersection intersection = intersect_thick_line_segment(state->lucia_position, displacement, start, end, WALL_THICKNESS);
+
+						if
+						(
+							closest_intersection.status == IntersectionStatus::none    ||
+							intersection.status         == IntersectionStatus::outside &&  closest_intersection.status == IntersectionStatus::outside && intersection.distance < closest_intersection.distance ||
+							intersection.status         == IntersectionStatus::inside  && (closest_intersection.status == IntersectionStatus::outside || intersection.distance > closest_intersection.distance)
+						)
+						{
+							closest_intersection = intersection;
+						}
+					}
+				}
 			}
 		}
 
@@ -281,35 +287,47 @@ extern "C" PROTOTYPE_RENDER(render)
 	fill(platform->surface, { 0.0f, 0.0f, 0.0f });
 	fill(state->view      , { 1.0f, 1.0f, 1.0f });
 
-	#if 0
+	#if 1
 	f32 lucia_eye_level = LUCIA_HEIGHT + 0.025f * (cosf(state->lucia_head_bob_keytime * TAU) - 1.0f);
 
 	FOR_RANGE(x, VIEW_DIM.x)
 	{
 		vf2 ray_horizontal = polar(state->lucia_angle + (0.5f - x / VIEW_DIM.x) * state->lucia_fov);
 
-		i32 wall_index    = -1;
-		f32 wall_distance = NAN;
-		f32 wall_portion  = NAN;
+		bool32 wall_exists   = false;
+		f32    wall_distance = NAN;
+		f32    wall_portion  = NAN;
 
-		FOR_ELEMS(it, WALLS)
+		FOR_RANGE(wall_y, MAP_DIM)
 		{
-			f32 distance;
-			f32 portion;
-			if (ray_cast_line(&distance, &portion, state->lucia_position, ray_horizontal, (*it)[0], (*it)[1]) && IN_RANGE(portion, 0.0f, 1.0f) && (wall_index == -1 || distance < wall_distance))
+			FOR_RANGE(wall_x, MAP_DIM)
 			{
-				wall_index    = it_index;
-				wall_distance = distance;
-				wall_portion  = portion;
+				FOR_ELEMS(layout_position, WALL_LAYOUT_POSITIONS)
+				{
+					if (+(*get_wall_layout(state, wall_x, wall_y) & static_cast<WallLayout>(1 << layout_position_index)))
+					{
+						vf2 start = (vf2 { static_cast<f32>(wall_x), static_cast<f32>(wall_y) } + (*layout_position)[0]) * WALL_SPACING;
+						vf2 end   = (vf2 { static_cast<f32>(wall_x), static_cast<f32>(wall_y) } + (*layout_position)[1]) * WALL_SPACING;
+
+						f32 distance;
+						f32 portion;
+						if (ray_cast_line(&distance, &portion, state->lucia_position, ray_horizontal, start, end) && IN_RANGE(portion, 0.0f, 1.0f) && (!wall_exists || distance < wall_distance))
+						{
+							wall_exists   = true;
+							wall_distance = distance;
+							wall_portion  = portion;
+						}
+					}
+				}
 			}
 		}
 
 		i32 pixel_starting_y = -1;
 		i32 pixel_ending_y   = 0;
-		if (wall_index != -1)
+		if (wall_exists)
 		{
-			i32 starting_y = static_cast<i32>(VIEW_DIM.y / 2.0f - HORT_TO_VERT_K / state->lucia_fov * (WALL_HEIGHT - lucia_eye_level) / wall_distance);
-			i32 ending_y   = static_cast<i32>(VIEW_DIM.y / 2.0f + HORT_TO_VERT_K / state->lucia_fov *                lucia_eye_level  / wall_distance);
+			i32 starting_y = static_cast<i32>(VIEW_DIM.y / 2.0f - HORT_TO_VERT_K / state->lucia_fov * (WALL_HEIGHT - lucia_eye_level) / (wall_distance + 0.1f));
+			i32 ending_y   = static_cast<i32>(VIEW_DIM.y / 2.0f + HORT_TO_VERT_K / state->lucia_fov *                lucia_eye_level  / (wall_distance + 0.1f));
 
 			pixel_starting_y = MAXIMUM(0, starting_y);
 			pixel_ending_y   = MINIMUM(ending_y, static_cast<i32>(VIEW_DIM.y));
@@ -377,38 +395,50 @@ extern "C" PROTOTYPE_RENDER(render)
 		}
 	}
 	#else
-	#if 0
+	#if 1
 	const f32 PIXELS_PER_METER = 25.0f + 10.0f / state->lucia_fov;
 	const vf2 ORIGIN           = state->lucia_position;
 
-	FOR_ELEMS(it, WALLS)
+	FOR_RANGE(y, MAP_DIM)
 	{
-		const vf2 DIRECTION  = normalize((*it)[1] - (*it)[0]);
-		const vf2 VERTICES[] =
-			{
-				(*it)[0] + (-DIRECTION + vf2 {  DIRECTION.y, -DIRECTION.x }) * WALL_THICKNESS,
-				(*it)[1] + ( DIRECTION + vf2 {  DIRECTION.y, -DIRECTION.x }) * WALL_THICKNESS,
-				(*it)[1] + ( DIRECTION + vf2 { -DIRECTION.y,  DIRECTION.x }) * WALL_THICKNESS,
-				(*it)[0] + (-DIRECTION + vf2 { -DIRECTION.y,  DIRECTION.x }) * WALL_THICKNESS
-			};
-
-		draw_line
-		(
-			state->view,
-			VIEW_DIM / 2.0f + conjugate(-ORIGIN + (*it)[0]) * PIXELS_PER_METER,
-			VIEW_DIM / 2.0f + conjugate(-ORIGIN + (*it)[1]) * PIXELS_PER_METER,
-			{ 0.0f, 0.0f, 0.0f }
-		);
-
-		FOR_RANGE(i, 4)
+		FOR_RANGE(x, MAP_DIM)
 		{
-			draw_line
-			(
-				state->view,
-				VIEW_DIM / 2.0f + conjugate(-ORIGIN + VERTICES[i]          ) * PIXELS_PER_METER,
-				VIEW_DIM / 2.0f + conjugate(-ORIGIN + VERTICES[(i + 1) % 4]) * PIXELS_PER_METER,
-				{ 1.0f, 0.0f, 0.0f }
-			);
+			FOR_ELEMS(layout_position, WALL_LAYOUT_POSITIONS)
+			{
+				if (+(*get_wall_layout(state, x, y) & static_cast<WallLayout>(1 << layout_position_index)))
+				{
+					vf2 start = (vf2 { static_cast<f32>(x), static_cast<f32>(y) } + (*layout_position)[0]) * WALL_SPACING;
+					vf2 end   = (vf2 { static_cast<f32>(x), static_cast<f32>(y) } + (*layout_position)[1]) * WALL_SPACING;
+
+					const vf2 DIRECTION  = normalize(end - start);
+					const vf2 VERTICES[] =
+						{
+							start + (-DIRECTION + vf2 {  DIRECTION.y, -DIRECTION.x }) * WALL_THICKNESS,
+							end   + ( DIRECTION + vf2 {  DIRECTION.y, -DIRECTION.x }) * WALL_THICKNESS,
+							end   + ( DIRECTION + vf2 { -DIRECTION.y,  DIRECTION.x }) * WALL_THICKNESS,
+							start + (-DIRECTION + vf2 { -DIRECTION.y,  DIRECTION.x }) * WALL_THICKNESS
+						};
+
+					draw_line
+					(
+						state->view,
+						VIEW_DIM / 2.0f + conjugate(-ORIGIN + start) * PIXELS_PER_METER,
+						VIEW_DIM / 2.0f + conjugate(-ORIGIN + end  ) * PIXELS_PER_METER,
+						{ 0.0f, 0.0f, 0.0f }
+					);
+
+					FOR_RANGE(j, 4)
+					{
+						draw_line
+						(
+							state->view,
+							VIEW_DIM / 2.0f + conjugate(-ORIGIN + VERTICES[j]          ) * PIXELS_PER_METER,
+							VIEW_DIM / 2.0f + conjugate(-ORIGIN + VERTICES[(j + 1) % 4]) * PIXELS_PER_METER,
+							{ 1.0f, 0.0f, 0.0f }
+						);
+					}
+				}
+			}
 		}
 	}
 
