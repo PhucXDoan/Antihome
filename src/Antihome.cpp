@@ -7,10 +7,10 @@
 global constexpr vf2 VIEW_DIM                    = { 350.0f, 175.0f };
 global constexpr f32 HORT_TO_VERT_K              = 0.927295218f * VIEW_DIM.x;
 global constexpr f32 WALL_HEIGHT                 = 2.7432f;
-global constexpr f32 WALL_THICKNESS              = 0.1f;
+global constexpr f32 WALL_THICKNESS              = 0.25f;
 global constexpr f32 LUCIA_HEIGHT                = 1.4986f;
-global constexpr i32 MAP_DIM                     = 32;
-global constexpr f32 WALL_SPACING                = 3.0f;
+global constexpr i32 MAP_DIM                     = 8;
+global constexpr f32 WALL_SPACING                = 3.0f; // @TODO@ Must be integer.
 global constexpr vf2 WALL_LAYOUT_POSITIONS[4][2] =
 	{
 		{ { 0.0f, 0.0f }, { 0.0f, 1.0f } },
@@ -261,11 +261,15 @@ extern "C" PROTOTYPE_UPDATE(update)
 		}
 		else
 		{
-			state->lucia_position = closest_intersection.position;
-			displacement          = dot(state->lucia_position + displacement - closest_intersection.position, { -closest_intersection.normal.y, closest_intersection.normal.x }) * vf2 { -closest_intersection.normal.y, closest_intersection.normal.x };
+			state->lucia_position   = closest_intersection.position;
+			state->lucia_position.x = fmodf((state->lucia_position.x + MAP_DIM * WALL_SPACING), MAP_DIM * WALL_SPACING);
+			state->lucia_position.y = fmodf((state->lucia_position.y + MAP_DIM * WALL_SPACING), MAP_DIM * WALL_SPACING);
+			displacement            = dot(state->lucia_position + displacement - closest_intersection.position, { -closest_intersection.normal.y, closest_intersection.normal.x }) * vf2 { -closest_intersection.normal.y, closest_intersection.normal.x };
 		}
 	}
-	state->lucia_position += displacement;
+	state->lucia_position  += displacement;
+	state->lucia_position.x = fmodf((state->lucia_position.x + MAP_DIM * WALL_SPACING), MAP_DIM * WALL_SPACING);
+	state->lucia_position.y = fmodf((state->lucia_position.y + MAP_DIM * WALL_SPACING), MAP_DIM * WALL_SPACING);
 
 	state->lucia_head_bob_keytime += 0.5f * norm(state->lucia_velocity) * SECONDS_PER_UPDATE;
 	if (state->lucia_head_bob_keytime > 1.0f)
@@ -306,16 +310,21 @@ extern "C" PROTOTYPE_RENDER(render)
 				{
 					if (+(*get_wall_layout(state, wall_x, wall_y) & static_cast<WallLayout>(1 << layout_position_index)))
 					{
-						vf2 start = (vf2 { static_cast<f32>(wall_x), static_cast<f32>(wall_y) } + (*layout_position)[0]) * WALL_SPACING;
-						vf2 end   = (vf2 { static_cast<f32>(wall_x), static_cast<f32>(wall_y) } + (*layout_position)[1]) * WALL_SPACING;
-
-						f32 distance;
-						f32 portion;
-						if (ray_cast_line(&distance, &portion, state->lucia_position, ray_horizontal, start, end) && IN_RANGE(portion, 0.0f, 1.0f) && (!wall_exists || distance < wall_distance))
+						FOR_RANGE(i, 9)
 						{
-							wall_exists   = true;
-							wall_distance = distance;
-							wall_portion  = portion;
+							vf2 offset = (vf2 { static_cast<f32>(i % 3), static_cast<f32>(i / 3) } - vf2 { 1.0f, 1.0f }) * MAP_DIM;
+
+							vf2 start  = (offset + vf2 { static_cast<f32>(wall_x), static_cast<f32>(wall_y) } + (*layout_position)[0]) * WALL_SPACING;
+							vf2 end    = (offset + vf2 { static_cast<f32>(wall_x), static_cast<f32>(wall_y) } + (*layout_position)[1]) * WALL_SPACING;
+
+							f32 distance;
+							f32 portion;
+							if (ray_cast_line(&distance, &portion, state->lucia_position, ray_horizontal, start, end) && IN_RANGE(portion, 0.0f, 1.0f) && (!wall_exists || distance < wall_distance))
+							{
+								wall_exists   = true;
+								wall_distance = distance;
+								wall_portion  = portion;
+							}
 						}
 					}
 				}
