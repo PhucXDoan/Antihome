@@ -230,7 +230,26 @@ int main(int, char**)
 			}
 			while (frame_time >= SECONDS_PER_UPDATE);
 
+			FOR_ELEMS(it, platform.inputs)
+			{
+				if (it->curr)
+				{
+					it->curr -= it->prev;
+				}
+				else
+				{
+					it->curr = it->prev;
+				}
+			}
+
 			render(&platform);
+
+			FOR_ELEMS(it, platform.inputs)
+			{
+				it->prev = it->curr % 2;
+				it->curr = 0;
+			}
+
 			SDL_UpdateWindowSurface(window);
 
 			platform.scroll = 0.0f;

@@ -24,7 +24,7 @@
 #define OVERLOADED_MACRO_4_(_0, _1, _2, _3, MACRO, ...) MACRO
 #define FOR_INTERVAL_(NAME, MINI, MAXI)                 for (i32 NAME = (MINI); NAME < (MAXI); ++NAME)
 #define FOR_INDICIES_(NAME, MAXI)                       FOR_INTERVAL_(NAME, 0, (MAXI))
-#define FOR_REPEAT_(MAXI)                               FOR_INTERVAL_(FOR_REPEAT_##__LINE__, 0, (MAXI))
+#define FOR_REPEAT_(MAXI)                               FOR_INTERVAL_(MACRO_CONCAT_(FOR_REPEAT_, __LINE__), 0, (MAXI))
 #define FOR_INTERVAL_REV_(NAME, MINI, MAXI)             for (i32 NAME = (MAXI) - 1; NAME >= (MINI); --NAME)
 #define FOR_INDICIES_REV_(NAME, MAXI)                   FOR_INTERVAL_REV_(NAME, 0, (MAXI))
 #define CAPACITY_OF_ARRAY_(XS)                          (sizeof(XS) / sizeof((XS)[0]))

@@ -79,6 +79,8 @@ internal f32 rng(u32* seed, f32 start, f32 end)
 	return rng(seed) * (end - start) + start;
 }
 
+internal constexpr vf2 conjugate(vf2 v) { return { v.x, -v.y }; }
+
 internal constexpr f32 square(f32 x) { return x * x; }
 
 internal constexpr f32 lerp(f32 a, f32 b, f32 t) { return a * (1.0f - t) + b * t; }

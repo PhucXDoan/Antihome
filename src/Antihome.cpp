@@ -16,6 +16,15 @@ global constexpr vf2 WALLS[][2]     =
 		{ {  4.5f,  7.5f }, {  8.5f,  1.5f } },
 		{ {  8.5f, -1.5f }, {  8.5f,  1.5f } }
 	};
+global constexpr i32 MAP_DIM = 32;
+
+flag_struct (WallLayout, u8)
+{
+	left          = 1 << 0,
+	bottom        = 1 << 1,
+	back_slash    = 1 << 2,
+	forward_slash = 1 << 3
+};
 
 struct State
 {
@@ -29,10 +38,17 @@ struct State
 	f32                lucia_fov;
 	f32                lucia_head_bob_keytime;
 
+	WallLayout         wall_layouts[MAP_DIM * MAP_DIM];
+
 	ColumnMajorTexture wall;
 	ColumnMajorTexture floor;
 	ColumnMajorTexture ceiling;
 };
+
+internal WallLayout* get_wall_layout(State* state, i32 x, i32 y)
+{
+	return &state->wall_layouts[((y % MAP_DIM) + MAP_DIM) % MAP_DIM * MAP_DIM + ((x % MAP_DIM) + MAP_DIM) % MAP_DIM];
+}
 
 extern "C" PROTOTYPE_INITIALIZE(initialize)
 {
@@ -68,6 +84,94 @@ extern "C" PROTOTYPE_BOOT_UP(boot_up)
 	state->wall    = init_column_major_texture(DATA_DIR "wall.bmp");
 	state->floor   = init_column_major_texture(DATA_DIR "floor.bmp");
 	state->ceiling = init_column_major_texture(DATA_DIR "ceiling.bmp");
+
+	state->seed = 0;
+	FOR_ELEMS(it, state->wall_layouts)
+	{
+		*it = {};
+	}
+
+	FOR_RANGE(start_walk_y, MAP_DIM)
+	{
+		FOR_RANGE(start_walk_x, MAP_DIM)
+		{
+			if (!+*get_wall_layout(state, start_walk_x, start_walk_y) && rng(&state->seed) < 0.15f)
+			{
+				i32 walk_x = start_walk_x;
+				i32 walk_y = start_walk_y;
+				FOR_RANGE(64)
+				{
+					switch (static_cast<i32>(rng(&state->seed) * 4.0f))
+					{
+						case 0:
+						{
+							if (!+*get_wall_layout(state, walk_x - 1, walk_y) && !+(*get_wall_layout(state, walk_x - 1, walk_y - 1) & WallLayout::left) && !+(*get_wall_layout(state, walk_x - 2, walk_y) & WallLayout::bottom))
+							{
+								walk_x = (walk_x - 1 + MAP_DIM) % MAP_DIM;
+								*get_wall_layout(state, walk_x, walk_y) |= WallLayout::bottom;
+							}
+						} break;
+
+						case 1:
+						{
+							if (!+*get_wall_layout(state, walk_x + 1, walk_y) && !+(*get_wall_layout(state, walk_x, walk_y) & WallLayout::bottom) && !+(*get_wall_layout(state, walk_x + 1, walk_y - 1) & WallLayout::left))
+							{
+								*get_wall_layout(state, walk_x, walk_y) |= WallLayout::bottom;
+								walk_x = (walk_x + 1) % MAP_DIM;
+							}
+						} break;
+
+						case 2:
+						{
+							if (!+*get_wall_layout(state, walk_x, walk_y - 1) && !+(*get_wall_layout(state, walk_x - 1, walk_y - 1) & WallLayout::bottom) && !+(*get_wall_layout(state, walk_x, walk_y - 2) & WallLayout::left))
+							{
+								walk_y = (walk_y - 1 + MAP_DIM) % MAP_DIM;
+								*get_wall_layout(state, walk_x, walk_y) |= WallLayout::left;
+							}
+						} break;
+
+						case 3:
+						{
+							if (!+*get_wall_layout(state, walk_x, walk_y + 1) && !+(*get_wall_layout(state, walk_x, walk_y) & WallLayout::left) && !+(*get_wall_layout(state, walk_x - 1, walk_y + 1) & WallLayout::bottom))
+							{
+								*get_wall_layout(state, walk_x, walk_y) |= WallLayout::left;
+								walk_y = (walk_y + 1) % MAP_DIM;
+							}
+						} break;
+					}
+				}
+			}
+		}
+	}
+
+	FOR_RANGE(y, MAP_DIM)
+	{
+		FOR_RANGE(x, MAP_DIM)
+		{
+			if (*get_wall_layout(state, x, y) == (WallLayout::left | WallLayout::bottom) && rng(&state->seed) < 0.5f)
+			{
+				*get_wall_layout(state, x, y) = WallLayout::back_slash;
+			}
+			else if (+(*get_wall_layout(state, x + 1, y) & WallLayout::left) && +(*get_wall_layout(state, x, y + 1) & WallLayout::bottom) && rng(&state->seed) < 0.5f)
+			{
+				*get_wall_layout(state, x + 1, y    ) &= ~WallLayout::left;
+				*get_wall_layout(state, x    , y + 1) &= ~WallLayout::bottom;
+				*get_wall_layout(state, x    , y    ) |= WallLayout::back_slash;
+			}
+			else if (+(*get_wall_layout(state, x, y) & WallLayout::bottom) && *get_wall_layout(state, x + 1, y) == WallLayout::left && rng(&state->seed) < 0.5f)
+			{
+				*get_wall_layout(state, x    , y) &= ~WallLayout::bottom;
+				*get_wall_layout(state, x + 1, y) &= ~WallLayout::left;
+				*get_wall_layout(state, x    , y) |=  WallLayout::forward_slash;
+			}
+			else if (+(*get_wall_layout(state, x, y) & WallLayout::left) && *get_wall_layout(state, x, y + 1) == WallLayout::bottom && rng(&state->seed) < 0.5f)
+			{
+				*get_wall_layout(state, x, y    ) &= ~WallLayout::left;
+				*get_wall_layout(state, x, y + 1) &= ~WallLayout::bottom;
+				*get_wall_layout(state, x, y    ) |=  WallLayout::forward_slash;
+			}
+		}
+	}
 }
 
 extern "C" PROTOTYPE_BOOT_DOWN(boot_down)
@@ -177,7 +281,7 @@ extern "C" PROTOTYPE_RENDER(render)
 	fill(platform->surface, { 0.0f, 0.0f, 0.0f });
 	fill(state->view      , { 1.0f, 1.0f, 1.0f });
 
-	#if 1
+	#if 0
 	f32 lucia_eye_level = LUCIA_HEIGHT + 0.025f * (cosf(state->lucia_head_bob_keytime * TAU) - 1.0f);
 
 	FOR_RANGE(x, VIEW_DIM.x)
@@ -273,8 +377,7 @@ extern "C" PROTOTYPE_RENDER(render)
 		}
 	}
 	#else
-	#define CONJUGATE(V) (vf2 { (V).x, -(V).y })
-
+	#if 0
 	const f32 PIXELS_PER_METER = 25.0f + 10.0f / state->lucia_fov;
 	const vf2 ORIGIN           = state->lucia_position;
 
@@ -292,8 +395,8 @@ extern "C" PROTOTYPE_RENDER(render)
 		draw_line
 		(
 			state->view,
-			VIEW_DIM / 2.0f + CONJUGATE(-ORIGIN + (*it)[0]) * PIXELS_PER_METER,
-			VIEW_DIM / 2.0f + CONJUGATE(-ORIGIN + (*it)[1]) * PIXELS_PER_METER,
+			VIEW_DIM / 2.0f + conjugate(-ORIGIN + (*it)[0]) * PIXELS_PER_METER,
+			VIEW_DIM / 2.0f + conjugate(-ORIGIN + (*it)[1]) * PIXELS_PER_METER,
 			{ 0.0f, 0.0f, 0.0f }
 		);
 
@@ -302,22 +405,116 @@ extern "C" PROTOTYPE_RENDER(render)
 			draw_line
 			(
 				state->view,
-				VIEW_DIM / 2.0f + CONJUGATE(-ORIGIN + VERTICES[i]          ) * PIXELS_PER_METER,
-				VIEW_DIM / 2.0f + CONJUGATE(-ORIGIN + VERTICES[(i + 1) % 4]) * PIXELS_PER_METER,
+				VIEW_DIM / 2.0f + conjugate(-ORIGIN + VERTICES[i]          ) * PIXELS_PER_METER,
+				VIEW_DIM / 2.0f + conjugate(-ORIGIN + VERTICES[(i + 1) % 4]) * PIXELS_PER_METER,
 				{ 1.0f, 0.0f, 0.0f }
 			);
 		}
 	}
 
 	constexpr f32 LUCIA_DIM = 4.0f;
-	fill(state->view, VIEW_DIM / 2.0f + CONJUGATE(-ORIGIN + state->lucia_position) * PIXELS_PER_METER - vf2 { LUCIA_DIM, LUCIA_DIM } / 2.0f, vf2 { LUCIA_DIM, LUCIA_DIM }, { 0.0f, 0.0f, 1.0f });
+	fill(state->view, VIEW_DIM / 2.0f + conjugate(-ORIGIN + state->lucia_position) * PIXELS_PER_METER - vf2 { LUCIA_DIM, LUCIA_DIM } / 2.0f, vf2 { LUCIA_DIM, LUCIA_DIM }, { 0.0f, 0.0f, 1.0f });
 	draw_line
 	(
 		state->view,
-		VIEW_DIM / 2.0f + CONJUGATE(-ORIGIN + state->lucia_position                                   ) * PIXELS_PER_METER,
-		VIEW_DIM / 2.0f + CONJUGATE(-ORIGIN + state->lucia_position + polar(state->lucia_angle) * 1.0f) * PIXELS_PER_METER,
+		VIEW_DIM / 2.0f + conjugate(-ORIGIN + state->lucia_position                                   ) * PIXELS_PER_METER,
+		VIEW_DIM / 2.0f + conjugate(-ORIGIN + state->lucia_position + polar(state->lucia_angle) * 1.0f) * PIXELS_PER_METER,
 		{ 0.4f, 0.8f, 0.6f }
 	);
+	#else
+	persist vf2 cam_pos = { MAP_DIM * 1.5f, MAP_DIM * 1.5f };
+
+	constexpr f32 SPEED = 8.0f;
+	if (HOLDING(Input::left))
+	{
+		cam_pos.x -= SPEED * SECONDS_PER_UPDATE;
+	}
+	if (HOLDING(Input::right))
+	{
+		cam_pos.x += SPEED * SECONDS_PER_UPDATE;
+	}
+	if (HOLDING(Input::down))
+	{
+		cam_pos.y -= SPEED * SECONDS_PER_UPDATE;
+	}
+	if (HOLDING(Input::up))
+	{
+		cam_pos.y += SPEED * SECONDS_PER_UPDATE;
+	}
+
+	FOR_RANGE(iy, 3)
+	{
+		FOR_RANGE(ix, 3)
+		{
+			constexpr f32 PIXELS_PER_METER = 5.0f;
+			constexpr f32 DOT_DIM          = 1.0f;
+
+			vf2 offset = VIEW_DIM / 2.0f + conjugate({ ix * MAP_DIM - cam_pos.x, iy * MAP_DIM - cam_pos.y }) * PIXELS_PER_METER;
+
+			fill(state->view, offset + conjugate({ 0.0f, MAP_DIM * PIXELS_PER_METER }), { MAP_DIM * PIXELS_PER_METER, MAP_DIM * PIXELS_PER_METER }, { 1.0f - iy / 2.0f, 1.0f - ix / 2.0f, 0.75f });
+
+			FOR_RANGE(y, MAP_DIM)
+			{
+				FOR_RANGE(x, MAP_DIM)
+				{
+					fill(state->view, offset + conjugate({ x + 0.0f, y + 0.0f }) * PIXELS_PER_METER - vf2 { DOT_DIM, DOT_DIM } / 2.0f, { DOT_DIM, DOT_DIM }, { 0.0f, 0.0f, 0.0f });
+
+					if (+(*get_wall_layout(state, x, y) & WallLayout::left))
+					{
+						draw_line
+						(
+							state->view,
+							offset + conjugate({ x + 0.0f, y + 0.0f }) * PIXELS_PER_METER - vf2 { DOT_DIM, DOT_DIM } / 2.0f,
+							offset + conjugate({ x + 0.0f, y + 1.0f }) * PIXELS_PER_METER - vf2 { DOT_DIM, DOT_DIM } / 2.0f,
+							{ 0.25f, 0.25f, 0.25f }
+						);
+					}
+
+					if (+(*get_wall_layout(state, x, y) & WallLayout::bottom))
+					{
+						draw_line
+						(
+							state->view,
+							offset + conjugate({ x + 0.0f, y + 0.0f }) * PIXELS_PER_METER - vf2 { DOT_DIM, DOT_DIM } / 2.0f,
+							offset + conjugate({ x + 1.0f, y + 0.0f }) * PIXELS_PER_METER - vf2 { DOT_DIM, DOT_DIM } / 2.0f,
+							{ 0.25f, 0.25f, 0.25f }
+						);
+					}
+
+					if (+(*get_wall_layout(state, x, y) & WallLayout::back_slash))
+					{
+						draw_line
+						(
+							state->view,
+							offset + conjugate({ x + 0.0f, y + 1.0f }) * PIXELS_PER_METER - vf2 { DOT_DIM, DOT_DIM } / 2.0f,
+							offset + conjugate({ x + 1.0f, y + 0.0f }) * PIXELS_PER_METER - vf2 { DOT_DIM, DOT_DIM } / 2.0f,
+							{ 0.25f, 0.25f, 0.25f }
+						);
+					}
+
+					if (+(*get_wall_layout(state, x, y) & WallLayout::forward_slash))
+					{
+						draw_line
+						(
+							state->view,
+							offset + conjugate({ x + 0.0f, y + 0.0f }) * PIXELS_PER_METER - vf2 { DOT_DIM, DOT_DIM } / 2.0f,
+							offset + conjugate({ x + 1.0f, y + 1.0f }) * PIXELS_PER_METER - vf2 { DOT_DIM, DOT_DIM } / 2.0f,
+							{ 0.25f, 0.25f, 0.25f }
+						);
+					}
+				}
+			}
+		}
+	}
+
+	//FOR_RANGE(y, MAP_DIM - 1)
+	//{
+	//	FOR_RANGE(x, MAP_DIM)
+	//	{
+	//		fill(state->view, VIEW_DIM / 2.0f + (conjugate({ x * 1.0f, y + 0.5f }) + vf2 { -(MAP_DIM - 1.0f) / 2.0f, (MAP_DIM - 1.0f) / 2.0f }) * PIXELS_PER_METER - vf2 { POINT_DIM, POINT_DIM } / 2.0f, { POINT_DIM, POINT_DIM }, { 0.5f, 1.0f, 0.5f });
+	//	}
+	//}
+	#endif
 	#endif
 
 	SDL_Rect dst = { static_cast<i32>(VIEW_PADDING), static_cast<i32>(VIEW_PADDING), static_cast<i32>(WIN_DIM.x - VIEW_PADDING * 2.0f), static_cast<i32>((WIN_DIM.x - VIEW_PADDING * 2.0f) * VIEW_DIM.y / VIEW_DIM.x) };
