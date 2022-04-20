@@ -146,9 +146,23 @@ internal TYPE* memory_arena_push(MemoryArena* arena, i32 count = 1)
 // Math.
 //
 
-struct vf2 { f32 x; f32 y;               };
-struct vf3 { f32 x; f32 y; f32 z;        };
-struct vf4 { f32 x; f32 y; f32 z; f32 w; };
+struct vf2
+{
+	f32 x; f32 y;
+};
+
+union vf3
+{
+	struct { f32 x; f32 y; f32 z; };
+	vf2 xy;
+};
+
+union vf4
+{
+	struct { f32 x; f32 y; f32 z; f32 w; };
+	vf3 xyz;
+	vf2 xy;
+};
 
 internal constexpr bool32 operator+ (vf2  v       ) { return v.x || v.y;               }
 internal constexpr bool32 operator+ (vf3  v       ) { return v.x || v.y || v.z;        }

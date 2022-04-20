@@ -64,6 +64,13 @@ struct ColumnMajorTexture
 	vf3* colors;
 };
 
+struct Sprite
+{
+	i32  w;
+	i32  h;
+	vf4* pixels;
+};
+
 internal f32 rng(u32* seed)
 {
 	return RAND_TABLE[++*seed % ARRAY_CAPACITY(RAND_TABLE)] / 65536.0f;
@@ -85,6 +92,7 @@ internal constexpr f32 square(f32 x) { return x * x; }
 
 internal constexpr f32 lerp(f32 a, f32 b, f32 t) { return a * (1.0f - t) + b * t; }
 internal constexpr vf2 lerp(vf2 a, vf2 b, f32 t) { return a * (1.0f - t) + b * t; }
+internal constexpr vf3 lerp(vf3 a, vf3 b, f32 t) { return a * (1.0f - t) + b * t; }
 internal constexpr vf4 lerp(vf4 a, vf4 b, f32 t) { return a * (1.0f - t) + b * t; }
 
 internal constexpr f32 dampen(f32 a, f32 b, f32 k, f32 dt) { return lerp(a, b, 1.0f - expf(-k * dt)); }
@@ -94,13 +102,18 @@ internal constexpr f32 dot(vf2 u, vf2 v) { return u.x * v.x + u.y * v.y; }
 
 internal constexpr vf4 hadamard_product(vf4 u, vf4 v) { return { u.x * v.x, u.y * v.y, u.z * v.z, u.w * v.w }; }
 
-internal f32 norm(vf2 v) { return sqrtf(v.x * v.x + v.y * v.y            ); }
 internal f32 norm(vf3 v) { return sqrtf(v.x * v.x + v.y * v.y + v.z * v.z); }
+internal f32 norm(vf2 v) { return sqrtf(v.x * v.x + v.y * v.y            ); }
 
-internal vf2 normalize(vf2 v) { return v / norm(v); }
 internal vf3 normalize(vf3 v) { return v / norm(v); }
+internal vf2 normalize(vf2 v) { return v / norm(v); }
 
+internal f32 distance(vf3 u, vf3 v) { return norm(u - v); }
 internal f32 distance(vf2 u, vf2 v) { return norm(u - v); }
+
+internal f32 argument(vf2 v) { f32 a = atan2f(v.y, v.x); return a < 0.0f ? TAU + a : a; }
+internal f32 centerize_angle(f32 x) { return x < TAU / 2.0f ? x : x - TAU; }
+internal f32 mod(f32 x, f32 m) { f32 y = fmodf(x, m); return y < 0.0f ? y + m : y; }
 
 internal vf2 polar(f32 angle) { return { cosf(angle), sinf(angle) }; }
 
@@ -213,6 +226,15 @@ internal u32 to_pixel(SDL_Surface* surface, vf3 color)
 	return SDL_MapRGB(surface->format, static_cast<u8>(color.x * 255.0f), static_cast<u8>(color.y * 255.0f), static_cast<u8>(color.z * 255.0f));
 }
 
+internal vf3 to_color(SDL_Surface* surface, u32 pixel)
+{
+	u8 r;
+	u8 g;
+	u8 b;
+	SDL_GetRGB(pixel, surface->format, &r, &g, &b);
+	return { r / 255.0f, g / 255.0f, b / 255.0f };
+}
+
 internal void fill(SDL_Surface* surface, vf2 position, vf2 dimensions, vf3 color)
 {
 	SDL_Rect rect = { static_cast<i32>(position.x), static_cast<i32>(position.y), static_cast<i32>(dimensions.x), static_cast<i32>(dimensions.y) };
@@ -223,6 +245,24 @@ internal void fill(SDL_Surface* surface, vf3 color)
 {
 	SDL_Rect rect = { 0, 0, surface->w, surface->h };
 	SDL_FillRect(surface, &rect, to_pixel(surface, color));
+}
+
+internal void draw_line(SDL_Surface* surface, vf2 start, vf2 end, vf3 color)
+{
+	u32 pixel  = to_pixel(surface, color);
+	vf2 p      = end - start;
+	f32 length = norm(p);
+	vf2 np     = p / length;
+	p = start;
+
+	FOR_RANGE(length)
+	{
+		if (IN_RANGE(p.x, 0.0f, surface->w) && IN_RANGE(p.y, 0.0f, surface->h))
+		{
+			*(reinterpret_cast<u32*>(surface->pixels) + static_cast<i32>(p.y) * surface->w + static_cast<i32>(p.x)) = pixel;
+		}
+		p += np;
+	}
 }
 
 // @TODO@ Use arena.
@@ -262,20 +302,36 @@ internal void deinit_column_major_texture(ColumnMajorTexture* texture)
 	free(texture->colors);
 }
 
-internal void draw_line(SDL_Surface* surface, vf2 start, vf2 end, vf3 color)
+// @TODO@ Use arena.
+internal Sprite init_sprite(strlit filepath)
 {
-	u32 pixel  = to_pixel(surface, color);
-	vf2 p      = end - start;
-	f32 length = norm(p);
-	vf2 np     = p / length;
-	p = start;
+	Sprite sprite;
 
-	FOR_RANGE(length)
+	i32  iw;
+	i32  ih;
+	u32* img = reinterpret_cast<u32*>(stbi_load(filepath, &iw, &ih, 0, STBI_rgb_alpha));
+	DEFER { stbi_image_free(img); };
+	ASSERT(img);
+
+	sprite.w      = iw;
+	sprite.h      = ih;
+	sprite.pixels = reinterpret_cast<vf4*>(malloc(sprite.w * sprite.h * sizeof(vf4)));
+
+	FOR_ELEMS(it, sprite.pixels, sprite.w * sprite.h)
 	{
-		if (IN_RANGE(p.x, 0.0f, surface->w) && IN_RANGE(p.y, 0.0f, surface->h))
-		{
-			*(reinterpret_cast<u32*>(surface->pixels) + static_cast<i32>(p.y) * surface->w + static_cast<i32>(p.x)) = pixel;
-		}
-		p += np;
+		*it =
+			{
+				static_cast<f32>(img[it_index] >>  0 & 0xFF) / 0xFF,
+				static_cast<f32>(img[it_index] >>  8 & 0xFF) / 0xFF,
+				static_cast<f32>(img[it_index] >> 16 & 0xFF) / 0xFF,
+				static_cast<f32>(img[it_index] >> 24 & 0xFF) / 0xFF
+			};
 	}
+
+	return sprite;
+}
+
+internal void deinit_sprite(Sprite* sprite)
+{
+	free(sprite->pixels);
 }
