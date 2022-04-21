@@ -432,40 +432,46 @@ extern "C" PROTOTYPE_RENDER(render)
 				}
 			}
 		}
-	}
 
-	vi2 sprite_screen_position =
+		constexpr f32 SPRITE_PIXELS_PER_METER = 0.001f;
+
+		vf3 sprite_slide_x = normalize(-cross(normalize(vf3 { state->lucia_position.x, state->lucia_position.y, lucia_eye_level } - state->sprite_position), { 0.0f, 0.0f, 1.0f })) * static_cast<f32>(state->sprite.w) * SPRITE_PIXELS_PER_METER;
+		vf3 sprite_slide_y = { 0.0f, 0.0f, state->sprite.h * SPRITE_PIXELS_PER_METER };
+
+		FOR_RANGE(y, 0, VIEW_DIM.y)
 		{
-			static_cast<i32>(VIEW_DIM.x * (0.5f - centerize_angle(mod(argument(normalize(state->sprite_position.xy - state->lucia_position)) - state->lucia_angle, TAU)) / state->lucia_fov)),
-			static_cast<i32>(VIEW_DIM.y / 2.0f + HORT_TO_VERT_K / state->lucia_fov * normalize(state->sprite_position - vf3 { state->lucia_position.x, state->lucia_position.y, lucia_eye_level }).z)
-		};
+			vf3 ray = normalize({ ray_horizontal.x, ray_horizontal.y, (y - VIEW_DIM.y / 2.0f) * state->lucia_fov / HORT_TO_VERT_K });
 
-	vi2 sprite_screen_dimensions =
-		{
-			static_cast<i32>(0.1f / (0.1f + norm(state->sprite_position - vf3 { state->lucia_position.x, state->lucia_position.y, lucia_eye_level })) * state->sprite.w),
-			static_cast<i32>(0.1f / (0.1f + norm(state->sprite_position - vf3 { state->lucia_position.x, state->lucia_position.y, lucia_eye_level })) * state->sprite.h)
-		};
-
-	sprite_screen_position -= sprite_screen_dimensions / 2;
-
-	FOR_RANGE(ix, sprite_screen_dimensions.x)
-	{
-		FOR_RANGE(iy, sprite_screen_dimensions.y)
-		{
-			if (IN_RANGE(sprite_screen_position.x + ix, 0, VIEW_DIM.x) && IN_RANGE(sprite_screen_position.y + iy, 0, VIEW_DIM.y))
+			f32 distance;
+			vf2 portion;
+			if
+			(
+				ray_cast_plane
+				(
+					&distance,
+					&portion,
+					vf3 { state->lucia_position.x, state->lucia_position.y, lucia_eye_level } + 0.5f * (sprite_slide_x + sprite_slide_y),
+					ray,
+					state->sprite_position,
+					sprite_slide_x,
+					sprite_slide_y
+				)
+				&& IN_RANGE(portion.x, 0.0f, 1.0f)
+				&& IN_RANGE(portion.y, 0.0f, 1.0f)
+			)
 			{
 				vf4* sprite_rgba =
 					state->sprite.pixels +
-					static_cast<i32>((1.0f - static_cast<f32>(iy) / sprite_screen_dimensions.y) * (state->sprite.h - 1.0f)) * state->sprite.w +
-					static_cast<i32>(static_cast<f32>(ix) / sprite_screen_dimensions.x * state->sprite.w);
+					static_cast<i32>((1.0f - portion.y) * (state->sprite.h - 1.0f)) * state->sprite.w +
+					static_cast<i32>(portion.x * state->sprite.w);
 
 				write_pixel
 				(
-					&state->frame_buffer[sprite_screen_position.x + ix][sprite_screen_position.y + iy],
+					&state->frame_buffer[x][y],
 					{
 						lerp
 						(
-							state->frame_buffer[sprite_screen_position.x + ix][sprite_screen_position.y + iy].color,
+							state->frame_buffer[x][y].color,
 							sprite_rgba->xyz,
 							sprite_rgba->w
 						),

@@ -98,7 +98,10 @@ internal constexpr vf4 lerp(vf4 a, vf4 b, f32 t) { return a * (1.0f - t) + b * t
 internal constexpr f32 dampen(f32 a, f32 b, f32 k, f32 dt) { return lerp(a, b, 1.0f - expf(-k * dt)); }
 internal constexpr vf4 dampen(vf4 a, vf4 b, f32 k, f32 dt) { return lerp(a, b, 1.0f - expf(-k * dt)); }
 
-internal constexpr f32 dot(vf2 u, vf2 v) { return u.x * v.x + u.y * v.y; }
+internal constexpr f32 dot(vf3 u, vf3 v) { return u.x * v.x + u.y * v.y + u.z * v.z; }
+internal constexpr f32 dot(vf2 u, vf2 v) { return u.x * v.x + u.y * v.y;             }
+
+internal constexpr vf3 cross(vf3 u, vf3 v) { return { u.y * v.z - u.z * v.y, u.z * v.x - u.x * v.z, u.x * v.y - u.y * v.x }; }
 
 internal constexpr vf4 hadamard_product(vf4 u, vf4 v) { return { u.x * v.x, u.y * v.y, u.z * v.z, u.w * v.w }; }
 
@@ -149,6 +152,30 @@ internal bool32 ray_cast_line(f32* scalar, f32* portion, vf2 position, vf2 ray, 
 	*portion = (portion_c + ray.x * position.y - ray.y * position.x) / portion_denom;
 
 	return true;
+}
+
+// @TODO@ SIMD
+internal bool32 ray_cast_plane(f32* scalar, vf2* portion, vf3 position, vf3 ray, vf3 plane_origin, vf3 plane_dx, vf3 plane_dy)
+{
+	f32 det =
+		ray.x * (plane_dx.y * plane_dy.z - plane_dy.y * plane_dx.z) -
+		ray.y * (plane_dx.x * plane_dy.z - plane_dx.z * plane_dy.x) +
+		ray.z * (plane_dx.x * plane_dy.y - plane_dx.y * plane_dy.x);
+
+	vf3 v = plane_origin - position;
+
+	*scalar = ((plane_dx.y * plane_dy.z - plane_dy.y * plane_dx.z) * v.x + (plane_dx.z * plane_dy.x - plane_dx.x * plane_dy.z) * v.y + (plane_dx.x * plane_dy.y - plane_dy.x * plane_dx.y) * v.z) / det;
+
+	if (*scalar >= 0.0f)
+	{
+		portion->x = ((ray.y * plane_dy.z - ray.z * plane_dy.y) * v.x + (ray.z * plane_dy.x - ray.x * plane_dy.z) * v.y + (ray.x * plane_dy.y - ray.y * plane_dy.x) * v.z) / det;
+		portion->y = ((ray.z * plane_dx.y - ray.y * plane_dx.z) * v.x + (ray.x * plane_dx.z - ray.z * plane_dx.x) * v.y + (ray.y * plane_dx.x - ray.x * plane_dx.y) * v.z) / det;
+		return true;
+	}
+	else
+	{
+		return false;
+	}
 }
 
 internal Intersection intersect_thick_line_segment(vf2 position, vf2 ray, vf2 start, vf2 end, f32 thickness)
