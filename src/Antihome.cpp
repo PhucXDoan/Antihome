@@ -4,7 +4,7 @@
 #include "platform.h"
 #include "utilities.cpp"
 
-global constexpr vf2 VIEW_DIM                    = { 350.0f, 175.0f };
+global constexpr vi2 VIEW_DIM                    = { 350, 175 };
 global constexpr f32 HORT_TO_VERT_K              = 0.927295218f * VIEW_DIM.x;
 global constexpr f32 WALL_HEIGHT                 = 2.7432f;
 global constexpr f32 WALL_THICKNESS              = 0.25f;
@@ -27,10 +27,17 @@ flag_struct (WallLayout, u8)
 	forward_slash = 1 << 3
 };
 
+struct Pixel
+{
+	vf3 color;
+	f32 depth;
+};
+
 struct State
 {
 	u32                seed;
 	SDL_Surface*       view;
+	Pixel              frame_buffer[VIEW_DIM.x][VIEW_DIM.y];
 	vf2                lucia_velocity;
 	vf2                lucia_position;
 	f32                lucia_angle_velocity;
@@ -49,6 +56,14 @@ struct State
 internal WallLayout* get_wall_layout(State* state, i32 x, i32 y)
 {
 	return &state->wall_layouts[((y % MAP_DIM) + MAP_DIM) % MAP_DIM * MAP_DIM + ((x % MAP_DIM) + MAP_DIM) % MAP_DIM];
+}
+
+internal void write_pixel(Pixel* pixel, Pixel new_pixel)
+{
+	if (pixel->depth <= new_pixel.depth)
+	{
+		*pixel = new_pixel;
+	}
 }
 
 extern "C" PROTOTYPE_INITIALIZE(initialize)
@@ -157,8 +172,8 @@ extern "C" PROTOTYPE_BOOT_UP(boot_up)
 		SDL_CreateRGBSurface
 		(
 			0,
-			static_cast<i32>(VIEW_DIM.x),
-			static_cast<i32>(VIEW_DIM.y),
+			VIEW_DIM.x,
+			VIEW_DIM.y,
 			32,
 			0x000000FF,
 			0x0000FF00,
@@ -277,7 +292,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 	//state->lucia_position.x = fmodf((state->lucia_position.x + MAP_DIM * WALL_SPACING), MAP_DIM * WALL_SPACING);
 	//state->lucia_position.y = fmodf((state->lucia_position.y + MAP_DIM * WALL_SPACING), MAP_DIM * WALL_SPACING);
 
-	state->lucia_head_bob_keytime += 0.5f * norm(state->lucia_velocity) * SECONDS_PER_UPDATE;
+	state->lucia_head_bob_keytime += 0.35f * norm(state->lucia_velocity) * SECONDS_PER_UPDATE;
 	if (state->lucia_head_bob_keytime > 1.0f)
 	{
 		state->lucia_head_bob_keytime -= 1.0f;
@@ -299,15 +314,15 @@ extern "C" PROTOTYPE_RENDER(render)
 
 	constexpr i32 VIEW_PADDING = 10;
 
-	fill(platform->surface, { 0.0f, 0.0f, 0.0f });
-	fill(state->view      , { 1.0f, 1.0f, 1.0f });
+	fill(platform->surface, { 0.05f, 0.10f, 0.15f });
+	memset(state->frame_buffer, 0, sizeof(state->frame_buffer));
 
 	#if 1
-	f32 lucia_eye_level = LUCIA_HEIGHT + 0.025f * (cosf(state->lucia_head_bob_keytime * TAU) - 1.0f);
+	f32 lucia_eye_level = LUCIA_HEIGHT + 0.1f * (cosf(state->lucia_head_bob_keytime * TAU) - 1.0f);
 
 	FOR_RANGE(x, VIEW_DIM.x)
 	{
-		vf2 ray_horizontal = polar(state->lucia_angle + (0.5f - x / VIEW_DIM.x) * state->lucia_fov);
+		vf2 ray_horizontal = polar(state->lucia_angle + (0.5f - static_cast<f32>(x) / VIEW_DIM.x) * state->lucia_fov);
 
 		bool32 wall_exists   = false;
 		f32    wall_distance = NAN;
@@ -347,21 +362,23 @@ extern "C" PROTOTYPE_RENDER(render)
 		i32 pixel_ending_y   = 0;
 		if (wall_exists)
 		{
-			i32 starting_y = static_cast<i32>(VIEW_DIM.y / 2.0f - HORT_TO_VERT_K / state->lucia_fov * (WALL_HEIGHT - lucia_eye_level) / (wall_distance + 0.1f));
-			i32 ending_y   = static_cast<i32>(VIEW_DIM.y / 2.0f + HORT_TO_VERT_K / state->lucia_fov *                lucia_eye_level  / (wall_distance + 0.1f));
+			i32 starting_y = static_cast<i32>(VIEW_DIM.y / 2.0f - HORT_TO_VERT_K / state->lucia_fov *                lucia_eye_level  / (wall_distance + 0.1f));
+			i32 ending_y   = static_cast<i32>(VIEW_DIM.y / 2.0f + HORT_TO_VERT_K / state->lucia_fov * (WALL_HEIGHT - lucia_eye_level) / (wall_distance + 0.1f));
 
 			pixel_starting_y = MAXIMUM(0, starting_y);
-			pixel_ending_y   = MINIMUM(ending_y, static_cast<i32>(VIEW_DIM.y));
+			pixel_ending_y   = MINIMUM(ending_y, VIEW_DIM.y);
 
 			FOR_RANGE(y, pixel_starting_y, pixel_ending_y)
 			{
-				*(reinterpret_cast<u32*>(state->view->pixels) + y * state->view->w + x) =
-					to_pixel
-					(
-						state->view,
-						*(state->wall.colors + static_cast<i32>(wall_portion * (state->wall.w - 1.0f)) * state->wall.h + static_cast<i32>(static_cast<f32>(ending_y - y) / (ending_y - starting_y) * state->wall.h))
-							* CLAMP(1.0f - wall_distance / 16.0f, 0.0f, 1.0f)
-					);
+				write_pixel
+				(
+					&state->frame_buffer[x][y],
+					{
+						*(state->wall.colors + static_cast<i32>(wall_portion * (state->wall.w - 1.0f)) * state->wall.h + static_cast<i32>(static_cast<f32>(y - starting_y) / (ending_y - starting_y) * state->wall.h))
+							* CLAMP(1.0f - wall_distance / 16.0f, 0.0f, 1.0f),
+						0.0f
+					}
+				);
 			}
 		}
 
@@ -378,18 +395,18 @@ extern "C" PROTOTYPE_RENDER(render)
 				f32                 texture_level;
 				if (y < VIEW_DIM.y / 2.0f)
 				{
-					texture           = &state->ceiling;
-					texture_dimension = 4.0f;
-					texture_level     = WALL_HEIGHT;
-				}
-				else
-				{
 					texture           = &state->floor;
 					texture_dimension = 4.0f;
 					texture_level     = 0.0f;
 				}
+				else
+				{
+					texture           = &state->ceiling;
+					texture_dimension = 4.0f;
+					texture_level     = WALL_HEIGHT;
+				}
 
-				f32 pitch = (VIEW_DIM.y / 2.0f - y) * state->lucia_fov / HORT_TO_VERT_K;
+				f32 pitch = (y - VIEW_DIM.y / 2.0f) * state->lucia_fov / HORT_TO_VERT_K;
 				vf2 distances;
 				vf2 portions;
 				if
@@ -403,47 +420,58 @@ extern "C" PROTOTYPE_RENDER(render)
 					portions.x = mod(portions.x, 1.0f);
 					portions.y = mod(portions.y, 1.0f);
 
-					*(reinterpret_cast<u32*>(state->view->pixels) + y * state->view->w + x) =
-						to_pixel
-						(
-							state->view,
+					write_pixel
+					(
+						&state->frame_buffer[x][y],
+						{
 							*(texture->colors + static_cast<i32>(portions.x * (texture->w - 1.0f)) * texture->h + static_cast<i32>(portions.y * texture->h))
-								* CLAMP(1.0f - distance / 16.0f, 0.0f, 1.0f)
-						);
+								* CLAMP(1.0f - distance / 16.0f, 0.0f, 1.0f),
+							0.0f
+						}
+					);
 				}
 			}
 		}
 	}
 
-	i32 top_left_x = static_cast<i32>(VIEW_DIM.x * (0.5f - centerize_angle(mod(argument(normalize(state->sprite_position.xy - state->lucia_position)) - state->lucia_angle, TAU)) / state->lucia_fov));
-
-	f32 TEMP = VIEW_DIM.y / 2.0f - HORT_TO_VERT_K / state->lucia_fov * normalize(state->sprite_position - vf3 { state->lucia_position.x, state->lucia_position.y, lucia_eye_level }).z;
-
-	i32 top_left_y = static_cast<i32>(TEMP);
-
-	i32 bottom_right_x = static_cast<i32>(top_left_x + 0.1f / (0.1f + norm(state->sprite_position - vf3 { state->lucia_position.x, state->lucia_position.y, lucia_eye_level })) * state->sprite.w);
-	i32 bottom_right_y = static_cast<i32>(top_left_y + 0.1f / (0.1f + norm(state->sprite_position - vf3 { state->lucia_position.x, state->lucia_position.y, lucia_eye_level })) * state->sprite.h);
-
-	i32 dim_x = bottom_right_x - top_left_x;
-	i32 dim_y = bottom_right_y - top_left_y;
-
-	top_left_x -= dim_x / 2;
-	top_left_y -= dim_y / 2;
-	bottom_right_x -= dim_x / 2;
-	bottom_right_y -= dim_y / 2;
-
-	FOR_RANGE(y, top_left_y, bottom_right_y)
-	{
-		FOR_RANGE(x, top_left_x, bottom_right_x)
+	vi2 sprite_screen_position =
 		{
-			if (IN_RANGE(x, 0, state->view->w) && IN_RANGE(y, 0, state->view->h))
+			static_cast<i32>(VIEW_DIM.x * (0.5f - centerize_angle(mod(argument(normalize(state->sprite_position.xy - state->lucia_position)) - state->lucia_angle, TAU)) / state->lucia_fov)),
+			static_cast<i32>(VIEW_DIM.y / 2.0f + HORT_TO_VERT_K / state->lucia_fov * normalize(state->sprite_position - vf3 { state->lucia_position.x, state->lucia_position.y, lucia_eye_level }).z)
+		};
+
+	vi2 sprite_screen_dimensions =
+		{
+			static_cast<i32>(0.1f / (0.1f + norm(state->sprite_position - vf3 { state->lucia_position.x, state->lucia_position.y, lucia_eye_level })) * state->sprite.w),
+			static_cast<i32>(0.1f / (0.1f + norm(state->sprite_position - vf3 { state->lucia_position.x, state->lucia_position.y, lucia_eye_level })) * state->sprite.h)
+		};
+
+	sprite_screen_position -= sprite_screen_dimensions / 2;
+
+	FOR_RANGE(ix, sprite_screen_dimensions.x)
+	{
+		FOR_RANGE(iy, sprite_screen_dimensions.y)
+		{
+			if (IN_RANGE(sprite_screen_position.x + ix, 0, VIEW_DIM.x) && IN_RANGE(sprite_screen_position.y + iy, 0, VIEW_DIM.y))
 			{
-				u32* view_pixel   = reinterpret_cast<u32*>(state->view->pixels) + y * state->view->w + x;
-				vf4* sprite_pixel =
+				vf4* sprite_rgba =
 					state->sprite.pixels +
-					static_cast<i32>(static_cast<f32>(y - top_left_y) / (bottom_right_y - top_left_y) * state->sprite.h) * state->sprite.w +
-					static_cast<i32>(static_cast<f32>(x - top_left_x) / (bottom_right_x - top_left_x) * state->sprite.w);
-				*view_pixel = to_pixel(state->view, lerp(to_color(state->view, *view_pixel), sprite_pixel->xyz, sprite_pixel->w));
+					static_cast<i32>((1.0f - static_cast<f32>(iy) / sprite_screen_dimensions.y) * (state->sprite.h - 1.0f)) * state->sprite.w +
+					static_cast<i32>(static_cast<f32>(ix) / sprite_screen_dimensions.x * state->sprite.w);
+
+				write_pixel
+				(
+					&state->frame_buffer[sprite_screen_position.x + ix][sprite_screen_position.y + iy],
+					{
+						lerp
+						(
+							state->frame_buffer[sprite_screen_position.x + ix][sprite_screen_position.y + iy].color,
+							sprite_rgba->xyz,
+							sprite_rgba->w
+						),
+						0.0f
+					}
+				);
 			}
 		}
 	}
@@ -598,6 +626,21 @@ extern "C" PROTOTYPE_RENDER(render)
 	//}
 	#endif
 
-	SDL_Rect dst = { static_cast<i32>(VIEW_PADDING), static_cast<i32>(VIEW_PADDING), static_cast<i32>(WIN_DIM.x - VIEW_PADDING * 2.0f), static_cast<i32>((WIN_DIM.x - VIEW_PADDING * 2.0f) * VIEW_DIM.y / VIEW_DIM.x) };
+	FOR_RANGE(y, VIEW_DIM.y)
+	{
+		FOR_RANGE(x, VIEW_DIM.x)
+		{
+			*(reinterpret_cast<u32*>(state->view->pixels) + (VIEW_DIM.y - 1 - y) * state->view->w + x) =
+				SDL_MapRGB
+				(
+					state->view->format,
+					static_cast<u8>(state->frame_buffer[x][y].color.x * 255.0f),
+					static_cast<u8>(state->frame_buffer[x][y].color.y * 255.0f),
+					static_cast<u8>(state->frame_buffer[x][y].color.z * 255.0f)
+				);
+		}
+	}
+
+	SDL_Rect dst = { VIEW_PADDING, VIEW_PADDING, WIN_DIM.x - VIEW_PADDING * 2, (WIN_DIM.x - VIEW_PADDING * 2) * VIEW_DIM.y / VIEW_DIM.x };
 	SDL_BlitScaled(state->view, 0, platform->surface, &dst);
 }
