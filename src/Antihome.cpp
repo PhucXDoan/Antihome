@@ -44,6 +44,8 @@ struct State
 	f32                lucia_angle;
 	f32                lucia_fov;
 	f32                lucia_head_bob_keytime;
+	vf3                flashlight_ray;
+	f32                flashlight_keytime;
 	WallLayout         wall_layouts[MAP_DIM * MAP_DIM];
 	ColumnMajorTexture wall;
 	ColumnMajorTexture floor;
@@ -289,7 +291,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 	state->lucia_position.xy += displacement;
 	state->lucia_position.z   = LUCIA_HEIGHT + 0.1f * (cosf(state->lucia_head_bob_keytime * TAU) - 1.0f);
 
-	state->lucia_head_bob_keytime += 0.35f * norm(state->lucia_velocity) * SECONDS_PER_UPDATE;
+	state->lucia_head_bob_keytime += 0.001f + 0.35f * norm(state->lucia_velocity) * SECONDS_PER_UPDATE;
 	if (state->lucia_head_bob_keytime > 1.0f)
 	{
 		state->lucia_head_bob_keytime -= 1.0f;
@@ -310,6 +312,16 @@ extern "C" PROTOTYPE_UPDATE(update)
 	state->monster_sprite.orientation_x = 0.001f * normalize(-cross(normalize(state->lucia_position - state->monster_sprite.position), { 0.0f, 0.0f, 1.0f })) * static_cast<f32>(state->monster_sprite.img->w);
 	state->monster_sprite.orientation_y = 0.001f * vf3 { 0.0f, 0.0f, static_cast<f32>(state->monster_sprite.img->h) };
 
+	state->flashlight_keytime += 0.0025f + 0.05f * norm(state->lucia_velocity) * SECONDS_PER_UPDATE;
+	if (state->flashlight_keytime > 1.0f)
+	{
+		state->flashlight_keytime -= 1.0f;
+	}
+
+	state->flashlight_ray.xy  = dampen(state->flashlight_ray.xy, polar(state->lucia_angle + sinf(state->flashlight_keytime * TAU * 2.0f) * 0.03f), 16.0f, SECONDS_PER_UPDATE);
+	state->flashlight_ray.z   = sinf(state->flashlight_keytime * TAU) * 0.05f;
+	state->flashlight_ray     = normalize(state->flashlight_ray);
+
 	return UpdateCode::resume;
 }
 
@@ -321,6 +333,9 @@ extern "C" PROTOTYPE_RENDER(render)
 
 	fill(platform->surface, { 0.05f, 0.10f, 0.15f });
 	memset(state->frame_buffer, 0, sizeof(state->frame_buffer));
+
+	constexpr f32 AMBIENT_LIGHT_RADIUS = 4.0f;
+	constexpr f32 FLASHLIGHT_POW       = 32.0f;
 
 	#if 1
 	//persist u64 DEBUG_total;
@@ -399,13 +414,15 @@ extern "C" PROTOTYPE_RENDER(render)
 
 			FOR_RANGE(y, pixel_starting_y, pixel_ending_y)
 			{
+				vf3 ray = normalize({ ray_horizontal.x, ray_horizontal.y, (y - VIEW_DIM.y / 2.0f) * state->lucia_fov / HORT_TO_VERT_K });
+				f32 k   =
+					powf(CLAMP(dot(ray, state->flashlight_ray), 0.0f, 1.0f), FLASHLIGHT_POW) * square(CLAMP(1.0f - wall_distance / 32.0f, 0.0f, 1.0f))
+					+ fabsf(dot(ray, { wall_normal.x, wall_normal.y, 0.0f })) * square(CLAMP(1.0f - wall_distance / AMBIENT_LIGHT_RADIUS, 0.0f, 1.0f));
 				write_pixel
 				(
 					&state->frame_buffer[x][y],
 					{
-						*(state->wall.colors + static_cast<i32>(wall_portion * (state->wall.w - 1.0f)) * state->wall.h + static_cast<i32>(static_cast<f32>(y - starting_y) / (ending_y - starting_y) * state->wall.h))
-							* fabsf(dot(normalize({ ray_horizontal.x, ray_horizontal.y, (y - VIEW_DIM.y / 2.0f) * state->lucia_fov / HORT_TO_VERT_K }), { wall_normal.x, wall_normal.y, 0.0f }))
-							* square(CLAMP(1.0f - wall_distance / 16.0f, 0.0f, 1.0f)),
+						*(state->wall.colors + static_cast<i32>(wall_portion * (state->wall.w - 1.0f)) * state->wall.h + static_cast<i32>(static_cast<f32>(y - starting_y) / (ending_y - starting_y) * state->wall.h)) * CLAMP(k, 0.0f, 1.0f),
 						1.0f / wall_distance
 					}
 				);
@@ -446,18 +463,19 @@ extern "C" PROTOTYPE_RENDER(render)
 				ray_cast_line(&distances.y, &portions.y, { state->lucia_position.y, state->lucia_position.z }, { ray.y, ray.z }, { 0.0f, texture_level }, { texture_dimension, texture_level })
 			)
 			{
-				f32 distance = sqrtf(square(distances.x) + square(distances.y) - square(state->lucia_position.z));
-
 				portions.x = mod(portions.x, 1.0f);
 				portions.y = mod(portions.y, 1.0f);
+
+				f32 distance = sqrtf(square(distances.x) + square(distances.y) - square(state->lucia_position.z));
+				f32 k        =
+					powf(CLAMP(dot(ray, state->flashlight_ray), 0.0f, 1.0f), FLASHLIGHT_POW) * square(CLAMP(1.0f - distance / 32.0f, 0.0f, 1.0f))
+					+ fabsf(dot(ray, { 0.0f, 0.0f, 1.0f })) * square(CLAMP(1.0f - distance / AMBIENT_LIGHT_RADIUS, 0.0f, 1.0f));
 
 				write_pixel
 				(
 					&state->frame_buffer[x][y],
 					{
-						*(texture->colors + static_cast<i32>(portions.x * (texture->w - 1.0f)) * texture->h + static_cast<i32>(portions.y * texture->h))
-							* fabsf(ray.z)
-							* square(CLAMP(1.0f - distance / 16.0f, 0.0f, 1.0f)),
+						*(texture->colors + static_cast<i32>(portions.x * (texture->w - 1.0f)) * texture->h + static_cast<i32>(portions.y * texture->h)) * CLAMP(k, 0.0f, 1.0f),
 						1.0f / distance
 					}
 				);
@@ -487,6 +505,9 @@ extern "C" PROTOTYPE_RENDER(render)
 			)
 			{
 				vf4* sprite_rgba = state->monster_sprite.img->pixels + static_cast<i32>((1.0f - portion.y) * (state->monster_sprite.img->h - 1.0f)) * state->monster_sprite.img->w + static_cast<i32>(portion.x * state->monster_sprite.img->w);
+				f32 k            =
+					powf(CLAMP(dot(ray, state->flashlight_ray), 0.0f, 1.0f), FLASHLIGHT_POW) * square(CLAMP(1.0f - distance / 32.0f, 0.0f, 1.0f))
+					+ fabsf(dot(ray, { 0.0f, 0.0f, 1.0f })) * square(CLAMP(1.0f - distance / AMBIENT_LIGHT_RADIUS, 0.0f, 1.0f));
 
 				write_pixel
 				(
@@ -495,9 +516,7 @@ extern "C" PROTOTYPE_RENDER(render)
 						lerp
 						(
 							state->frame_buffer[x][y].color,
-							sprite_rgba->xyz
-								* fabsf(dot(normalize(cross(state->monster_sprite.orientation_x, state->monster_sprite.orientation_y)), ray))
-								* square(CLAMP(1.0f - distance / 16.0f, 0.0f, 1.0f)),
+							sprite_rgba->xyz * CLAMP(k, 0.0f, 1.0f),
 							sprite_rgba->w
 						),
 						1.0f / distance
