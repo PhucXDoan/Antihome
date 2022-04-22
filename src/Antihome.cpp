@@ -4,19 +4,19 @@
 #include "platform.h"
 #include "utilities.cpp"
 
-global constexpr vi2 VIEW_DIM                    = { 350, 175 };
-global constexpr f32 HORT_TO_VERT_K              = 0.927295218f * VIEW_DIM.x;
-global constexpr f32 WALL_HEIGHT                 = 2.7432f;
-global constexpr f32 WALL_THICKNESS              = 0.25f;
-global constexpr f32 LUCIA_HEIGHT                = 1.4986f;
-global constexpr i32 MAP_DIM                     = 8;
-global constexpr f32 WALL_SPACING                = 3.0f; // @TODO@ Must be integer.
-global constexpr vf2 WALL_LAYOUT_POSITIONS[4][2] =
+global constexpr vi2 VIEW_DIM               = { 350, 175 };
+global constexpr f32 HORT_TO_VERT_K         = 0.927295218f * VIEW_DIM.x;
+global constexpr f32 WALL_HEIGHT            = 2.7432f;
+global constexpr f32 WALL_THICKNESS         = 0.25f;
+global constexpr f32 LUCIA_HEIGHT           = 1.4986f;
+global constexpr i32 MAP_DIM                = 8;
+global constexpr f32 WALL_SPACING           = 3.0f;
+global constexpr vf2 WALL_LAYOUT_DATA[4][3] =
 	{
-		{ { 0.0f, 0.0f }, { 0.0f, 1.0f } },
-		{ { 0.0f, 0.0f }, { 1.0f, 0.0f } },
-		{ { 1.0f, 0.0f }, { 0.0f, 1.0f } },
-		{ { 0.0f, 0.0f }, { 1.0f, 1.0f } }
+		{ { 0.0f, 0.0f }, { 0.0f, 1.0f }, {     -1.0f,      0.0f } },
+		{ { 0.0f, 0.0f }, { 1.0f, 0.0f }, {      0.0f,      1.0f } },
+		{ { 1.0f, 0.0f }, { 0.0f, 1.0f }, { -INVSQRT2, -INVSQRT2 } },
+		{ { 0.0f, 0.0f }, { 1.0f, 1.0f }, { -INVSQRT2,  INVSQRT2 } }
 	};
 
 flag_struct (WallLayout, u8)
@@ -184,8 +184,7 @@ extern "C" PROTOTYPE_BOOT_UP(boot_up)
 	state->ceiling     = init_column_major_texture(DATA_DIR "ceiling.png");
 	state->monster_img = init_image(DATA_DIR "sprite.png");
 
-	state->monster_sprite.img              = &state->monster_img;
-	state->monster_sprite.pixels_per_meter = 1000.0f;
+	state->monster_sprite.img = &state->monster_img;
 }
 
 extern "C" PROTOTYPE_BOOT_DOWN(boot_down)
@@ -254,7 +253,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 		{
 			FOR_RANGE(x, MAP_DIM)
 			{
-				FOR_ELEMS(layout_position, WALL_LAYOUT_POSITIONS)
+				FOR_ELEMS(layout_position, WALL_LAYOUT_DATA)
 				{
 					if (+(*get_wall_layout(state, x, y) & static_cast<WallLayout>(1 << layout_position_index)))
 					{
@@ -308,8 +307,8 @@ extern "C" PROTOTYPE_UPDATE(update)
 	}
 	state->monster_sprite.position.z = (cosf(TEMP * 2.0f) * 0.15f) + WALL_HEIGHT / 2.0f;
 
-	state->monster_sprite.orientation_x = normalize(-cross(normalize(state->lucia_position - state->monster_sprite.position), { 0.0f, 0.0f, 1.0f })) * static_cast<f32>(state->monster_sprite.img->w);
-	state->monster_sprite.orientation_y = { 0.0f, 0.0f, static_cast<f32>(state->monster_sprite.img->h) };
+	state->monster_sprite.orientation_x = 0.001f * normalize(-cross(normalize(state->lucia_position - state->monster_sprite.position), { 0.0f, 0.0f, 1.0f })) * static_cast<f32>(state->monster_sprite.img->w);
+	state->monster_sprite.orientation_y = 0.001f * vf3 { 0.0f, 0.0f, static_cast<f32>(state->monster_sprite.img->h) };
 
 	return UpdateCode::resume;
 }
@@ -324,6 +323,27 @@ extern "C" PROTOTYPE_RENDER(render)
 	memset(state->frame_buffer, 0, sizeof(state->frame_buffer));
 
 	#if 1
+	//persist u64 DEBUG_total;
+	//persist u64 DEBUG_counter;
+
+	//LARGE_INTEGER DEBUG_li0;
+	//QueryPerformanceCounter(&DEBUG_li0);
+
+	//DEFER
+	//{
+	//	LARGE_INTEGER DEBUG_li1;
+	//	QueryPerformanceCounter(&DEBUG_li1);
+
+	//	DEBUG_total   += DEBUG_li1.QuadPart - DEBUG_li0.QuadPart;
+	//	DEBUG_counter += 1;
+	//	if (DEBUG_counter > 8)
+	//	{
+	//		DEBUG_printf("%llu\n", DEBUG_total);
+	//		DEBUG_total   = 0;
+	//		DEBUG_counter = 0;
+	//	}
+	//};
+
 	FOR_RANGE(x, VIEW_DIM.x)
 	{
 		vf2 ray_horizontal = polar(state->lucia_angle + (0.5f - static_cast<f32>(x) / VIEW_DIM.x) * state->lucia_fov);
@@ -332,24 +352,33 @@ extern "C" PROTOTYPE_RENDER(render)
 		vf2    wall_normal   = { NAN, NAN };
 		f32    wall_distance = NAN;
 		f32    wall_portion  = NAN;
-
 		FOR_RANGE(wall_y, MAP_DIM)
 		{
 			FOR_RANGE(wall_x, MAP_DIM)
 			{
-				FOR_ELEMS(layout_position, WALL_LAYOUT_POSITIONS)
+				FOR_ELEMS(layout_position, WALL_LAYOUT_DATA)
 				{
-					if (+(*get_wall_layout(state, wall_x, wall_y) & static_cast<WallLayout>(1 << layout_position_index)))
+					if (+(state->wall_layouts[wall_y * MAP_DIM + wall_x] & static_cast<WallLayout>(1 << layout_position_index)))
 					{
-						vf2 start  = (vf2 { static_cast<f32>(wall_x), static_cast<f32>(wall_y) } + (*layout_position)[0]) * WALL_SPACING;
-						vf2 end    = (vf2 { static_cast<f32>(wall_x), static_cast<f32>(wall_y) } + (*layout_position)[1]) * WALL_SPACING;
-
 						f32 distance;
 						f32 portion;
-						if (ray_cast_line(&distance, &portion, state->lucia_position.xy, ray_horizontal, start, end) && IN_RANGE(portion, 0.0f, 1.0f) && (!wall_exists || distance < wall_distance))
+						if
+						(
+							ray_cast_line
+							(
+								&distance,
+								&portion,
+								state->lucia_position.xy,
+								ray_horizontal,
+								(vf2 { static_cast<f32>(wall_x), static_cast<f32>(wall_y) } + (*layout_position)[0]) * WALL_SPACING,
+								(vf2 { static_cast<f32>(wall_x), static_cast<f32>(wall_y) } + (*layout_position)[1]) * WALL_SPACING
+							)
+							&& IN_RANGE(portion, 0.0f, 1.0f)
+							&& (!wall_exists || distance < wall_distance)
+						)
 						{
 							wall_exists   = true;
-							wall_normal   = rotate90(normalize(end - start));
+							wall_normal   = (*layout_position)[2];
 							wall_distance = distance;
 							wall_portion  = portion;
 						}
@@ -408,12 +437,13 @@ extern "C" PROTOTYPE_RENDER(render)
 			}
 
 			f32 pitch = (y - VIEW_DIM.y / 2.0f) * state->lucia_fov / HORT_TO_VERT_K;
+			vf3 ray   = normalize({ ray_horizontal.x, ray_horizontal.y, pitch });
 			vf2 distances;
 			vf2 portions;
 			if
 			(
-				ray_cast_line(&distances.x, &portions.x, { state->lucia_position.x, state->lucia_position.z }, normalize(vf2 { ray_horizontal.x, pitch }), { 0.0f, texture_level }, { texture_dimension, texture_level }) &&
-				ray_cast_line(&distances.y, &portions.y, { state->lucia_position.y, state->lucia_position.z }, normalize(vf2 { ray_horizontal.y, pitch }), { 0.0f, texture_level }, { texture_dimension, texture_level })
+				ray_cast_line(&distances.x, &portions.x, { state->lucia_position.x, state->lucia_position.z }, { ray.x, ray.z }, { 0.0f, texture_level }, { texture_dimension, texture_level }) &&
+				ray_cast_line(&distances.y, &portions.y, { state->lucia_position.y, state->lucia_position.z }, { ray.y, ray.z }, { 0.0f, texture_level }, { texture_dimension, texture_level })
 			)
 			{
 				f32 distance = sqrtf(square(distances.x) + square(distances.y) - square(state->lucia_position.z));
@@ -426,7 +456,7 @@ extern "C" PROTOTYPE_RENDER(render)
 					&state->frame_buffer[x][y],
 					{
 						*(texture->colors + static_cast<i32>(portions.x * (texture->w - 1.0f)) * texture->h + static_cast<i32>(portions.y * texture->h))
-							* fabsf(normalize({ ray_horizontal.x, ray_horizontal.y, pitch }).z)
+							* fabsf(ray.z)
 							* square(CLAMP(1.0f - distance / 16.0f, 0.0f, 1.0f)),
 						1.0f / distance
 					}
@@ -446,11 +476,11 @@ extern "C" PROTOTYPE_RENDER(render)
 				(
 					&distance,
 					&portion,
-					state->lucia_position + 0.5f * (state->monster_sprite.orientation_x / state->monster_sprite.pixels_per_meter + state->monster_sprite.orientation_y / state->monster_sprite.pixels_per_meter),
+					state->lucia_position + 0.5f * (state->monster_sprite.orientation_x + state->monster_sprite.orientation_y),
 					ray,
 					state->monster_sprite.position,
-					state->monster_sprite.orientation_x / state->monster_sprite.pixels_per_meter,
-					state->monster_sprite.orientation_y / state->monster_sprite.pixels_per_meter
+					state->monster_sprite.orientation_x,
+					state->monster_sprite.orientation_y
 				)
 				&& IN_RANGE(portion.x, 0.0f, 1.0f)
 				&& IN_RANGE(portion.y, 0.0f, 1.0f)
@@ -465,7 +495,9 @@ extern "C" PROTOTYPE_RENDER(render)
 						lerp
 						(
 							state->frame_buffer[x][y].color,
-							sprite_rgba->xyz,
+							sprite_rgba->xyz
+								* fabsf(dot(normalize(cross(state->monster_sprite.orientation_x, state->monster_sprite.orientation_y)), ray))
+								* square(CLAMP(1.0f - distance / 16.0f, 0.0f, 1.0f)),
 							sprite_rgba->w
 						),
 						1.0f / distance
@@ -482,7 +514,7 @@ extern "C" PROTOTYPE_RENDER(render)
 	{
 		FOR_RANGE(x, MAP_DIM)
 		{
-			FOR_ELEMS(layout_position, WALL_LAYOUT_POSITIONS)
+			FOR_ELEMS(layout_position, WALL_LAYOUT_DATA)
 			{
 				if (+(*get_wall_layout(state, x, y) & static_cast<WallLayout>(1 << layout_position_index)))
 				{

@@ -2,7 +2,9 @@
 #define HOLDING(INPUT)  (platform->inputs[+(INPUT)].curr)
 #define RELEASED(INPUT) (!platform->inputs[+(INPUT)].curr && platform->inputs[+(INPUT)].prev)
 
-global constexpr f32 TAU = 6.28318530717958647692f;
+global constexpr f32 TAU      = 6.28318530717f;
+global constexpr f32 SQRT2    = 1.41421356237f;
+global constexpr f32 INVSQRT2 = 0.70710678118f;
 
 // @TODO@ Use an actual RNG lol.
 // @NOTE@ Is in interval [0, 65536).
@@ -74,7 +76,6 @@ struct Image
 struct Sprite
 {
 	Image* img;
-	f32    pixels_per_meter;
 	vf3    orientation_x;
 	vf3    orientation_y;
 	vf3    position;
@@ -138,31 +139,19 @@ internal vf2 rotate(vf2 v, f32 angle)
 
 internal bool32 ray_cast_line(f32* scalar, f32* portion, vf2 position, vf2 ray, vf2 start, vf2 end)
 {
-	f32 scalar_denom = (start.x - end.x) * ray.y - (start.y - end.y) * ray.x;
-
-	if (fabs(scalar_denom) < 0.01f)
-	{
-		return false;
-	}
-
-	*scalar = ((start.x - end.x) * (start.y - position.y) - (start.y - end.y) * (start.x - position.x)) / scalar_denom;
+	*scalar = ((start.x - end.x) * (start.y - position.y) - (start.y - end.y) * (start.x - position.x)) / ((start.x - end.x) * ray.y - (start.y - end.y) * ray.x);
 
 	if (*scalar < 0.0f)
 	{
 		return false;
 	}
-
-	f32 portion_c     = start.x * ray.y - start.y * ray.x;
-	f32 portion_denom = portion_c + ray.x * end.y - ray.y * end.x;
-
-	if (fabs(portion_denom) < 0.01f)
+	else
 	{
-		return false;
+		f32 portion_c = start.x * ray.y - start.y * ray.x;
+		*portion = (portion_c + ray.x * position.y - ray.y * position.x) / (portion_c + ray.x * end.y - ray.y * end.x);
+
+		return true;
 	}
-
-	*portion = (portion_c + ray.x * position.y - ray.y * position.x) / portion_denom;
-
-	return true;
 }
 
 internal bool32 ray_cast_plane(f32* scalar, vf2* portion, vf3 position, vf3 ray, vf3 plane_origin, vf3 plane_dx, vf3 plane_dy)
