@@ -154,22 +154,69 @@ internal bool32 ray_cast_line(f32* scalar, f32* portion, vf2 position, vf2 ray, 
 	return true;
 }
 
-// @TODO@ SIMD
 internal bool32 ray_cast_plane(f32* scalar, vf2* portion, vf3 position, vf3 ray, vf3 plane_origin, vf3 plane_dx, vf3 plane_dy)
 {
-	f32 det =
-		ray.x * (plane_dx.y * plane_dy.z - plane_dy.y * plane_dx.z) -
-		ray.y * (plane_dx.x * plane_dy.z - plane_dx.z * plane_dy.x) +
-		ray.z * (plane_dx.x * plane_dy.y - plane_dx.y * plane_dy.x);
+	__m128 mx = _mm_setr_ps(plane_dx.y, plane_dx.z, plane_dx.x, 0.0f);
+	__m128 my = _mm_setr_ps(plane_dy.z, plane_dy.x, plane_dy.y, 0.0f);
+	__m128 ma =
+		_mm_sub_ps
+		(
+			_mm_mul_ps(mx, my),
+			_mm_mul_ps
+			(
+				_mm_setr_ps(plane_dy.y, plane_dx.x, plane_dx.y, 0.0f),
+				_mm_setr_ps(plane_dx.z, plane_dy.z, plane_dy.x, 0.0f)
+			)
+		);
 
-	vf3 v = plane_origin - position;
+	__m128 mb = _mm_mul_ps(ma, _mm_setr_ps(ray.x, ray.y, ray.z, 0.0f));
+	mb = _mm_hadd_ps(mb, mb);
 
-	*scalar = ((plane_dx.y * plane_dy.z - plane_dy.y * plane_dx.z) * v.x + (plane_dx.z * plane_dy.x - plane_dx.x * plane_dy.z) * v.y + (plane_dx.x * plane_dy.y - plane_dy.x * plane_dx.y) * v.z) / det;
+	f32    det = _mm_cvtss_f32(_mm_hadd_ps(mb, mb));
+	__m128 mv  =
+		_mm_sub_ps
+		(
+			_mm_setr_ps(plane_origin.x, plane_origin.y, plane_origin.z, 0.0f),
+			_mm_setr_ps(position.x, position.y, position.z, 0.0f)
+		);
+
+	mb = _mm_mul_ps(ma, mv);
+	mb = _mm_hadd_ps(mb, mb);
+	*scalar = _mm_cvtss_f32(_mm_hadd_ps(mb, mb)) / det;
 
 	if (*scalar >= 0.0f)
 	{
-		portion->x = ((ray.y * plane_dy.z - ray.z * plane_dy.y) * v.x + (ray.z * plane_dy.x - ray.x * plane_dy.z) * v.y + (ray.x * plane_dy.y - ray.y * plane_dy.x) * v.z) / det;
-		portion->y = ((ray.z * plane_dx.y - ray.y * plane_dx.z) * v.x + (ray.x * plane_dx.z - ray.z * plane_dx.x) * v.y + (ray.y * plane_dx.x - ray.x * plane_dx.y) * v.z) / det;
+		__m128 mr0 = _mm_setr_ps(ray.y, ray.z, ray.x, 0.0f);
+		__m128 mr1 = _mm_setr_ps(ray.z, ray.x, ray.y, 0.0f);
+
+		ma =
+			_mm_mul_ps
+			(
+				_mm_sub_ps
+				(
+					_mm_mul_ps(mr0, my),
+					_mm_mul_ps(mr1, _mm_setr_ps(plane_dy.y, plane_dy.z, plane_dy.x, 0.0f))
+				),
+				mv
+			);
+
+		ma = _mm_hadd_ps(ma, ma);
+		portion->x = _mm_cvtss_f32(_mm_hadd_ps(ma, ma)) / det;
+
+		ma =
+			_mm_mul_ps
+			(
+				_mm_sub_ps
+				(
+					_mm_mul_ps(mr1, mx),
+					_mm_mul_ps(mr0, _mm_setr_ps(plane_dx.z, plane_dx.x, plane_dx.y, 0.0f))
+				),
+				mv
+			);
+
+		ma = _mm_hadd_ps(ma, ma);
+		portion->y = _mm_cvtss_f32(_mm_hadd_ps(ma, ma)) / det;
+
 		return true;
 	}
 	else

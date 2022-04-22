@@ -39,7 +39,7 @@ struct State
 	SDL_Surface*       view;
 	Pixel              frame_buffer[VIEW_DIM.x][VIEW_DIM.y];
 	vf2                lucia_velocity;
-	vf2                lucia_position;
+	vf3                lucia_position;
 	f32                lucia_angle_velocity;
 	f32                lucia_angle;
 	f32                lucia_fov;
@@ -73,7 +73,7 @@ extern "C" PROTOTYPE_INITIALIZE(initialize)
 
 	*state = {};
 
-	state->lucia_position  = { 0.5f, 0.5f };
+	state->lucia_position  = { 0.5f, 0.5f, LUCIA_HEIGHT };
 	state->lucia_fov       = TAU / 3.0f;
 	state->sprite_position = { 1.0f, 2.0f, 0.0f };
 
@@ -260,7 +260,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 						vf2 start = (vf2 { static_cast<f32>(x), static_cast<f32>(y) } + (*layout_position)[0]) * WALL_SPACING;
 						vf2 end   = (vf2 { static_cast<f32>(x), static_cast<f32>(y) } + (*layout_position)[1]) * WALL_SPACING;
 
-						Intersection intersection = intersect_thick_line_segment(state->lucia_position, displacement, start, end, WALL_THICKNESS);
+						Intersection intersection = intersect_thick_line_segment(state->lucia_position.xy, displacement, start, end, WALL_THICKNESS);
 
 						if
 						(
@@ -282,15 +282,11 @@ extern "C" PROTOTYPE_UPDATE(update)
 		}
 		else
 		{
-			state->lucia_position   = closest_intersection.position;
-			//state->lucia_position.x = fmodf((state->lucia_position.x + MAP_DIM * WALL_SPACING), MAP_DIM * WALL_SPACING);
-			//state->lucia_position.y = fmodf((state->lucia_position.y + MAP_DIM * WALL_SPACING), MAP_DIM * WALL_SPACING);
-			displacement            = dot(state->lucia_position + displacement - closest_intersection.position, { -closest_intersection.normal.y, closest_intersection.normal.x }) * vf2 { -closest_intersection.normal.y, closest_intersection.normal.x };
+			state->lucia_position.xy = closest_intersection.position;
+			displacement             = dot(state->lucia_position.xy + displacement - closest_intersection.position, { -closest_intersection.normal.y, closest_intersection.normal.x }) * vf2 { -closest_intersection.normal.y, closest_intersection.normal.x };
 		}
 	}
-	state->lucia_position  += displacement;
-	//state->lucia_position.x = fmodf((state->lucia_position.x + MAP_DIM * WALL_SPACING), MAP_DIM * WALL_SPACING);
-	//state->lucia_position.y = fmodf((state->lucia_position.y + MAP_DIM * WALL_SPACING), MAP_DIM * WALL_SPACING);
+	state->lucia_position.xy += displacement;
 
 	state->lucia_head_bob_keytime += 0.35f * norm(state->lucia_velocity) * SECONDS_PER_UPDATE;
 	if (state->lucia_head_bob_keytime > 1.0f)
@@ -318,7 +314,11 @@ extern "C" PROTOTYPE_RENDER(render)
 	memset(state->frame_buffer, 0, sizeof(state->frame_buffer));
 
 	#if 1
-	f32 lucia_eye_level = LUCIA_HEIGHT + 0.1f * (cosf(state->lucia_head_bob_keytime * TAU) - 1.0f);
+	state->lucia_position.z = LUCIA_HEIGHT + 0.1f * (cosf(state->lucia_head_bob_keytime * TAU) - 1.0f);
+
+	constexpr f32 SPRITE_PIXELS_PER_METER = 0.001f;
+	vf3           sprite_slide_x          = normalize(-cross(normalize(state->lucia_position - state->sprite_position), { 0.0f, 0.0f, 1.0f })) * static_cast<f32>(state->sprite.w) * SPRITE_PIXELS_PER_METER;
+	vf3           sprite_slide_y          = { 0.0f, 0.0f, state->sprite.h * SPRITE_PIXELS_PER_METER };
 
 	FOR_RANGE(x, VIEW_DIM.x)
 	{
@@ -346,7 +346,7 @@ extern "C" PROTOTYPE_RENDER(render)
 
 							f32 distance;
 							f32 portion;
-							if (ray_cast_line(&distance, &portion, state->lucia_position, ray_horizontal, start, end) && IN_RANGE(portion, 0.0f, 1.0f) && (!wall_exists || distance < wall_distance))
+							if (ray_cast_line(&distance, &portion, state->lucia_position.xy, ray_horizontal, start, end) && IN_RANGE(portion, 0.0f, 1.0f) && (!wall_exists || distance < wall_distance))
 							{
 								wall_exists   = true;
 								wall_distance = distance;
@@ -362,8 +362,8 @@ extern "C" PROTOTYPE_RENDER(render)
 		i32 pixel_ending_y   = 0;
 		if (wall_exists)
 		{
-			i32 starting_y = static_cast<i32>(VIEW_DIM.y / 2.0f - HORT_TO_VERT_K / state->lucia_fov *                lucia_eye_level  / (wall_distance + 0.1f));
-			i32 ending_y   = static_cast<i32>(VIEW_DIM.y / 2.0f + HORT_TO_VERT_K / state->lucia_fov * (WALL_HEIGHT - lucia_eye_level) / (wall_distance + 0.1f));
+			i32 starting_y = static_cast<i32>(VIEW_DIM.y / 2.0f - HORT_TO_VERT_K / state->lucia_fov *                state->lucia_position.z  / (wall_distance + 0.1f));
+			i32 ending_y   = static_cast<i32>(VIEW_DIM.y / 2.0f + HORT_TO_VERT_K / state->lucia_fov * (WALL_HEIGHT - state->lucia_position.z) / (wall_distance + 0.1f));
 
 			pixel_starting_y = MAXIMUM(0, starting_y);
 			pixel_ending_y   = MINIMUM(ending_y, VIEW_DIM.y);
@@ -411,11 +411,11 @@ extern "C" PROTOTYPE_RENDER(render)
 				vf2 portions;
 				if
 				(
-					ray_cast_line(&distances.x, &portions.x, { state->lucia_position.x, lucia_eye_level }, normalize(vf2 { ray_horizontal.x, pitch }), { 0.0f, texture_level }, { texture_dimension, texture_level }) &&
-					ray_cast_line(&distances.y, &portions.y, { state->lucia_position.y, lucia_eye_level }, normalize(vf2 { ray_horizontal.y, pitch }), { 0.0f, texture_level }, { texture_dimension, texture_level })
+					ray_cast_line(&distances.x, &portions.x, { state->lucia_position.x, state->lucia_position.z }, normalize(vf2 { ray_horizontal.x, pitch }), { 0.0f, texture_level }, { texture_dimension, texture_level }) &&
+					ray_cast_line(&distances.y, &portions.y, { state->lucia_position.y, state->lucia_position.z }, normalize(vf2 { ray_horizontal.y, pitch }), { 0.0f, texture_level }, { texture_dimension, texture_level })
 				)
 				{
-					f32 distance = sqrtf(square(distances.x) + square(distances.y) - square(lucia_eye_level));
+					f32 distance = sqrtf(square(distances.x) + square(distances.y) - square(state->lucia_position.z));
 
 					portions.x = mod(portions.x, 1.0f);
 					portions.y = mod(portions.y, 1.0f);
@@ -433,11 +433,6 @@ extern "C" PROTOTYPE_RENDER(render)
 			}
 		}
 
-		constexpr f32 SPRITE_PIXELS_PER_METER = 0.001f;
-
-		vf3 sprite_slide_x = normalize(-cross(normalize(vf3 { state->lucia_position.x, state->lucia_position.y, lucia_eye_level } - state->sprite_position), { 0.0f, 0.0f, 1.0f })) * static_cast<f32>(state->sprite.w) * SPRITE_PIXELS_PER_METER;
-		vf3 sprite_slide_y = { 0.0f, 0.0f, state->sprite.h * SPRITE_PIXELS_PER_METER };
-
 		FOR_RANGE(y, 0, VIEW_DIM.y)
 		{
 			vf3 ray = normalize({ ray_horizontal.x, ray_horizontal.y, (y - VIEW_DIM.y / 2.0f) * state->lucia_fov / HORT_TO_VERT_K });
@@ -450,7 +445,7 @@ extern "C" PROTOTYPE_RENDER(render)
 				(
 					&distance,
 					&portion,
-					vf3 { state->lucia_position.x, state->lucia_position.y, lucia_eye_level } + 0.5f * (sprite_slide_x + sprite_slide_y),
+					state->lucia_position + 0.5f * (sprite_slide_x + sprite_slide_y),
 					ray,
 					state->sprite_position,
 					sprite_slide_x,
@@ -460,10 +455,7 @@ extern "C" PROTOTYPE_RENDER(render)
 				&& IN_RANGE(portion.y, 0.0f, 1.0f)
 			)
 			{
-				vf4* sprite_rgba =
-					state->sprite.pixels +
-					static_cast<i32>((1.0f - portion.y) * (state->sprite.h - 1.0f)) * state->sprite.w +
-					static_cast<i32>(portion.x * state->sprite.w);
+				vf4* sprite_rgba = state->sprite.pixels + static_cast<i32>((1.0f - portion.y) * (state->sprite.h - 1.0f)) * state->sprite.w + static_cast<i32>(portion.x * state->sprite.w);
 
 				write_pixel
 				(
@@ -483,7 +475,7 @@ extern "C" PROTOTYPE_RENDER(render)
 	}
 	#elif 0
 	const f32 PIXELS_PER_METER = 25.0f + 10.0f / state->lucia_fov;
-	const vf2 ORIGIN           = state->lucia_position;
+	const vf2 ORIGIN           = state->lucia_position.xy;
 
 	FOR_RANGE(y, MAP_DIM)
 	{
@@ -529,12 +521,12 @@ extern "C" PROTOTYPE_RENDER(render)
 	}
 
 	constexpr f32 LUCIA_DIM = 4.0f;
-	fill(state->view, VIEW_DIM / 2.0f + conjugate(-ORIGIN + state->lucia_position) * PIXELS_PER_METER - vf2 { LUCIA_DIM, LUCIA_DIM } / 2.0f, vf2 { LUCIA_DIM, LUCIA_DIM }, { 0.0f, 0.0f, 1.0f });
+	fill(state->view, VIEW_DIM / 2.0f + conjugate(-ORIGIN + state->lucia_position.xy) * PIXELS_PER_METER - vf2 { LUCIA_DIM, LUCIA_DIM } / 2.0f, vf2 { LUCIA_DIM, LUCIA_DIM }, { 0.0f, 0.0f, 1.0f });
 	draw_line
 	(
 		state->view,
-		VIEW_DIM / 2.0f + conjugate(-ORIGIN + state->lucia_position                                   ) * PIXELS_PER_METER,
-		VIEW_DIM / 2.0f + conjugate(-ORIGIN + state->lucia_position + polar(state->lucia_angle) * 1.0f) * PIXELS_PER_METER,
+		VIEW_DIM / 2.0f + conjugate(-ORIGIN + state->lucia_position.xy                                   ) * PIXELS_PER_METER,
+		VIEW_DIM / 2.0f + conjugate(-ORIGIN + state->lucia_position.xy + polar(state->lucia_angle) * 1.0f) * PIXELS_PER_METER,
 		{ 0.4f, 0.8f, 0.6f }
 	);
 	#else
