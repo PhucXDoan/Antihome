@@ -30,7 +30,7 @@ flag_struct (WallLayout, u8)
 struct Pixel
 {
 	vf3 color;
-	f32 depth;
+	f32 inv_depth;
 };
 
 struct State
@@ -48,9 +48,8 @@ struct State
 	ColumnMajorTexture wall;
 	ColumnMajorTexture floor;
 	ColumnMajorTexture ceiling;
-
-	Sprite sprite;
-	vf3    sprite_position;
+	Image              monster_img;
+	Sprite             monster_sprite;
 };
 
 internal WallLayout* get_wall_layout(State* state, i32 x, i32 y)
@@ -60,7 +59,7 @@ internal WallLayout* get_wall_layout(State* state, i32 x, i32 y)
 
 internal void write_pixel(Pixel* pixel, Pixel new_pixel)
 {
-	if (pixel->depth <= new_pixel.depth)
+	if (pixel->inv_depth <= new_pixel.inv_depth)
 	{
 		*pixel = new_pixel;
 	}
@@ -75,7 +74,6 @@ extern "C" PROTOTYPE_INITIALIZE(initialize)
 
 	state->lucia_position  = { 0.5f, 0.5f, LUCIA_HEIGHT };
 	state->lucia_fov       = TAU / 3.0f;
-	state->sprite_position = { 1.0f, 2.0f, 0.0f };
 
 	FOR_RANGE(start_walk_y, MAP_DIM)
 	{
@@ -181,10 +179,13 @@ extern "C" PROTOTYPE_BOOT_UP(boot_up)
 			0xFF000000
 		);
 
-	state->wall    = init_column_major_texture(DATA_DIR "wall.png");
-	state->floor   = init_column_major_texture(DATA_DIR "floor.png");
-	state->ceiling = init_column_major_texture(DATA_DIR "ceiling.png");
-	state->sprite  = init_sprite(DATA_DIR "sprite.png");
+	state->wall        = init_column_major_texture(DATA_DIR "wall.png");
+	state->floor       = init_column_major_texture(DATA_DIR "floor.png");
+	state->ceiling     = init_column_major_texture(DATA_DIR "ceiling.png");
+	state->monster_img = init_image(DATA_DIR "sprite.png");
+
+	state->monster_sprite.img              = &state->monster_img;
+	state->monster_sprite.pixels_per_meter = 1000.0f;
 }
 
 extern "C" PROTOTYPE_BOOT_DOWN(boot_down)
@@ -192,7 +193,7 @@ extern "C" PROTOTYPE_BOOT_DOWN(boot_down)
 	ASSERT(sizeof(State) <= platform->memory_capacity);
 	State* state = reinterpret_cast<State*>(platform->memory);
 
-	deinit_sprite(&state->sprite);
+	deinit_image(&state->monster_img);
 	deinit_column_major_texture(&state->ceiling);
 	deinit_column_major_texture(&state->floor);
 	deinit_column_major_texture(&state->wall);
@@ -287,6 +288,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 		}
 	}
 	state->lucia_position.xy += displacement;
+	state->lucia_position.z   = LUCIA_HEIGHT + 0.1f * (cosf(state->lucia_head_bob_keytime * TAU) - 1.0f);
 
 	state->lucia_head_bob_keytime += 0.35f * norm(state->lucia_velocity) * SECONDS_PER_UPDATE;
 	if (state->lucia_head_bob_keytime > 1.0f)
@@ -299,7 +301,15 @@ extern "C" PROTOTYPE_UPDATE(update)
 	// @TEMP@
 	persist f32 TEMP;
 	TEMP += 1.5f * SECONDS_PER_UPDATE;
-	state->sprite_position.z = WALL_HEIGHT * (0.5f + sinf(TEMP) * 0.1f);
+
+	if (norm(state->monster_sprite.position.xy - state->lucia_position.xy) > 1.5f)
+	{
+		state->monster_sprite.position.xy = dampen(state->monster_sprite.position.xy, state->lucia_position.xy, 0.5f, SECONDS_PER_UPDATE);
+	}
+	state->monster_sprite.position.z = (cosf(TEMP * 2.0f) * 0.15f) + WALL_HEIGHT / 2.0f;
+
+	state->monster_sprite.orientation_x = normalize(-cross(normalize(state->lucia_position - state->monster_sprite.position), { 0.0f, 0.0f, 1.0f })) * static_cast<f32>(state->monster_sprite.img->w);
+	state->monster_sprite.orientation_y = { 0.0f, 0.0f, static_cast<f32>(state->monster_sprite.img->h) };
 
 	return UpdateCode::resume;
 }
@@ -314,17 +324,12 @@ extern "C" PROTOTYPE_RENDER(render)
 	memset(state->frame_buffer, 0, sizeof(state->frame_buffer));
 
 	#if 1
-	state->lucia_position.z = LUCIA_HEIGHT + 0.1f * (cosf(state->lucia_head_bob_keytime * TAU) - 1.0f);
-
-	constexpr f32 SPRITE_PIXELS_PER_METER = 0.001f;
-	vf3           sprite_slide_x          = normalize(-cross(normalize(state->lucia_position - state->sprite_position), { 0.0f, 0.0f, 1.0f })) * static_cast<f32>(state->sprite.w) * SPRITE_PIXELS_PER_METER;
-	vf3           sprite_slide_y          = { 0.0f, 0.0f, state->sprite.h * SPRITE_PIXELS_PER_METER };
-
 	FOR_RANGE(x, VIEW_DIM.x)
 	{
 		vf2 ray_horizontal = polar(state->lucia_angle + (0.5f - static_cast<f32>(x) / VIEW_DIM.x) * state->lucia_fov);
 
 		bool32 wall_exists   = false;
+		vf2    wall_normal   = { NAN, NAN };
 		f32    wall_distance = NAN;
 		f32    wall_portion  = NAN;
 
@@ -336,22 +341,17 @@ extern "C" PROTOTYPE_RENDER(render)
 				{
 					if (+(*get_wall_layout(state, wall_x, wall_y) & static_cast<WallLayout>(1 << layout_position_index)))
 					{
-						//FOR_RANGE(i, 9) // @TEMP@
-						i32 i = 4;
+						vf2 start  = (vf2 { static_cast<f32>(wall_x), static_cast<f32>(wall_y) } + (*layout_position)[0]) * WALL_SPACING;
+						vf2 end    = (vf2 { static_cast<f32>(wall_x), static_cast<f32>(wall_y) } + (*layout_position)[1]) * WALL_SPACING;
+
+						f32 distance;
+						f32 portion;
+						if (ray_cast_line(&distance, &portion, state->lucia_position.xy, ray_horizontal, start, end) && IN_RANGE(portion, 0.0f, 1.0f) && (!wall_exists || distance < wall_distance))
 						{
-							vf2 offset = (vf2 { static_cast<f32>(i % 3), static_cast<f32>(i / 3) } - vf2 { 1.0f, 1.0f }) * MAP_DIM;
-
-							vf2 start  = (offset + vf2 { static_cast<f32>(wall_x), static_cast<f32>(wall_y) } + (*layout_position)[0]) * WALL_SPACING;
-							vf2 end    = (offset + vf2 { static_cast<f32>(wall_x), static_cast<f32>(wall_y) } + (*layout_position)[1]) * WALL_SPACING;
-
-							f32 distance;
-							f32 portion;
-							if (ray_cast_line(&distance, &portion, state->lucia_position.xy, ray_horizontal, start, end) && IN_RANGE(portion, 0.0f, 1.0f) && (!wall_exists || distance < wall_distance))
-							{
-								wall_exists   = true;
-								wall_distance = distance;
-								wall_portion  = portion;
-							}
+							wall_exists   = true;
+							wall_normal   = rotate90(normalize(end - start));
+							wall_distance = distance;
+							wall_portion  = portion;
 						}
 					}
 				}
@@ -375,8 +375,9 @@ extern "C" PROTOTYPE_RENDER(render)
 					&state->frame_buffer[x][y],
 					{
 						*(state->wall.colors + static_cast<i32>(wall_portion * (state->wall.w - 1.0f)) * state->wall.h + static_cast<i32>(static_cast<f32>(y - starting_y) / (ending_y - starting_y) * state->wall.h))
-							* CLAMP(1.0f - wall_distance / 16.0f, 0.0f, 1.0f),
-						0.0f
+							* fabsf(dot(normalize({ ray_horizontal.x, ray_horizontal.y, (y - VIEW_DIM.y / 2.0f) * state->lucia_fov / HORT_TO_VERT_K }), { wall_normal.x, wall_normal.y, 0.0f }))
+							* square(CLAMP(1.0f - wall_distance / 16.0f, 0.0f, 1.0f)),
+						1.0f / wall_distance
 					}
 				);
 			}
@@ -386,50 +387,50 @@ extern "C" PROTOTYPE_RENDER(render)
 		{
 			if (y == pixel_starting_y)
 			{
-				y = pixel_ending_y - 1;
+				y = MAXIMUM(pixel_starting_y + 1, pixel_ending_y - 1);
+				continue;
+			}
+
+			ColumnMajorTexture* texture;
+			f32                 texture_dimension;
+			f32                 texture_level;
+			if (y < VIEW_DIM.y / 2.0f)
+			{
+				texture           = &state->floor;
+				texture_dimension = 4.0f;
+				texture_level     = 0.0f;
 			}
 			else
 			{
-				ColumnMajorTexture* texture;
-				f32                 texture_dimension;
-				f32                 texture_level;
-				if (y < VIEW_DIM.y / 2.0f)
-				{
-					texture           = &state->floor;
-					texture_dimension = 4.0f;
-					texture_level     = 0.0f;
-				}
-				else
-				{
-					texture           = &state->ceiling;
-					texture_dimension = 4.0f;
-					texture_level     = WALL_HEIGHT;
-				}
+				texture           = &state->ceiling;
+				texture_dimension = 4.0f;
+				texture_level     = WALL_HEIGHT;
+			}
 
-				f32 pitch = (y - VIEW_DIM.y / 2.0f) * state->lucia_fov / HORT_TO_VERT_K;
-				vf2 distances;
-				vf2 portions;
-				if
+			f32 pitch = (y - VIEW_DIM.y / 2.0f) * state->lucia_fov / HORT_TO_VERT_K;
+			vf2 distances;
+			vf2 portions;
+			if
+			(
+				ray_cast_line(&distances.x, &portions.x, { state->lucia_position.x, state->lucia_position.z }, normalize(vf2 { ray_horizontal.x, pitch }), { 0.0f, texture_level }, { texture_dimension, texture_level }) &&
+				ray_cast_line(&distances.y, &portions.y, { state->lucia_position.y, state->lucia_position.z }, normalize(vf2 { ray_horizontal.y, pitch }), { 0.0f, texture_level }, { texture_dimension, texture_level })
+			)
+			{
+				f32 distance = sqrtf(square(distances.x) + square(distances.y) - square(state->lucia_position.z));
+
+				portions.x = mod(portions.x, 1.0f);
+				portions.y = mod(portions.y, 1.0f);
+
+				write_pixel
 				(
-					ray_cast_line(&distances.x, &portions.x, { state->lucia_position.x, state->lucia_position.z }, normalize(vf2 { ray_horizontal.x, pitch }), { 0.0f, texture_level }, { texture_dimension, texture_level }) &&
-					ray_cast_line(&distances.y, &portions.y, { state->lucia_position.y, state->lucia_position.z }, normalize(vf2 { ray_horizontal.y, pitch }), { 0.0f, texture_level }, { texture_dimension, texture_level })
-				)
-				{
-					f32 distance = sqrtf(square(distances.x) + square(distances.y) - square(state->lucia_position.z));
-
-					portions.x = mod(portions.x, 1.0f);
-					portions.y = mod(portions.y, 1.0f);
-
-					write_pixel
-					(
-						&state->frame_buffer[x][y],
-						{
-							*(texture->colors + static_cast<i32>(portions.x * (texture->w - 1.0f)) * texture->h + static_cast<i32>(portions.y * texture->h))
-								* CLAMP(1.0f - distance / 16.0f, 0.0f, 1.0f),
-							0.0f
-						}
-					);
-				}
+					&state->frame_buffer[x][y],
+					{
+						*(texture->colors + static_cast<i32>(portions.x * (texture->w - 1.0f)) * texture->h + static_cast<i32>(portions.y * texture->h))
+							* fabsf(normalize({ ray_horizontal.x, ray_horizontal.y, pitch }).z)
+							* square(CLAMP(1.0f - distance / 16.0f, 0.0f, 1.0f)),
+						1.0f / distance
+					}
+				);
 			}
 		}
 
@@ -445,17 +446,17 @@ extern "C" PROTOTYPE_RENDER(render)
 				(
 					&distance,
 					&portion,
-					state->lucia_position + 0.5f * (sprite_slide_x + sprite_slide_y),
+					state->lucia_position + 0.5f * (state->monster_sprite.orientation_x / state->monster_sprite.pixels_per_meter + state->monster_sprite.orientation_y / state->monster_sprite.pixels_per_meter),
 					ray,
-					state->sprite_position,
-					sprite_slide_x,
-					sprite_slide_y
+					state->monster_sprite.position,
+					state->monster_sprite.orientation_x / state->monster_sprite.pixels_per_meter,
+					state->monster_sprite.orientation_y / state->monster_sprite.pixels_per_meter
 				)
 				&& IN_RANGE(portion.x, 0.0f, 1.0f)
 				&& IN_RANGE(portion.y, 0.0f, 1.0f)
 			)
 			{
-				vf4* sprite_rgba = state->sprite.pixels + static_cast<i32>((1.0f - portion.y) * (state->sprite.h - 1.0f)) * state->sprite.w + static_cast<i32>(portion.x * state->sprite.w);
+				vf4* sprite_rgba = state->monster_sprite.img->pixels + static_cast<i32>((1.0f - portion.y) * (state->monster_sprite.img->h - 1.0f)) * state->monster_sprite.img->w + static_cast<i32>(portion.x * state->monster_sprite.img->w);
 
 				write_pixel
 				(
@@ -467,7 +468,7 @@ extern "C" PROTOTYPE_RENDER(render)
 							sprite_rgba->xyz,
 							sprite_rgba->w
 						),
-						0.0f
+						1.0f / distance
 					}
 				);
 			}

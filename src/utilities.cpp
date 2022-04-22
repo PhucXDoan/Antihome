@@ -64,11 +64,20 @@ struct ColumnMajorTexture
 	vf3* colors;
 };
 
-struct Sprite
+struct Image
 {
 	i32  w;
 	i32  h;
 	vf4* pixels;
+};
+
+struct Sprite
+{
+	Image* img;
+	f32    pixels_per_meter;
+	vf3    orientation_x;
+	vf3    orientation_y;
+	vf3    position;
 };
 
 internal f32 rng(u32* seed)
@@ -86,7 +95,8 @@ internal f32 rng(u32* seed, f32 start, f32 end)
 	return rng(seed) * (end - start) + start;
 }
 
-internal constexpr vf2 conjugate(vf2 v) { return { v.x, -v.y }; }
+internal constexpr vf2 conjugate(vf2 v) { return {  v.x, -v.y }; }
+internal constexpr vf2 rotate90(vf2 v)  { return { -v.y,  v.x }; }
 
 internal constexpr f32 square(f32 x) { return x * x; }
 
@@ -96,6 +106,7 @@ internal constexpr vf3 lerp(vf3 a, vf3 b, f32 t) { return a * (1.0f - t) + b * t
 internal constexpr vf4 lerp(vf4 a, vf4 b, f32 t) { return a * (1.0f - t) + b * t; }
 
 internal constexpr f32 dampen(f32 a, f32 b, f32 k, f32 dt) { return lerp(a, b, 1.0f - expf(-k * dt)); }
+internal constexpr vf2 dampen(vf2 a, vf2 b, f32 k, f32 dt) { return lerp(a, b, 1.0f - expf(-k * dt)); }
 internal constexpr vf4 dampen(vf4 a, vf4 b, f32 k, f32 dt) { return lerp(a, b, 1.0f - expf(-k * dt)); }
 
 internal constexpr f32 dot(vf3 u, vf3 v) { return u.x * v.x + u.y * v.y + u.z * v.z; }
@@ -377,9 +388,9 @@ internal void deinit_column_major_texture(ColumnMajorTexture* texture)
 }
 
 // @TODO@ Use arena.
-internal Sprite init_sprite(strlit filepath)
+internal Image init_image(strlit filepath)
 {
-	Sprite sprite;
+	Image image;
 
 	i32  iw;
 	i32  ih;
@@ -387,11 +398,11 @@ internal Sprite init_sprite(strlit filepath)
 	DEFER { stbi_image_free(img); };
 	ASSERT(img);
 
-	sprite.w      = iw;
-	sprite.h      = ih;
-	sprite.pixels = reinterpret_cast<vf4*>(malloc(sprite.w * sprite.h * sizeof(vf4)));
+	image.w      = iw;
+	image.h      = ih;
+	image.pixels = reinterpret_cast<vf4*>(malloc(image.w * image.h * sizeof(vf4)));
 
-	FOR_ELEMS(it, sprite.pixels, sprite.w * sprite.h)
+	FOR_ELEMS(it, image.pixels, image.w * image.h)
 	{
 		*it =
 			{
@@ -402,10 +413,10 @@ internal Sprite init_sprite(strlit filepath)
 			};
 	}
 
-	return sprite;
+	return image;
 }
 
-internal void deinit_sprite(Sprite* sprite)
+internal void deinit_image(Image* image)
 {
-	free(sprite->pixels);
+	free(image->pixels);
 }
