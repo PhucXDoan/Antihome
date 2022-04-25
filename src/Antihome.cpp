@@ -7,22 +7,15 @@
 #include "platform.h"
 #include "utilities.cpp"
 
-global constexpr vi2 VIEW_DIM               = { 350, 175 };
-global constexpr f32 HORT_TO_VERT_K         = 0.927295218f * VIEW_DIM.x;
-global constexpr f32 WALL_HEIGHT            = 2.7432f;
-global constexpr f32 WALL_THICKNESS         = 0.25f;
-global constexpr f32 LUCIA_HEIGHT           = 1.4986f;
-global constexpr i32 MAP_DIM                = 64;
-global constexpr f32 WALL_SPACING           = 3.0f;
-global constexpr vf2 WALL_LAYOUT_DATA[4][3] =
-	{
-		{ { 0.0f, 0.0f }, { 0.0f, 1.0f }, {     -1.0f,      0.0f } },
-		{ { 0.0f, 0.0f }, { 1.0f, 0.0f }, {      0.0f,      1.0f } },
-		{ { 1.0f, 0.0f }, { 0.0f, 1.0f }, { -INVSQRT2, -INVSQRT2 } },
-		{ { 0.0f, 0.0f }, { 1.0f, 1.0f }, { -INVSQRT2,  INVSQRT2 } }
-	};
+global constexpr vi2 VIEW_DIM       = { 350, 175 };
+global constexpr f32 HORT_TO_VERT_K = 0.927295218f * VIEW_DIM.x;
+global constexpr f32 WALL_HEIGHT    = 2.7432f;
+global constexpr f32 WALL_THICKNESS = 0.25f;
+global constexpr f32 LUCIA_HEIGHT   = 1.4986f;
+global constexpr i32 MAP_DIM        = 64;
+global constexpr f32 WALL_SPACING   = 3.0f;
 
-flag_struct (WallLayout, u8)
+flag_struct (WallVoxel, u8)
 {
 	left          = 1 << 0,
 	bottom        = 1 << 1,
@@ -49,7 +42,7 @@ struct State
 	f32                lucia_head_bob_keytime;
 	vf3                flashlight_ray;
 	f32                flashlight_keytime;
-	WallLayout         wall_layouts[MAP_DIM * MAP_DIM];
+	WallVoxel          wall_voxels[MAP_DIM * MAP_DIM];
 	ColumnMajorTexture wall;
 	ColumnMajorTexture floor;
 	ColumnMajorTexture ceiling;
@@ -57,9 +50,17 @@ struct State
 	Sprite             monster_sprite;
 };
 
-internal WallLayout* get_wall_layout(State* state, vi2 v)
+global constexpr struct { WallVoxel voxel; vf2 start; vf2 end; vf2 normal; } WALL_VOXEL_DATA[] =
+	{
+		{ WallVoxel::left         , { 0.0f, 0.0f }, { 0.0f, 1.0f }, {     -1.0f,      0.0f } },
+		{ WallVoxel::bottom       , { 0.0f, 0.0f }, { 1.0f, 0.0f }, {      0.0f,      1.0f } },
+		{ WallVoxel::back_slash   , { 1.0f, 0.0f }, { 0.0f, 1.0f }, { -INVSQRT2, -INVSQRT2 } },
+		{ WallVoxel::forward_slash, { 0.0f, 0.0f }, { 1.0f, 1.0f }, { -INVSQRT2,  INVSQRT2 } }
+	};
+
+internal WallVoxel* get_wall_voxel(State* state, vi2 v)
 {
-	return &state->wall_layouts[((v.y % MAP_DIM) + MAP_DIM) % MAP_DIM * MAP_DIM + ((v.x % MAP_DIM) + MAP_DIM) % MAP_DIM];
+	return &state->wall_voxels[((v.y % MAP_DIM) + MAP_DIM) % MAP_DIM * MAP_DIM + ((v.x % MAP_DIM) + MAP_DIM) % MAP_DIM];
 }
 
 internal void write_pixel(Pixel* pixel, Pixel new_pixel)
@@ -84,7 +85,7 @@ extern "C" PROTOTYPE_INITIALIZE(initialize)
 	{
 		FOR_RANGE(start_walk_x, MAP_DIM)
 		{
-			if (!+*get_wall_layout(state, { start_walk_x, start_walk_y }) && rng(&state->seed) < 0.15f)
+			if (!+*get_wall_voxel(state, { start_walk_x, start_walk_y }) && rng(&state->seed) < 0.15f)
 			{
 				vi2 walk = { start_walk_x, start_walk_y };
 				FOR_RANGE(64)
@@ -93,36 +94,36 @@ extern "C" PROTOTYPE_INITIALIZE(initialize)
 					{
 						case 0:
 						{
-							if (!+*get_wall_layout(state, walk + vi2 { -1, 0 }) && !+(*get_wall_layout(state, walk + vi2 { -1, -1 }) & WallLayout::left) && !+(*get_wall_layout(state, walk + vi2 { -2, 0 }) & WallLayout::bottom))
+							if (!+*get_wall_voxel(state, walk + vi2 { -1, 0 }) && !+(*get_wall_voxel(state, walk + vi2 { -1, -1 }) & WallVoxel::left) && !+(*get_wall_voxel(state, walk + vi2 { -2, 0 }) & WallVoxel::bottom))
 							{
 								walk.x = mod(walk.x - 1, MAP_DIM);
-								*get_wall_layout(state, walk) |= WallLayout::bottom;
+								*get_wall_voxel(state, walk) |= WallVoxel::bottom;
 							}
 						} break;
 
 						case 1:
 						{
-							if (!+*get_wall_layout(state, walk + vi2 { 1, 0 }) && !+(*get_wall_layout(state, walk) & WallLayout::bottom) && !+(*get_wall_layout(state, walk + vi2 { 1, -1 }) & WallLayout::left))
+							if (!+*get_wall_voxel(state, walk + vi2 { 1, 0 }) && !+(*get_wall_voxel(state, walk) & WallVoxel::bottom) && !+(*get_wall_voxel(state, walk + vi2 { 1, -1 }) & WallVoxel::left))
 							{
-								*get_wall_layout(state, walk) |= WallLayout::bottom;
+								*get_wall_voxel(state, walk) |= WallVoxel::bottom;
 								walk.x = mod(walk.x + 1, MAP_DIM);
 							}
 						} break;
 
 						case 2:
 						{
-							if (!+*get_wall_layout(state, walk + vi2 { 0, -1 }) && !+(*get_wall_layout(state, walk + vi2 { -1, -1 }) & WallLayout::bottom) && !+(*get_wall_layout(state, walk + vi2 { 0, -2 }) & WallLayout::left))
+							if (!+*get_wall_voxel(state, walk + vi2 { 0, -1 }) && !+(*get_wall_voxel(state, walk + vi2 { -1, -1 }) & WallVoxel::bottom) && !+(*get_wall_voxel(state, walk + vi2 { 0, -2 }) & WallVoxel::left))
 							{
 								walk.y = mod(walk.y - 1, MAP_DIM);
-								*get_wall_layout(state, walk) |= WallLayout::left;
+								*get_wall_voxel(state, walk) |= WallVoxel::left;
 							}
 						} break;
 
 						case 3:
 						{
-							if (!+*get_wall_layout(state, walk + vi2 { 0, 1 }) && !+(*get_wall_layout(state, walk) & WallLayout::left) && !+(*get_wall_layout(state, walk + vi2 { -1, 1 }) & WallLayout::bottom))
+							if (!+*get_wall_voxel(state, walk + vi2 { 0, 1 }) && !+(*get_wall_voxel(state, walk) & WallVoxel::left) && !+(*get_wall_voxel(state, walk + vi2 { -1, 1 }) & WallVoxel::bottom))
 							{
-								*get_wall_layout(state, walk) |= WallLayout::left;
+								*get_wall_voxel(state, walk) |= WallVoxel::left;
 								walk.y = mod(walk.y + 1, MAP_DIM);
 							}
 						} break;
@@ -136,27 +137,27 @@ extern "C" PROTOTYPE_INITIALIZE(initialize)
 	{
 		FOR_RANGE(x, MAP_DIM)
 		{
-			if (*get_wall_layout(state, { x, y }) == (WallLayout::left | WallLayout::bottom) && rng(&state->seed) < 0.5f)
+			if (*get_wall_voxel(state, { x, y }) == (WallVoxel::left | WallVoxel::bottom) && rng(&state->seed) < 0.5f)
 			{
-				*get_wall_layout(state, { x, y }) = WallLayout::back_slash;
+				*get_wall_voxel(state, { x, y }) = WallVoxel::back_slash;
 			}
-			else if (+(*get_wall_layout(state, { x + 1, y }) & WallLayout::left) && +(*get_wall_layout(state, { x, y + 1 }) & WallLayout::bottom) && rng(&state->seed) < 0.5f)
+			else if (+(*get_wall_voxel(state, { x + 1, y }) & WallVoxel::left) && +(*get_wall_voxel(state, { x, y + 1 }) & WallVoxel::bottom) && rng(&state->seed) < 0.5f)
 			{
-				*get_wall_layout(state, { x + 1, y     }) &= ~WallLayout::left;
-				*get_wall_layout(state, { x    , y + 1 }) &= ~WallLayout::bottom;
-				*get_wall_layout(state, { x    , y     }) |= WallLayout::back_slash;
+				*get_wall_voxel(state, { x + 1, y     }) &= ~WallVoxel::left;
+				*get_wall_voxel(state, { x    , y + 1 }) &= ~WallVoxel::bottom;
+				*get_wall_voxel(state, { x    , y     }) |= WallVoxel::back_slash;
 			}
-			else if (+(*get_wall_layout(state, { x, y }) & WallLayout::bottom) && *get_wall_layout(state, { x + 1, y }) == WallLayout::left && rng(&state->seed) < 0.5f)
+			else if (+(*get_wall_voxel(state, { x, y }) & WallVoxel::bottom) && *get_wall_voxel(state, { x + 1, y }) == WallVoxel::left && rng(&state->seed) < 0.5f)
 			{
-				*get_wall_layout(state, { x    , y }) &= ~WallLayout::bottom;
-				*get_wall_layout(state, { x + 1, y }) &= ~WallLayout::left;
-				*get_wall_layout(state, { x    , y }) |=  WallLayout::forward_slash;
+				*get_wall_voxel(state, { x    , y }) &= ~WallVoxel::bottom;
+				*get_wall_voxel(state, { x + 1, y }) &= ~WallVoxel::left;
+				*get_wall_voxel(state, { x    , y }) |=  WallVoxel::forward_slash;
 			}
-			else if (+(*get_wall_layout(state, { x, y }) & WallLayout::left) && *get_wall_layout(state, { x, y + 1 }) == WallLayout::bottom && rng(&state->seed) < 0.5f)
+			else if (+(*get_wall_voxel(state, { x, y }) & WallVoxel::left) && *get_wall_voxel(state, { x, y + 1 }) == WallVoxel::bottom && rng(&state->seed) < 0.5f)
 			{
-				*get_wall_layout(state, { x, y     }) &= ~WallLayout::left;
-				*get_wall_layout(state, { x, y + 1 }) &= ~WallLayout::bottom;
-				*get_wall_layout(state, { x, y     }) |=  WallLayout::forward_slash;
+				*get_wall_voxel(state, { x, y     }) &= ~WallVoxel::left;
+				*get_wall_voxel(state, { x, y + 1 }) &= ~WallVoxel::bottom;
+				*get_wall_voxel(state, { x, y     }) |=  WallVoxel::forward_slash;
 			}
 		}
 	}
@@ -275,12 +276,12 @@ extern "C" PROTOTYPE_UPDATE(update)
 			};
 		FOR_RANGE(MAXIMUM(fabsf(displacement.x), fabsf(displacement.y)) + 1)
 		{
-			FOR_ELEMS(layout_data, WALL_LAYOUT_DATA)
+			FOR_ELEMS(voxel_data, WALL_VOXEL_DATA)
 			{
-				if (+(*get_wall_layout(state, coordinates) & static_cast<WallLayout>(1 << layout_data_index)))
+				if (+(*get_wall_voxel(state, coordinates) & voxel_data->voxel))
 				{
-					vf2 start = (coordinates + (*layout_data)[0]) * WALL_SPACING;
-					vf2 end   = (coordinates + (*layout_data)[1]) * WALL_SPACING;
+					vf2 start = (coordinates + voxel_data->start) * WALL_SPACING;
+					vf2 end   = (coordinates + voxel_data->end  ) * WALL_SPACING;
 
 					Intersection intersection = intersect_thick_line_segment(state->lucia_position.xy, displacement, start, end, WALL_THICKNESS);
 
@@ -378,25 +379,6 @@ extern "C" PROTOTYPE_RENDER(render)
 	#if 1
 	FOR_RANGE(x, VIEW_DIM.x)
 	{
-		#if 0
-		persist u64 DEBUG_total;
-		persist u64 DEBUG_counter;
-		LARGE_INTEGER DEBUG_li0;
-		QueryPerformanceCounter(&DEBUG_li0);
-
-		LARGE_INTEGER DEBUG_li1;
-		QueryPerformanceCounter(&DEBUG_li1);
-
-		DEBUG_total   += DEBUG_li1.QuadPart - DEBUG_li0.QuadPart;
-		DEBUG_counter += 1;
-		if (DEBUG_counter > 4096)
-		{
-			DEBUG_printf("%llu\n", DEBUG_total);
-			DEBUG_total   = 0;
-			DEBUG_counter = 0;
-		}
-		#endif
-
 		vf2 ray_horizontal = polar(state->lucia_angle + (0.5f - static_cast<f32>(x) / VIEW_DIM.x) * state->lucia_fov);
 
 		bool32 wall_exists   = false;
@@ -426,9 +408,9 @@ extern "C" PROTOTYPE_RENDER(render)
 			};
 		FOR_RANGE(MAP_DIM * MAP_DIM)
 		{
-			FOR_ELEMS(layout_data, WALL_LAYOUT_DATA)
+			FOR_ELEMS(voxel_data, WALL_VOXEL_DATA)
 			{
-				if (+(*get_wall_layout(state, coordinates) & static_cast<WallLayout>(1 << layout_data_index)))
+				if (+(*get_wall_voxel(state, coordinates) & voxel_data->voxel))
 				{
 					f32 distance;
 					f32 portion;
@@ -440,15 +422,15 @@ extern "C" PROTOTYPE_RENDER(render)
 							&portion,
 							state->lucia_position.xy,
 							ray_horizontal,
-							(coordinates + (*layout_data)[0]) * WALL_SPACING,
-							(coordinates + (*layout_data)[1]) * WALL_SPACING
+							(coordinates + voxel_data->start) * WALL_SPACING,
+							(coordinates + voxel_data->end  ) * WALL_SPACING
 						)
 						&& IN_RANGE(portion, 0.0f, 1.0f)
 						&& (!wall_exists || distance < wall_distance)
 					)
 					{
 						wall_exists   = true;
-						wall_normal   = (*layout_data)[2];
+						wall_normal   = voxel_data->normal;
 						wall_distance = distance;
 						wall_portion  = portion;
 					}
@@ -472,89 +454,104 @@ extern "C" PROTOTYPE_RENDER(render)
 			}
 		}
 
-		i32 pixel_starting_y = -1;
+		#if 0
+		persist u64 DEBUG_total;
+		persist u64 DEBUG_counter;
+		LARGE_INTEGER DEBUG_li0;
+		QueryPerformanceCounter(&DEBUG_li0);
+
+		LARGE_INTEGER DEBUG_li1;
+		QueryPerformanceCounter(&DEBUG_li1);
+
+		DEBUG_total   += DEBUG_li1.QuadPart - DEBUG_li0.QuadPart;
+		DEBUG_counter += 1;
+		if (DEBUG_counter > 10'000)
+		{
+			DEBUG_printf("%llu\n", DEBUG_total);
+			DEBUG_total   = 0;
+			DEBUG_counter = 0;
+		}
+		#endif
+
+		i32 starting_y       = 0;
+		i32 ending_y         = 0;
+		i32 pixel_starting_y = 0;
 		i32 pixel_ending_y   = 0;
 		if (wall_exists)
 		{
-			i32 starting_y = static_cast<i32>(VIEW_DIM.y / 2.0f - HORT_TO_VERT_K / state->lucia_fov *                state->lucia_position.z  / (wall_distance + 0.1f));
-			i32 ending_y   = static_cast<i32>(VIEW_DIM.y / 2.0f + HORT_TO_VERT_K / state->lucia_fov * (WALL_HEIGHT - state->lucia_position.z) / (wall_distance + 0.1f));
-
+			starting_y       = static_cast<i32>(VIEW_DIM.y / 2.0f - HORT_TO_VERT_K / state->lucia_fov *                state->lucia_position.z  / (wall_distance + 0.1f));
+			ending_y         = static_cast<i32>(VIEW_DIM.y / 2.0f + HORT_TO_VERT_K / state->lucia_fov * (WALL_HEIGHT - state->lucia_position.z) / (wall_distance + 0.1f));
 			pixel_starting_y = MAXIMUM(0, starting_y);
 			pixel_ending_y   = MINIMUM(ending_y, VIEW_DIM.y);
+		}
 
-			FOR_RANGE(y, pixel_starting_y, pixel_ending_y)
+		FOR_RANGE(y, 0, VIEW_DIM.y)
+		{
+			vf3 ray          = normalize({ ray_horizontal.x, ray_horizontal.y, (y - VIEW_DIM.y / 2.0f) * state->lucia_fov / HORT_TO_VERT_K });
+			f32 flashlight_k = powf(CLAMP(dot(ray, state->flashlight_ray), 0.0f, 1.0f), FLASHLIGHT_POW);
+
+			if (IN_RANGE(y, pixel_starting_y, pixel_ending_y))
 			{
-				vf3 ray = normalize({ ray_horizontal.x, ray_horizontal.y, (y - VIEW_DIM.y / 2.0f) * state->lucia_fov / HORT_TO_VERT_K });
-				f32 k   =
-					powf(CLAMP(dot(ray, state->flashlight_ray), 0.0f, 1.0f), FLASHLIGHT_POW) * square(CLAMP(1.0f - wall_distance / 32.0f, 0.0f, 1.0f))
-					+ fabsf(dot(ray, { wall_normal.x, wall_normal.y, 0.0f })) * square(CLAMP(1.0f - wall_distance / AMBIENT_LIGHT_RADIUS, 0.0f, 1.0f));
+				f32 k =
+					flashlight_k
+						* square(CLAMP(1.0f - wall_distance / 32.0f, 0.0f, 1.0f))
+					+ fabsf(dot(ray.xy, wall_normal))
+						* square(CLAMP(1.0f - wall_distance / AMBIENT_LIGHT_RADIUS, 0.0f, 1.0f));
+
 				write_pixel
 				(
 					&state->frame_buffer[x][y],
 					{
-						*(state->wall.colors + static_cast<i32>(wall_portion * (state->wall.w - 1.0f)) * state->wall.h + static_cast<i32>(static_cast<f32>(y - starting_y) / (ending_y - starting_y) * state->wall.h)) * CLAMP(k, 0.0f, 1.0f),
+						*(state->wall.colors + static_cast<i32>(wall_portion * (state->wall.w - 1.0f)) * state->wall.h + static_cast<i32>(static_cast<f32>(y - starting_y) / (ending_y - starting_y) * state->wall.h))
+							* CLAMP(k, 0.0f, 1.0f),
 						1.0f / wall_distance
 					}
 				);
 			}
-		}
-
-		FOR_RANGE(y, 0, VIEW_DIM.y)
-		{
-			if (y == pixel_starting_y)
-			{
-				y = MAXIMUM(pixel_starting_y + 1, pixel_ending_y - 1);
-				continue;
-			}
-
-			ColumnMajorTexture* texture;
-			f32                 texture_dimension;
-			f32                 texture_level;
-			if (y < VIEW_DIM.y / 2.0f)
-			{
-				texture           = &state->floor;
-				texture_dimension = 4.0f;
-				texture_level     = 0.0f;
-			}
 			else
 			{
-				texture           = &state->ceiling;
-				texture_dimension = 4.0f;
-				texture_level     = WALL_HEIGHT;
-			}
+				ColumnMajorTexture* texture;
+				f32                 texture_level;
+				if (y < VIEW_DIM.y / 2.0f)
+				{
+					texture       = &state->floor;
+					texture_level = 0.0f;
+				}
+				else
+				{
+					texture       = &state->ceiling;
+					texture_level = WALL_HEIGHT;
+				}
 
-			f32 pitch = (y - VIEW_DIM.y / 2.0f) * state->lucia_fov / HORT_TO_VERT_K;
-			vf3 ray   = normalize({ ray_horizontal.x, ray_horizontal.y, pitch });
-			vf2 distances;
-			vf2 portions;
-			if
-			(
-				ray_cast_line(&distances.x, &portions.x, { state->lucia_position.x, state->lucia_position.z }, { ray.x, ray.z }, { 0.0f, texture_level }, { texture_dimension, texture_level }) &&
-				ray_cast_line(&distances.y, &portions.y, { state->lucia_position.y, state->lucia_position.z }, { ray.y, ray.z }, { 0.0f, texture_level }, { texture_dimension, texture_level })
-			)
-			{
-				portions.x = mod(portions.x, 1.0f);
-				portions.y = mod(portions.y, 1.0f);
-
-				f32 distance = sqrtf(square(distances.x) + square(distances.y) - square(state->lucia_position.z));
-				f32 k        =
-					powf(CLAMP(dot(ray, state->flashlight_ray), 0.0f, 1.0f), FLASHLIGHT_POW) * square(CLAMP(1.0f - distance / 32.0f, 0.0f, 1.0f))
-					+ fabsf(dot(ray, { 0.0f, 0.0f, 1.0f })) * square(CLAMP(1.0f - distance / AMBIENT_LIGHT_RADIUS, 0.0f, 1.0f));
-
-				write_pixel
+				vf2 distances;
+				vf2 portions;
+				if
 				(
-					&state->frame_buffer[x][y],
-					{
-						*(texture->colors + static_cast<i32>(portions.x * (texture->w - 1.0f)) * texture->h + static_cast<i32>(portions.y * texture->h)) * CLAMP(k, 0.0f, 1.0f),
-						1.0f / distance
-					}
-				);
-			}
-		}
+					ray_cast_line(&distances.x, &portions.x, { state->lucia_position.x, state->lucia_position.z }, { ray.x, ray.z }, { 0.0f, texture_level }, { 4.0f, texture_level }) &&
+					ray_cast_line(&distances.y, &portions.y, { state->lucia_position.y, state->lucia_position.z }, { ray.y, ray.z }, { 0.0f, texture_level }, { 4.0f, texture_level })
+				)
+				{
+					portions.x = mod(portions.x, 1.0f);
+					portions.y = mod(portions.y, 1.0f);
 
-		FOR_RANGE(y, 0, VIEW_DIM.y)
-		{
-			vf3 ray = normalize({ ray_horizontal.x, ray_horizontal.y, (y - VIEW_DIM.y / 2.0f) * state->lucia_fov / HORT_TO_VERT_K });
+					f32 distance = sqrtf(square(distances.x) + square(distances.y) - square(state->lucia_position.z));
+					f32 k        =
+						flashlight_k
+							* square(CLAMP(1.0f - distance / 32.0f, 0.0f, 1.0f))
+						+ fabsf(ray.z)
+							* square(CLAMP(1.0f - distance / AMBIENT_LIGHT_RADIUS, 0.0f, 1.0f));
+
+					write_pixel
+					(
+						&state->frame_buffer[x][y],
+						{
+							*(texture->colors + static_cast<i32>(portions.x * (texture->w - 1.0f)) * texture->h + static_cast<i32>(portions.y * texture->h))
+								* CLAMP(k, 0.0f, 1.0f),
+							1.0f / distance
+						}
+					);
+				}
+			}
 
 			f32 distance;
 			vf2 portion;
@@ -576,8 +573,10 @@ extern "C" PROTOTYPE_RENDER(render)
 			{
 				vf4* sprite_rgba = state->monster_sprite.img->pixels + static_cast<i32>((1.0f - portion.y) * (state->monster_sprite.img->h - 1.0f)) * state->monster_sprite.img->w + static_cast<i32>(portion.x * state->monster_sprite.img->w);
 				f32 k            =
-					powf(CLAMP(dot(ray, state->flashlight_ray), 0.0f, 1.0f), FLASHLIGHT_POW) * square(CLAMP(1.0f - distance / 32.0f, 0.0f, 1.0f))
-					+ fabsf(dot(ray, { 0.0f, 0.0f, 1.0f })) * square(CLAMP(1.0f - distance / AMBIENT_LIGHT_RADIUS, 0.0f, 1.0f));
+					flashlight_k
+						* square(CLAMP(1.0f - distance / 32.0f, 0.0f, 1.0f))
+					+ fabsf(dot(ray, cross(state->monster_sprite.orientation_x, state->monster_sprite.orientation_y)))
+						* square(CLAMP(1.0f - distance / AMBIENT_LIGHT_RADIUS, 0.0f, 1.0f));
 
 				write_pixel
 				(
@@ -610,62 +609,6 @@ extern "C" PROTOTYPE_RENDER(render)
 				);
 		}
 	}
-	#elif 0
-	const f32 PIXELS_PER_METER = 25.0f + 10.0f / state->lucia_fov;
-	const vf2 ORIGIN           = state->lucia_position.xy;
-
-	FOR_RANGE(y, MAP_DIM)
-	{
-		FOR_RANGE(x, MAP_DIM)
-		{
-			FOR_ELEMS(layout_position, WALL_LAYOUT_DATA)
-			{
-				if (+(*get_wall_layout(state, { x, y }) & static_cast<WallLayout>(1 << layout_position_index)))
-				{
-					vf2 start = (vf2 { static_cast<f32>(x), static_cast<f32>(y) } + (*layout_position)[0]) * WALL_SPACING;
-					vf2 end   = (vf2 { static_cast<f32>(x), static_cast<f32>(y) } + (*layout_position)[1]) * WALL_SPACING;
-
-					const vf2 DIRECTION  = normalize(end - start);
-					const vf2 VERTICES[] =
-						{
-							start + (-DIRECTION + vf2 {  DIRECTION.y, -DIRECTION.x }) * WALL_THICKNESS,
-							end   + ( DIRECTION + vf2 {  DIRECTION.y, -DIRECTION.x }) * WALL_THICKNESS,
-							end   + ( DIRECTION + vf2 { -DIRECTION.y,  DIRECTION.x }) * WALL_THICKNESS,
-							start + (-DIRECTION + vf2 { -DIRECTION.y,  DIRECTION.x }) * WALL_THICKNESS
-						};
-
-					draw_line
-					(
-						state->view,
-						VIEW_DIM / 2.0f + conjugate(-ORIGIN + start) * PIXELS_PER_METER,
-						VIEW_DIM / 2.0f + conjugate(-ORIGIN + end  ) * PIXELS_PER_METER,
-						{ 1.0f, 1.0f, 1.0f }
-					);
-
-					FOR_RANGE(j, 4)
-					{
-						draw_line
-						(
-							state->view,
-							VIEW_DIM / 2.0f + conjugate(-ORIGIN + VERTICES[j]          ) * PIXELS_PER_METER,
-							VIEW_DIM / 2.0f + conjugate(-ORIGIN + VERTICES[(j + 1) % 4]) * PIXELS_PER_METER,
-							{ 1.0f, 0.0f, 0.0f }
-						);
-					}
-				}
-			}
-		}
-	}
-
-	constexpr f32 LUCIA_DIM = 4.0f;
-	fill(state->view, VIEW_DIM / 2.0f + conjugate(-ORIGIN + state->lucia_position.xy) * PIXELS_PER_METER - vf2 { LUCIA_DIM, LUCIA_DIM } / 2.0f, vf2 { LUCIA_DIM, LUCIA_DIM }, { 0.0f, 0.0f, 1.0f });
-	draw_line
-	(
-		state->view,
-		VIEW_DIM / 2.0f + conjugate(-ORIGIN + state->lucia_position.xy                                   ) * PIXELS_PER_METER,
-		VIEW_DIM / 2.0f + conjugate(-ORIGIN + state->lucia_position.xy + polar(state->lucia_angle) * 1.0f) * PIXELS_PER_METER,
-		{ 0.4f, 0.8f, 0.6f }
-	);
 	#else
 	fill(state->view, { 1.0f, 1.0f, 1.0f });
 
@@ -737,7 +680,7 @@ extern "C" PROTOTYPE_RENDER(render)
 	{
 		FOR_RANGE(x, MAP_DIM)
 		{
-			if (+(*get_wall_layout(state, { x, y }) & WallLayout::left))
+			if (+(*get_wall_voxel(state, { x, y }) & WallVoxel::left))
 			{
 				draw_line
 				(
@@ -748,7 +691,7 @@ extern "C" PROTOTYPE_RENDER(render)
 				);
 			}
 
-			if (+(*get_wall_layout(state, { x, y }) & WallLayout::bottom))
+			if (+(*get_wall_voxel(state, { x, y }) & WallVoxel::bottom))
 			{
 				draw_line
 				(
@@ -759,7 +702,7 @@ extern "C" PROTOTYPE_RENDER(render)
 				);
 			}
 
-			if (+(*get_wall_layout(state, { x, y }) & WallLayout::back_slash))
+			if (+(*get_wall_voxel(state, { x, y }) & WallVoxel::back_slash))
 			{
 				draw_line
 				(
@@ -770,7 +713,7 @@ extern "C" PROTOTYPE_RENDER(render)
 				);
 			}
 
-			if (+(*get_wall_layout(state, { x, y }) & WallLayout::forward_slash))
+			if (+(*get_wall_voxel(state, { x, y }) & WallVoxel::forward_slash))
 			{
 				draw_line
 				(
