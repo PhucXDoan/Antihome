@@ -57,9 +57,9 @@ struct State
 	Sprite             monster_sprite;
 };
 
-internal WallLayout* get_wall_layout(State* state, i32 x, i32 y)
+internal WallLayout* get_wall_layout(State* state, vi2 v)
 {
-	return &state->wall_layouts[((y % MAP_DIM) + MAP_DIM) % MAP_DIM * MAP_DIM + ((x % MAP_DIM) + MAP_DIM) % MAP_DIM];
+	return &state->wall_layouts[((v.y % MAP_DIM) + MAP_DIM) % MAP_DIM * MAP_DIM + ((v.x % MAP_DIM) + MAP_DIM) % MAP_DIM];
 }
 
 internal void write_pixel(Pixel* pixel, Pixel new_pixel)
@@ -84,47 +84,46 @@ extern "C" PROTOTYPE_INITIALIZE(initialize)
 	{
 		FOR_RANGE(start_walk_x, MAP_DIM)
 		{
-			if (!+*get_wall_layout(state, start_walk_x, start_walk_y) && rng(&state->seed) < 0.15f)
+			if (!+*get_wall_layout(state, { start_walk_x, start_walk_y }) && rng(&state->seed) < 0.15f)
 			{
-				i32 walk_x = start_walk_x;
-				i32 walk_y = start_walk_y;
+				vi2 walk = { start_walk_x, start_walk_y };
 				FOR_RANGE(64)
 				{
 					switch (static_cast<i32>(rng(&state->seed) * 4.0f))
 					{
 						case 0:
 						{
-							if (!+*get_wall_layout(state, walk_x - 1, walk_y) && !+(*get_wall_layout(state, walk_x - 1, walk_y - 1) & WallLayout::left) && !+(*get_wall_layout(state, walk_x - 2, walk_y) & WallLayout::bottom))
+							if (!+*get_wall_layout(state, walk + vi2 { -1, 0 }) && !+(*get_wall_layout(state, walk + vi2 { -1, -1 }) & WallLayout::left) && !+(*get_wall_layout(state, walk + vi2 { -2, 0 }) & WallLayout::bottom))
 							{
-								walk_x = (walk_x - 1 + MAP_DIM) % MAP_DIM;
-								*get_wall_layout(state, walk_x, walk_y) |= WallLayout::bottom;
+								walk.x = mod(walk.x - 1, MAP_DIM);
+								*get_wall_layout(state, walk) |= WallLayout::bottom;
 							}
 						} break;
 
 						case 1:
 						{
-							if (!+*get_wall_layout(state, walk_x + 1, walk_y) && !+(*get_wall_layout(state, walk_x, walk_y) & WallLayout::bottom) && !+(*get_wall_layout(state, walk_x + 1, walk_y - 1) & WallLayout::left))
+							if (!+*get_wall_layout(state, walk + vi2 { 1, 0 }) && !+(*get_wall_layout(state, walk) & WallLayout::bottom) && !+(*get_wall_layout(state, walk + vi2 { 1, -1 }) & WallLayout::left))
 							{
-								*get_wall_layout(state, walk_x, walk_y) |= WallLayout::bottom;
-								walk_x = (walk_x + 1) % MAP_DIM;
+								*get_wall_layout(state, walk) |= WallLayout::bottom;
+								walk.x = mod(walk.x + 1, MAP_DIM);
 							}
 						} break;
 
 						case 2:
 						{
-							if (!+*get_wall_layout(state, walk_x, walk_y - 1) && !+(*get_wall_layout(state, walk_x - 1, walk_y - 1) & WallLayout::bottom) && !+(*get_wall_layout(state, walk_x, walk_y - 2) & WallLayout::left))
+							if (!+*get_wall_layout(state, walk + vi2 { 0, -1 }) && !+(*get_wall_layout(state, walk + vi2 { -1, -1 }) & WallLayout::bottom) && !+(*get_wall_layout(state, walk + vi2 { 0, -2 }) & WallLayout::left))
 							{
-								walk_y = (walk_y - 1 + MAP_DIM) % MAP_DIM;
-								*get_wall_layout(state, walk_x, walk_y) |= WallLayout::left;
+								walk.y = mod(walk.y - 1, MAP_DIM);
+								*get_wall_layout(state, walk) |= WallLayout::left;
 							}
 						} break;
 
 						case 3:
 						{
-							if (!+*get_wall_layout(state, walk_x, walk_y + 1) && !+(*get_wall_layout(state, walk_x, walk_y) & WallLayout::left) && !+(*get_wall_layout(state, walk_x - 1, walk_y + 1) & WallLayout::bottom))
+							if (!+*get_wall_layout(state, walk + vi2 { 0, 1 }) && !+(*get_wall_layout(state, walk) & WallLayout::left) && !+(*get_wall_layout(state, walk + vi2 { -1, 1 }) & WallLayout::bottom))
 							{
-								*get_wall_layout(state, walk_x, walk_y) |= WallLayout::left;
-								walk_y = (walk_y + 1) % MAP_DIM;
+								*get_wall_layout(state, walk) |= WallLayout::left;
+								walk.y = mod(walk.y + 1, MAP_DIM);
 							}
 						} break;
 					}
@@ -137,27 +136,27 @@ extern "C" PROTOTYPE_INITIALIZE(initialize)
 	{
 		FOR_RANGE(x, MAP_DIM)
 		{
-			if (*get_wall_layout(state, x, y) == (WallLayout::left | WallLayout::bottom) && rng(&state->seed) < 0.5f)
+			if (*get_wall_layout(state, { x, y }) == (WallLayout::left | WallLayout::bottom) && rng(&state->seed) < 0.5f)
 			{
-				*get_wall_layout(state, x, y) = WallLayout::back_slash;
+				*get_wall_layout(state, { x, y }) = WallLayout::back_slash;
 			}
-			else if (+(*get_wall_layout(state, x + 1, y) & WallLayout::left) && +(*get_wall_layout(state, x, y + 1) & WallLayout::bottom) && rng(&state->seed) < 0.5f)
+			else if (+(*get_wall_layout(state, { x + 1, y }) & WallLayout::left) && +(*get_wall_layout(state, { x, y + 1 }) & WallLayout::bottom) && rng(&state->seed) < 0.5f)
 			{
-				*get_wall_layout(state, x + 1, y    ) &= ~WallLayout::left;
-				*get_wall_layout(state, x    , y + 1) &= ~WallLayout::bottom;
-				*get_wall_layout(state, x    , y    ) |= WallLayout::back_slash;
+				*get_wall_layout(state, { x + 1, y     }) &= ~WallLayout::left;
+				*get_wall_layout(state, { x    , y + 1 }) &= ~WallLayout::bottom;
+				*get_wall_layout(state, { x    , y     }) |= WallLayout::back_slash;
 			}
-			else if (+(*get_wall_layout(state, x, y) & WallLayout::bottom) && *get_wall_layout(state, x + 1, y) == WallLayout::left && rng(&state->seed) < 0.5f)
+			else if (+(*get_wall_layout(state, { x, y }) & WallLayout::bottom) && *get_wall_layout(state, { x + 1, y }) == WallLayout::left && rng(&state->seed) < 0.5f)
 			{
-				*get_wall_layout(state, x    , y) &= ~WallLayout::bottom;
-				*get_wall_layout(state, x + 1, y) &= ~WallLayout::left;
-				*get_wall_layout(state, x    , y) |=  WallLayout::forward_slash;
+				*get_wall_layout(state, { x    , y }) &= ~WallLayout::bottom;
+				*get_wall_layout(state, { x + 1, y }) &= ~WallLayout::left;
+				*get_wall_layout(state, { x    , y }) |=  WallLayout::forward_slash;
 			}
-			else if (+(*get_wall_layout(state, x, y) & WallLayout::left) && *get_wall_layout(state, x, y + 1) == WallLayout::bottom && rng(&state->seed) < 0.5f)
+			else if (+(*get_wall_layout(state, { x, y }) & WallLayout::left) && *get_wall_layout(state, { x, y + 1 }) == WallLayout::bottom && rng(&state->seed) < 0.5f)
 			{
-				*get_wall_layout(state, x, y    ) &= ~WallLayout::left;
-				*get_wall_layout(state, x, y + 1) &= ~WallLayout::bottom;
-				*get_wall_layout(state, x, y    ) |=  WallLayout::forward_slash;
+				*get_wall_layout(state, { x, y     }) &= ~WallLayout::left;
+				*get_wall_layout(state, { x, y + 1 }) &= ~WallLayout::bottom;
+				*get_wall_layout(state, { x, y     }) |=  WallLayout::forward_slash;
 			}
 		}
 	}
@@ -254,30 +253,63 @@ extern "C" PROTOTYPE_UPDATE(update)
 		closest_intersection.normal   = { NAN, NAN };
 		closest_intersection.distance = NAN;
 
-		FOR_RANGE(y, MAP_DIM)
-		{
-			FOR_RANGE(x, MAP_DIM)
+		vi2 step =
 			{
-				FOR_ELEMS(layout_position, WALL_LAYOUT_DATA)
+				displacement.x < 0.0f ? -1 : 1,
+				displacement.y < 0.0f ? -1 : 1
+			};
+		vf2 t_max =
+			{
+				((step.x == -1 ? floorf : ceilf)(state->lucia_position.x / WALL_SPACING) * WALL_SPACING - state->lucia_position.x) / displacement.x,
+				((step.y == -1 ? floorf : ceilf)(state->lucia_position.y / WALL_SPACING) * WALL_SPACING - state->lucia_position.y) / displacement.y
+			};
+		vf2 t_delta =
+			{
+				step.x / displacement.x * WALL_SPACING,
+				step.y / displacement.y * WALL_SPACING
+			};
+		vi2 coordinates =
+			{
+				static_cast<i32>(floorf(state->lucia_position.x / WALL_SPACING)),
+				static_cast<i32>(floorf(state->lucia_position.y / WALL_SPACING))
+			};
+		FOR_RANGE(MAXIMUM(fabsf(displacement.x), fabsf(displacement.y)) + 1)
+		{
+			FOR_ELEMS(layout_data, WALL_LAYOUT_DATA)
+			{
+				if (+(*get_wall_layout(state, coordinates) & static_cast<WallLayout>(1 << layout_data_index)))
 				{
-					if (+(*get_wall_layout(state, x, y) & static_cast<WallLayout>(1 << layout_position_index)))
+					vf2 start = (coordinates + (*layout_data)[0]) * WALL_SPACING;
+					vf2 end   = (coordinates + (*layout_data)[1]) * WALL_SPACING;
+
+					Intersection intersection = intersect_thick_line_segment(state->lucia_position.xy, displacement, start, end, WALL_THICKNESS);
+
+					if
+					(
+						closest_intersection.status == IntersectionStatus::none    ||
+						intersection.status         == IntersectionStatus::outside &&  closest_intersection.status == IntersectionStatus::outside && intersection.distance < closest_intersection.distance ||
+						intersection.status         == IntersectionStatus::inside  && (closest_intersection.status == IntersectionStatus::outside || intersection.distance > closest_intersection.distance)
+					)
 					{
-						vf2 start = (vf2 { static_cast<f32>(x), static_cast<f32>(y) } + (*layout_position)[0]) * WALL_SPACING;
-						vf2 end   = (vf2 { static_cast<f32>(x), static_cast<f32>(y) } + (*layout_position)[1]) * WALL_SPACING;
-
-						Intersection intersection = intersect_thick_line_segment(state->lucia_position.xy, displacement, start, end, WALL_THICKNESS);
-
-						if
-						(
-							closest_intersection.status == IntersectionStatus::none    ||
-							intersection.status         == IntersectionStatus::outside &&  closest_intersection.status == IntersectionStatus::outside && intersection.distance < closest_intersection.distance ||
-							intersection.status         == IntersectionStatus::inside  && (closest_intersection.status == IntersectionStatus::outside || intersection.distance > closest_intersection.distance)
-						)
-						{
-							closest_intersection = intersection;
-						}
+						closest_intersection = intersection;
 					}
 				}
+			}
+
+			if (closest_intersection.status != IntersectionStatus::none)
+			{
+				break;
+			}
+
+			if (t_max.x < t_max.y)
+			{
+				t_max.x       += t_delta.x;
+				coordinates.x += step.x;
+			}
+			else
+			{
+				t_max.y       += t_delta.y;
+				coordinates.y += step.y;
 			}
 		}
 
@@ -396,7 +428,7 @@ extern "C" PROTOTYPE_RENDER(render)
 		{
 			FOR_ELEMS(layout_data, WALL_LAYOUT_DATA)
 			{
-				if (+(state->wall_layouts[mod(coordinates.y, MAP_DIM) * MAP_DIM + mod(coordinates.x, MAP_DIM)] & static_cast<WallLayout>(1 << layout_data_index)))
+				if (+(*get_wall_layout(state, coordinates) & static_cast<WallLayout>(1 << layout_data_index)))
 				{
 					f32 distance;
 					f32 portion;
@@ -588,7 +620,7 @@ extern "C" PROTOTYPE_RENDER(render)
 		{
 			FOR_ELEMS(layout_position, WALL_LAYOUT_DATA)
 			{
-				if (+(*get_wall_layout(state, x, y) & static_cast<WallLayout>(1 << layout_position_index)))
+				if (+(*get_wall_layout(state, { x, y }) & static_cast<WallLayout>(1 << layout_position_index)))
 				{
 					vf2 start = (vf2 { static_cast<f32>(x), static_cast<f32>(y) } + (*layout_position)[0]) * WALL_SPACING;
 					vf2 end   = (vf2 { static_cast<f32>(x), static_cast<f32>(y) } + (*layout_position)[1]) * WALL_SPACING;
@@ -705,7 +737,7 @@ extern "C" PROTOTYPE_RENDER(render)
 	{
 		FOR_RANGE(x, MAP_DIM)
 		{
-			if (+(*get_wall_layout(state, x, y) & WallLayout::left))
+			if (+(*get_wall_layout(state, { x, y }) & WallLayout::left))
 			{
 				draw_line
 				(
@@ -716,7 +748,7 @@ extern "C" PROTOTYPE_RENDER(render)
 				);
 			}
 
-			if (+(*get_wall_layout(state, x, y) & WallLayout::bottom))
+			if (+(*get_wall_layout(state, { x, y }) & WallLayout::bottom))
 			{
 				draw_line
 				(
@@ -727,7 +759,7 @@ extern "C" PROTOTYPE_RENDER(render)
 				);
 			}
 
-			if (+(*get_wall_layout(state, x, y) & WallLayout::back_slash))
+			if (+(*get_wall_layout(state, { x, y }) & WallLayout::back_slash))
 			{
 				draw_line
 				(
@@ -738,7 +770,7 @@ extern "C" PROTOTYPE_RENDER(render)
 				);
 			}
 
-			if (+(*get_wall_layout(state, x, y) & WallLayout::forward_slash))
+			if (+(*get_wall_layout(state, { x, y }) & WallLayout::forward_slash))
 			{
 				draw_line
 				(
