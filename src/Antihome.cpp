@@ -1,3 +1,6 @@
+// @NOTE@ Credits
+// "A Fast Voxel Traversal Algorithm for Ray Tracing" https://www.flipcode.com/archives/A%20faster%20voxel%20traversal%20algorithm%20for%20ray%20tracing.pdf
+
 #define STB_IMAGE_IMPLEMENTATION true
 #include <stb_image.h>
 #include "unified.h"
@@ -9,7 +12,7 @@ global constexpr f32 HORT_TO_VERT_K         = 0.927295218f * VIEW_DIM.x;
 global constexpr f32 WALL_HEIGHT            = 2.7432f;
 global constexpr f32 WALL_THICKNESS         = 0.25f;
 global constexpr f32 LUCIA_HEIGHT           = 1.4986f;
-global constexpr i32 MAP_DIM                = 8;
+global constexpr i32 MAP_DIM                = 64;
 global constexpr f32 WALL_SPACING           = 3.0f;
 global constexpr vf2 WALL_LAYOUT_DATA[4][3] =
 	{
@@ -291,6 +294,9 @@ extern "C" PROTOTYPE_UPDATE(update)
 	state->lucia_position.xy += displacement;
 	state->lucia_position.z   = LUCIA_HEIGHT + 0.1f * (cosf(state->lucia_head_bob_keytime * TAU) - 1.0f);
 
+	state->lucia_position.x = mod(state->lucia_position.x, MAP_DIM * WALL_SPACING);
+	state->lucia_position.y = mod(state->lucia_position.y, MAP_DIM * WALL_SPACING);
+
 	state->lucia_head_bob_keytime += 0.001f + 0.35f * norm(state->lucia_velocity) * SECONDS_PER_UPDATE;
 	if (state->lucia_head_bob_keytime > 1.0f)
 	{
@@ -335,70 +341,102 @@ extern "C" PROTOTYPE_RENDER(render)
 	memset(state->frame_buffer, 0, sizeof(state->frame_buffer));
 
 	constexpr f32 AMBIENT_LIGHT_RADIUS = 4.0f;
-	constexpr f32 FLASHLIGHT_POW       = 32.0f;
+	constexpr f32 FLASHLIGHT_POW       = 8.0f;
 
 	#if 1
-	//persist u64 DEBUG_total;
-	//persist u64 DEBUG_counter;
-
-	//LARGE_INTEGER DEBUG_li0;
-	//QueryPerformanceCounter(&DEBUG_li0);
-
-	//DEFER
-	//{
-	//	LARGE_INTEGER DEBUG_li1;
-	//	QueryPerformanceCounter(&DEBUG_li1);
-
-	//	DEBUG_total   += DEBUG_li1.QuadPart - DEBUG_li0.QuadPart;
-	//	DEBUG_counter += 1;
-	//	if (DEBUG_counter > 8)
-	//	{
-	//		DEBUG_printf("%llu\n", DEBUG_total);
-	//		DEBUG_total   = 0;
-	//		DEBUG_counter = 0;
-	//	}
-	//};
-
 	FOR_RANGE(x, VIEW_DIM.x)
 	{
+		#if 0
+		persist u64 DEBUG_total;
+		persist u64 DEBUG_counter;
+		LARGE_INTEGER DEBUG_li0;
+		QueryPerformanceCounter(&DEBUG_li0);
+
+		LARGE_INTEGER DEBUG_li1;
+		QueryPerformanceCounter(&DEBUG_li1);
+
+		DEBUG_total   += DEBUG_li1.QuadPart - DEBUG_li0.QuadPart;
+		DEBUG_counter += 1;
+		if (DEBUG_counter > 4096)
+		{
+			DEBUG_printf("%llu\n", DEBUG_total);
+			DEBUG_total   = 0;
+			DEBUG_counter = 0;
+		}
+		#endif
+
 		vf2 ray_horizontal = polar(state->lucia_angle + (0.5f - static_cast<f32>(x) / VIEW_DIM.x) * state->lucia_fov);
 
 		bool32 wall_exists   = false;
 		vf2    wall_normal   = { NAN, NAN };
 		f32    wall_distance = NAN;
 		f32    wall_portion  = NAN;
-		FOR_RANGE(wall_y, MAP_DIM)
-		{
-			FOR_RANGE(wall_x, MAP_DIM)
+
+		vi2 step =
 			{
-				FOR_ELEMS(layout_position, WALL_LAYOUT_DATA)
+				ray_horizontal.x < 0.0f ? -1 : 1,
+				ray_horizontal.y < 0.0f ? -1 : 1
+			};
+		vf2 t_max =
+			{
+				((step.x == -1 ? floorf : ceilf)(state->lucia_position.x / WALL_SPACING) * WALL_SPACING - state->lucia_position.x) / ray_horizontal.x,
+				((step.y == -1 ? floorf : ceilf)(state->lucia_position.y / WALL_SPACING) * WALL_SPACING - state->lucia_position.y) / ray_horizontal.y
+			};
+		vf2 t_delta =
+			{
+				step.x / ray_horizontal.x * WALL_SPACING,
+				step.y / ray_horizontal.y * WALL_SPACING
+			};
+		vi2 coordinates =
+			{
+				static_cast<i32>(floorf(state->lucia_position.x / WALL_SPACING)),
+				static_cast<i32>(floorf(state->lucia_position.y / WALL_SPACING))
+			};
+		FOR_RANGE(MAP_DIM * MAP_DIM)
+		{
+			FOR_ELEMS(layout_data, WALL_LAYOUT_DATA)
+			{
+				if (+(state->wall_layouts[mod(coordinates.y, MAP_DIM) * MAP_DIM + mod(coordinates.x, MAP_DIM)] & static_cast<WallLayout>(1 << layout_data_index)))
 				{
-					if (+(state->wall_layouts[wall_y * MAP_DIM + wall_x] & static_cast<WallLayout>(1 << layout_position_index)))
-					{
-						f32 distance;
-						f32 portion;
-						if
+					f32 distance;
+					f32 portion;
+					if
+					(
+						ray_cast_line
 						(
-							ray_cast_line
-							(
-								&distance,
-								&portion,
-								state->lucia_position.xy,
-								ray_horizontal,
-								(vf2 { static_cast<f32>(wall_x), static_cast<f32>(wall_y) } + (*layout_position)[0]) * WALL_SPACING,
-								(vf2 { static_cast<f32>(wall_x), static_cast<f32>(wall_y) } + (*layout_position)[1]) * WALL_SPACING
-							)
-							&& IN_RANGE(portion, 0.0f, 1.0f)
-							&& (!wall_exists || distance < wall_distance)
+							&distance,
+							&portion,
+							state->lucia_position.xy,
+							ray_horizontal,
+							(coordinates + (*layout_data)[0]) * WALL_SPACING,
+							(coordinates + (*layout_data)[1]) * WALL_SPACING
 						)
-						{
-							wall_exists   = true;
-							wall_normal   = (*layout_position)[2];
-							wall_distance = distance;
-							wall_portion  = portion;
-						}
+						&& IN_RANGE(portion, 0.0f, 1.0f)
+						&& (!wall_exists || distance < wall_distance)
+					)
+					{
+						wall_exists   = true;
+						wall_normal   = (*layout_data)[2];
+						wall_distance = distance;
+						wall_portion  = portion;
 					}
 				}
+			}
+
+			if (wall_exists)
+			{
+				break;
+			}
+
+			if (t_max.x < t_max.y)
+			{
+				t_max.x       += t_delta.x;
+				coordinates.x += step.x;
+			}
+			else
+			{
+				t_max.y       += t_delta.y;
+				coordinates.y += step.y;
 			}
 		}
 
@@ -525,6 +563,21 @@ extern "C" PROTOTYPE_RENDER(render)
 			}
 		}
 	}
+
+	FOR_RANGE(y, VIEW_DIM.y)
+	{
+		FOR_RANGE(x, VIEW_DIM.x)
+		{
+			*(reinterpret_cast<u32*>(state->view->pixels) + (VIEW_DIM.y - 1 - y) * state->view->w + x) =
+				SDL_MapRGB
+				(
+					state->view->format,
+					static_cast<u8>(state->frame_buffer[x][y].color.x * 255.0f),
+					static_cast<u8>(state->frame_buffer[x][y].color.y * 255.0f),
+					static_cast<u8>(state->frame_buffer[x][y].color.z * 255.0f)
+				);
+		}
+	}
 	#elif 0
 	const f32 PIXELS_PER_METER = 25.0f + 10.0f / state->lucia_fov;
 	const vf2 ORIGIN           = state->lucia_position.xy;
@@ -554,7 +607,7 @@ extern "C" PROTOTYPE_RENDER(render)
 						state->view,
 						VIEW_DIM / 2.0f + conjugate(-ORIGIN + start) * PIXELS_PER_METER,
 						VIEW_DIM / 2.0f + conjugate(-ORIGIN + end  ) * PIXELS_PER_METER,
-						{ 0.0f, 0.0f, 0.0f }
+						{ 1.0f, 1.0f, 1.0f }
 					);
 
 					FOR_RANGE(j, 4)
@@ -582,9 +635,11 @@ extern "C" PROTOTYPE_RENDER(render)
 		{ 0.4f, 0.8f, 0.6f }
 	);
 	#else
-	persist vf2 cam_pos = { MAP_DIM * 1.5f, MAP_DIM * 1.5f };
+	fill(state->view, { 1.0f, 1.0f, 1.0f });
 
-	constexpr f32 SPEED = 8.0f;
+	persist vf2 cam_pos = vf2 { MAP_DIM * WALL_SPACING, MAP_DIM * WALL_SPACING } / 2.0f;
+
+	constexpr f32 SPEED = 32.0f;
 	if (HOLDING(Input::left))
 	{
 		cam_pos.x -= SPEED * SECONDS_PER_UPDATE;
@@ -602,94 +657,109 @@ extern "C" PROTOTYPE_RENDER(render)
 		cam_pos.y += SPEED * SECONDS_PER_UPDATE;
 	}
 
-	FOR_RANGE(iy, 3)
-	{
-		FOR_RANGE(ix, 3)
+	constexpr f32 PIXELS_PER_METER = 5.0f;
+
+	vf2 ray  = polar(state->lucia_angle);
+	vi2 step =
 		{
-			constexpr f32 PIXELS_PER_METER = 5.0f;
-			constexpr f32 DOT_DIM          = 1.0f;
+			ray.x < 0.0f ? -1 : 1,
+			ray.y < 0.0f ? -1 : 1
+		};
 
-			vf2 offset = VIEW_DIM / 2.0f + conjugate({ ix * MAP_DIM - cam_pos.x, iy * MAP_DIM - cam_pos.y }) * PIXELS_PER_METER;
+	vf2 t_max =
+		{
+			step.x == -1 ? (floorf(state->lucia_position.x / WALL_SPACING) - state->lucia_position.x / WALL_SPACING) / (ray.x / WALL_SPACING) : (ceilf(state->lucia_position.x / WALL_SPACING) - state->lucia_position.x / WALL_SPACING) / (ray.x / WALL_SPACING),
+			step.y == -1 ? (floorf(state->lucia_position.y / WALL_SPACING) - state->lucia_position.y / WALL_SPACING) / (ray.y / WALL_SPACING) : (ceilf(state->lucia_position.y / WALL_SPACING) - state->lucia_position.y / WALL_SPACING) / (ray.y / WALL_SPACING)
+		};
 
-			fill(state->view, offset + conjugate({ 0.0f, MAP_DIM * PIXELS_PER_METER }), { MAP_DIM * PIXELS_PER_METER, MAP_DIM * PIXELS_PER_METER }, { 1.0f - iy / 2.0f, 1.0f - ix / 2.0f, 0.75f });
+	vf2 t_delta =
+		{
+			step.x / (ray.x / WALL_SPACING),
+			step.y / (ray.y / WALL_SPACING)
+		};
 
-			FOR_RANGE(y, MAP_DIM)
+	vi2 pos = { static_cast<i32>(floorf(state->lucia_position.x / WALL_SPACING)), static_cast<i32>(floorf(state->lucia_position.y / WALL_SPACING)) };
+	FOR_RANGE(32)
+	{
+		fill
+		(
+			state->view,
+			VIEW_DIM / 2.0f + conjugate(pos * WALL_SPACING - cam_pos) * PIXELS_PER_METER - vf2 { 0.0f, WALL_SPACING * PIXELS_PER_METER },
+			vf2 { WALL_SPACING, WALL_SPACING } * PIXELS_PER_METER,
+			{ 0.5f, 0.7f, 0.9f }
+		);
+
+		if (t_max.x < t_max.y)
+		{
+			t_max.x += t_delta.x;
+			pos.x   += step.x;
+		}
+		else
+		{
+			t_max.y += t_delta.y;
+			pos.y   += step.y;
+		}
+	}
+
+	FOR_RANGE(y, MAP_DIM)
+	{
+		FOR_RANGE(x, MAP_DIM)
+		{
+			if (+(*get_wall_layout(state, x, y) & WallLayout::left))
 			{
-				FOR_RANGE(x, MAP_DIM)
-				{
-					fill(state->view, offset + conjugate({ x + 0.0f, y + 0.0f }) * PIXELS_PER_METER - vf2 { DOT_DIM, DOT_DIM } / 2.0f, { DOT_DIM, DOT_DIM }, { 0.0f, 0.0f, 0.0f });
+				draw_line
+				(
+					state->view,
+					VIEW_DIM / 2.0f + conjugate(vf2 { x + 0.0f, y + 0.0f } * WALL_SPACING - cam_pos) * PIXELS_PER_METER,
+					VIEW_DIM / 2.0f + conjugate(vf2 { x + 0.0f, y + 1.0f } * WALL_SPACING - cam_pos) * PIXELS_PER_METER,
+					{ 0.0f, 0.0f, 0.0f }
+				);
+			}
 
-					if (+(*get_wall_layout(state, x, y) & WallLayout::left))
-					{
-						draw_line
-						(
-							state->view,
-							offset + conjugate({ x + 0.0f, y + 0.0f }) * PIXELS_PER_METER - vf2 { DOT_DIM, DOT_DIM } / 2.0f,
-							offset + conjugate({ x + 0.0f, y + 1.0f }) * PIXELS_PER_METER - vf2 { DOT_DIM, DOT_DIM } / 2.0f,
-							{ 0.25f, 0.25f, 0.25f }
-						);
-					}
+			if (+(*get_wall_layout(state, x, y) & WallLayout::bottom))
+			{
+				draw_line
+				(
+					state->view,
+					VIEW_DIM / 2.0f + conjugate(vf2 { x + 0.0f, y + 0.0f } * WALL_SPACING - cam_pos) * PIXELS_PER_METER,
+					VIEW_DIM / 2.0f + conjugate(vf2 { x + 1.0f, y + 0.0f } * WALL_SPACING - cam_pos) * PIXELS_PER_METER,
+					{ 0.0f, 0.0f, 0.0f }
+				);
+			}
 
-					if (+(*get_wall_layout(state, x, y) & WallLayout::bottom))
-					{
-						draw_line
-						(
-							state->view,
-							offset + conjugate({ x + 0.0f, y + 0.0f }) * PIXELS_PER_METER - vf2 { DOT_DIM, DOT_DIM } / 2.0f,
-							offset + conjugate({ x + 1.0f, y + 0.0f }) * PIXELS_PER_METER - vf2 { DOT_DIM, DOT_DIM } / 2.0f,
-							{ 0.25f, 0.25f, 0.25f }
-						);
-					}
+			if (+(*get_wall_layout(state, x, y) & WallLayout::back_slash))
+			{
+				draw_line
+				(
+					state->view,
+					VIEW_DIM / 2.0f + conjugate(vf2 { x + 0.0f, y + 1.0f } * WALL_SPACING - cam_pos) * PIXELS_PER_METER,
+					VIEW_DIM / 2.0f + conjugate(vf2 { x + 1.0f, y + 0.0f } * WALL_SPACING - cam_pos) * PIXELS_PER_METER,
+					{ 0.0f, 0.0f, 0.0f }
+				);
+			}
 
-					if (+(*get_wall_layout(state, x, y) & WallLayout::back_slash))
-					{
-						draw_line
-						(
-							state->view,
-							offset + conjugate({ x + 0.0f, y + 1.0f }) * PIXELS_PER_METER - vf2 { DOT_DIM, DOT_DIM } / 2.0f,
-							offset + conjugate({ x + 1.0f, y + 0.0f }) * PIXELS_PER_METER - vf2 { DOT_DIM, DOT_DIM } / 2.0f,
-							{ 0.25f, 0.25f, 0.25f }
-						);
-					}
-
-					if (+(*get_wall_layout(state, x, y) & WallLayout::forward_slash))
-					{
-						draw_line
-						(
-							state->view,
-							offset + conjugate({ x + 0.0f, y + 0.0f }) * PIXELS_PER_METER - vf2 { DOT_DIM, DOT_DIM } / 2.0f,
-							offset + conjugate({ x + 1.0f, y + 1.0f }) * PIXELS_PER_METER - vf2 { DOT_DIM, DOT_DIM } / 2.0f,
-							{ 0.25f, 0.25f, 0.25f }
-						);
-					}
-				}
+			if (+(*get_wall_layout(state, x, y) & WallLayout::forward_slash))
+			{
+				draw_line
+				(
+					state->view,
+					VIEW_DIM / 2.0f + conjugate(vf2 { x + 0.0f, y + 0.0f } * WALL_SPACING - cam_pos) * PIXELS_PER_METER,
+					VIEW_DIM / 2.0f + conjugate(vf2 { x + 1.0f, y + 1.0f } * WALL_SPACING - cam_pos) * PIXELS_PER_METER,
+					{ 0.0f, 0.0f, 0.0f }
+				);
 			}
 		}
 	}
 
-	//FOR_RANGE(y, MAP_DIM - 1)
-	//{
-	//	FOR_RANGE(x, MAP_DIM)
-	//	{
-	//		fill(state->view, VIEW_DIM / 2.0f + (conjugate({ x * 1.0f, y + 0.5f }) + vf2 { -(MAP_DIM - 1.0f) / 2.0f, (MAP_DIM - 1.0f) / 2.0f }) * PIXELS_PER_METER - vf2 { POINT_DIM, POINT_DIM } / 2.0f, { POINT_DIM, POINT_DIM }, { 0.5f, 1.0f, 0.5f });
-	//	}
-	//}
+	fill(state->view, VIEW_DIM / 2.0f + conjugate(state->lucia_position.xy - cam_pos) * PIXELS_PER_METER - vf2 { 2.5f, 2.5f } / 2.0f, { 2.5f, 2.5f }, { 1.0f, 0.0f, 0.0f });
+	draw_line
+	(
+		state->view,
+		VIEW_DIM / 2.0f + conjugate(state->lucia_position.xy - cam_pos                                    ) * PIXELS_PER_METER - vf2 { 2.5f, 2.5f } / 4.0f,
+		VIEW_DIM / 2.0f + conjugate(state->lucia_position.xy - cam_pos + polar(state->lucia_angle) * 6.0f) * PIXELS_PER_METER - vf2 { 2.5f, 2.5f } / 4.0f,
+		{ 0.6f, 0.1f, 0.1f }
+	);
 	#endif
-
-	FOR_RANGE(y, VIEW_DIM.y)
-	{
-		FOR_RANGE(x, VIEW_DIM.x)
-		{
-			*(reinterpret_cast<u32*>(state->view->pixels) + (VIEW_DIM.y - 1 - y) * state->view->w + x) =
-				SDL_MapRGB
-				(
-					state->view->format,
-					static_cast<u8>(state->frame_buffer[x][y].color.x * 255.0f),
-					static_cast<u8>(state->frame_buffer[x][y].color.y * 255.0f),
-					static_cast<u8>(state->frame_buffer[x][y].color.z * 255.0f)
-				);
-		}
-	}
 
 	SDL_Rect dst = { VIEW_PADDING, VIEW_PADDING, WIN_DIM.x - VIEW_PADDING * 2, (WIN_DIM.x - VIEW_PADDING * 2) * VIEW_DIM.y / VIEW_DIM.x };
 	SDL_BlitScaled(state->view, 0, platform->surface, &dst);

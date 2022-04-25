@@ -128,6 +128,7 @@ internal f32 distance(vf2 u, vf2 v) { return norm(u - v); }
 
 internal f32 argument(vf2 v) { f32 a = atan2f(v.y, v.x); return a < 0.0f ? TAU + a : a; }
 internal f32 centerize_angle(f32 x) { return x < TAU / 2.0f ? x : x - TAU; }
+internal i32 mod(i32 x, i32 m) { return (x % m + m) % m; }
 internal f32 mod(f32 x, f32 m) { f32 y = fmodf(x, m); return y < 0.0f ? y + m : y; }
 
 internal vf2 polar(f32 angle) { return { cosf(angle), sinf(angle) }; }
