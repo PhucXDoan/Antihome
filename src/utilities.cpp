@@ -173,7 +173,7 @@ internal bool32 ray_cast_plane(f32* scalar, vf2* portion, vf3 position, vf3 ray,
 	__m128 mb = _mm_mul_ps(ma, _mm_setr_ps(ray.x, ray.y, ray.z, 0.0f));
 	mb = _mm_hadd_ps(mb, mb);
 
-	f32    det = _mm_cvtss_f32(_mm_hadd_ps(mb, mb));
+	f32 det = _mm_cvtss_f32(_mm_hadd_ps(mb, mb));
 	__m128 mv  =
 		_mm_sub_ps
 		(

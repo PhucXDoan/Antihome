@@ -207,7 +207,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 {
 	State* state = reinterpret_cast<State*>(platform->memory);
 
-	state->lucia_angle_velocity -= platform->cursor_delta.x * 0.25f;
+	state->lucia_angle_velocity -= platform->cursor_delta.x * 0.01f / SECONDS_PER_UPDATE;
 	state->lucia_angle_velocity *= 0.4f;
 	state->lucia_angle          += state->lucia_angle_velocity * SECONDS_PER_UPDATE;
 	if (state->lucia_angle < 0.0f)
@@ -454,25 +454,6 @@ extern "C" PROTOTYPE_RENDER(render)
 			}
 		}
 
-		#if 0
-		persist u64 DEBUG_total;
-		persist u64 DEBUG_counter;
-		LARGE_INTEGER DEBUG_li0;
-		QueryPerformanceCounter(&DEBUG_li0);
-
-		LARGE_INTEGER DEBUG_li1;
-		QueryPerformanceCounter(&DEBUG_li1);
-
-		DEBUG_total   += DEBUG_li1.QuadPart - DEBUG_li0.QuadPart;
-		DEBUG_counter += 1;
-		if (DEBUG_counter > 10'000)
-		{
-			DEBUG_printf("%llu\n", DEBUG_total);
-			DEBUG_total   = 0;
-			DEBUG_counter = 0;
-		}
-		#endif
-
 		i32 starting_y       = 0;
 		i32 ending_y         = 0;
 		i32 pixel_starting_y = 0;
@@ -510,47 +491,46 @@ extern "C" PROTOTYPE_RENDER(render)
 			}
 			else
 			{
-				ColumnMajorTexture* texture;
-				f32                 texture_level;
-				if (y < VIEW_DIM.y / 2.0f)
-				{
-					texture       = &state->floor;
-					texture_level = 0.0f;
-				}
-				else
-				{
-					texture       = &state->ceiling;
-					texture_level = WALL_HEIGHT;
-				}
+				#if 0
+				persist u64 DEBUG_total;
+				persist u64 DEBUG_counter;
+				LARGE_INTEGER DEBUG_li0;
+				QueryPerformanceCounter(&DEBUG_li0);
 
-				vf2 distances;
-				vf2 portions;
-				if
+				LARGE_INTEGER DEBUG_li1;
+				QueryPerformanceCounter(&DEBUG_li1);
+				DEBUG_total   += DEBUG_li1.QuadPart - DEBUG_li0.QuadPart;
+				DEBUG_counter += 1;
+				if (DEBUG_counter > 1028'000)
+				{
+					DEBUG_printf("%llu\n", DEBUG_total);
+					DEBUG_total   = 0;
+					DEBUG_counter = 0;
+				}
+				#endif
+
+				f32 zk       = ((y < VIEW_DIM.y / 2 ? 0 : WALL_HEIGHT) - state->lucia_position.z) / ray.z;
+				vf2 portions = (state->lucia_position.xy + zk * ray.xy) / 4.0f;
+				portions.x   = mod(portions.x, 1.0f);
+				portions.y   = mod(portions.y, 1.0f);
+
+				f32 distance = sqrtf(square(zk) * 2.0f - square(state->lucia_position.z));
+				f32 k        =
+					flashlight_k
+						* square(CLAMP(1.0f - distance / 32.0f, 0.0f, 1.0f))
+					+ fabsf(ray.z)
+						* square(CLAMP(1.0f - distance / AMBIENT_LIGHT_RADIUS, 0.0f, 1.0f));
+
+				ColumnMajorTexture* texture = y < VIEW_DIM.y / 2 ? &state->floor : &state->ceiling;
+				write_pixel
 				(
-					ray_cast_line(&distances.x, &portions.x, { state->lucia_position.x, state->lucia_position.z }, { ray.x, ray.z }, { 0.0f, texture_level }, { 4.0f, texture_level }) &&
-					ray_cast_line(&distances.y, &portions.y, { state->lucia_position.y, state->lucia_position.z }, { ray.y, ray.z }, { 0.0f, texture_level }, { 4.0f, texture_level })
-				)
-				{
-					portions.x = mod(portions.x, 1.0f);
-					portions.y = mod(portions.y, 1.0f);
-
-					f32 distance = sqrtf(square(distances.x) + square(distances.y) - square(state->lucia_position.z));
-					f32 k        =
-						flashlight_k
-							* square(CLAMP(1.0f - distance / 32.0f, 0.0f, 1.0f))
-						+ fabsf(ray.z)
-							* square(CLAMP(1.0f - distance / AMBIENT_LIGHT_RADIUS, 0.0f, 1.0f));
-
-					write_pixel
-					(
-						&state->frame_buffer[x][y],
-						{
-							*(texture->colors + static_cast<i32>(portions.x * (texture->w - 1.0f)) * texture->h + static_cast<i32>(portions.y * texture->h))
-								* CLAMP(k, 0.0f, 1.0f),
-							1.0f / distance
-						}
-					);
-				}
+					&state->frame_buffer[x][y],
+					{
+						*(texture->colors + static_cast<i32>(portions.x * (texture->w - 1.0f)) * texture->h + static_cast<i32>(portions.y * texture->h))
+							* CLAMP(k, 0.0f, 1.0f),
+						1.0f / distance
+					}
+				);
 			}
 
 			f32 distance;
