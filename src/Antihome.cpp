@@ -29,25 +29,32 @@ struct Pixel
 	f32 inv_depth;
 };
 
+struct Sprite
+{
+	ImgRGBA* img;
+	vf3      position;
+	vf2      normal;
+};
+
 struct State
 {
-	u32                seed;
-	SDL_Surface*       view;
-	Pixel              frame_buffer[VIEW_DIM.x][VIEW_DIM.y];
-	vf2                lucia_velocity;
-	vf3                lucia_position;
-	f32                lucia_angle_velocity;
-	f32                lucia_angle;
-	f32                lucia_fov;
-	f32                lucia_head_bob_keytime;
-	vf3                flashlight_ray;
-	f32                flashlight_keytime;
-	WallVoxel          wall_voxels[MAP_DIM * MAP_DIM];
-	ColumnMajorTexture wall;
-	ColumnMajorTexture floor;
-	ColumnMajorTexture ceiling;
-	Image              monster_img;
-	Sprite             monster_sprite;
+	u32          seed;
+	SDL_Surface* view;
+	Pixel        frame_buffer[VIEW_DIM.x][VIEW_DIM.y];
+	vf2          lucia_velocity;
+	vf3          lucia_position;
+	f32          lucia_angle_velocity;
+	f32          lucia_angle;
+	f32          lucia_fov;
+	f32          lucia_head_bob_keytime;
+	vf3          flashlight_ray;
+	f32          flashlight_keytime;
+	WallVoxel    wall_voxels[MAP_DIM * MAP_DIM];
+	ImgRGB       wall;
+	ImgRGB       floor;
+	ImgRGB       ceiling;
+	ImgRGBA      monster_img;
+	Sprite       monster_sprite;
 };
 
 global constexpr struct { WallVoxel voxel; vf2 start; vf2 end; vf2 normal; } WALL_VOXEL_DATA[] =
@@ -184,10 +191,10 @@ extern "C" PROTOTYPE_BOOT_UP(boot_up)
 			0xFF000000
 		);
 
-	state->wall        = init_column_major_texture(DATA_DIR "wall.png");
-	state->floor       = init_column_major_texture(DATA_DIR "floor.png");
-	state->ceiling     = init_column_major_texture(DATA_DIR "ceiling.png");
-	state->monster_img = init_image(DATA_DIR "sprite.png");
+	state->wall        = init_img_rgb (DATA_DIR "wall.png");
+	state->floor       = init_img_rgb (DATA_DIR "floor.png");
+	state->ceiling     = init_img_rgb (DATA_DIR "ceiling.png");
+	state->monster_img = init_img_rgba(DATA_DIR "sprite.png");
 
 	state->monster_sprite.img = &state->monster_img;
 }
@@ -197,10 +204,10 @@ extern "C" PROTOTYPE_BOOT_DOWN(boot_down)
 	ASSERT(sizeof(State) <= platform->memory_capacity);
 	State* state = reinterpret_cast<State*>(platform->memory);
 
-	deinit_image(&state->monster_img);
-	deinit_column_major_texture(&state->ceiling);
-	deinit_column_major_texture(&state->floor);
-	deinit_column_major_texture(&state->wall);
+	deinit_img_rgba(&state->monster_img);
+	deinit_img_rgb (&state->ceiling);
+	deinit_img_rgb (&state->floor);
+	deinit_img_rgb (&state->wall);
 }
 
 extern "C" PROTOTYPE_UPDATE(update)
@@ -342,14 +349,10 @@ extern "C" PROTOTYPE_UPDATE(update)
 	persist f32 TEMP;
 	TEMP += 1.5f * SECONDS_PER_UPDATE;
 
-	if (norm(state->monster_sprite.position.xy - state->lucia_position.xy) > 1.5f)
-	{
-		state->monster_sprite.position.xy = dampen(state->monster_sprite.position.xy, state->lucia_position.xy, 0.5f, SECONDS_PER_UPDATE);
-	}
+	state->monster_sprite.position.xy = { 1.0f, 4.0f };
 	state->monster_sprite.position.z = (cosf(TEMP * 2.0f) * 0.15f) + WALL_HEIGHT / 2.0f;
 
-	state->monster_sprite.orientation_x = 0.001f * normalize(-cross(normalize(state->lucia_position - state->monster_sprite.position), { 0.0f, 0.0f, 1.0f })) * static_cast<f32>(state->monster_sprite.img->w);
-	state->monster_sprite.orientation_y = 0.001f * vf3 { 0.0f, 0.0f, static_cast<f32>(state->monster_sprite.img->h) };
+	state->monster_sprite.normal = normalize(dampen(state->monster_sprite.normal, normalize(state->lucia_position.xy - state->monster_sprite.position.xy), 1.0f, SECONDS_PER_UPDATE));
 
 	state->flashlight_keytime += 0.0025f + 0.05f * norm(state->lucia_velocity) * SECONDS_PER_UPDATE;
 	if (state->flashlight_keytime > 1.0f)
@@ -483,7 +486,7 @@ extern "C" PROTOTYPE_RENDER(render)
 				(
 					&state->frame_buffer[x][y],
 					{
-						*(state->wall.colors + static_cast<i32>(wall_portion * (state->wall.w - 1.0f)) * state->wall.h + static_cast<i32>(static_cast<f32>(y - starting_y) / (ending_y - starting_y) * state->wall.h))
+						*(state->wall.rgb + static_cast<i32>(wall_portion * (state->wall.dim.x - 1.0f)) * state->wall.dim.y + static_cast<i32>(static_cast<f32>(y - starting_y) / (ending_y - starting_y) * state->wall.dim.y))
 							* CLAMP(k, 0.0f, 1.0f),
 						1.0f / wall_distance
 					}
@@ -491,24 +494,6 @@ extern "C" PROTOTYPE_RENDER(render)
 			}
 			else
 			{
-				#if 0
-				persist u64 DEBUG_total;
-				persist u64 DEBUG_counter;
-				LARGE_INTEGER DEBUG_li0;
-				QueryPerformanceCounter(&DEBUG_li0);
-
-				LARGE_INTEGER DEBUG_li1;
-				QueryPerformanceCounter(&DEBUG_li1);
-				DEBUG_total   += DEBUG_li1.QuadPart - DEBUG_li0.QuadPart;
-				DEBUG_counter += 1;
-				if (DEBUG_counter > 1028'000)
-				{
-					DEBUG_printf("%llu\n", DEBUG_total);
-					DEBUG_total   = 0;
-					DEBUG_counter = 0;
-				}
-				#endif
-
 				f32 zk       = ((y < VIEW_DIM.y / 2 ? 0 : WALL_HEIGHT) - state->lucia_position.z) / ray.z;
 				vf2 portions = (state->lucia_position.xy + zk * ray.xy) / 4.0f;
 				portions.x   = mod(portions.x, 1.0f);
@@ -521,56 +506,89 @@ extern "C" PROTOTYPE_RENDER(render)
 					+ fabsf(ray.z)
 						* square(CLAMP(1.0f - distance / AMBIENT_LIGHT_RADIUS, 0.0f, 1.0f));
 
-				ColumnMajorTexture* texture = y < VIEW_DIM.y / 2 ? &state->floor : &state->ceiling;
+				ImgRGB* img = y < VIEW_DIM.y / 2 ? &state->floor : &state->ceiling;
 				write_pixel
 				(
 					&state->frame_buffer[x][y],
 					{
-						*(texture->colors + static_cast<i32>(portions.x * (texture->w - 1.0f)) * texture->h + static_cast<i32>(portions.y * texture->h))
+						*(img->rgb + static_cast<i32>(portions.x * (img->dim.x - 1.0f)) * img->dim.y + static_cast<i32>(portions.y * img->dim.y))
 							* CLAMP(k, 0.0f, 1.0f),
 						1.0f / distance
 					}
 				);
 			}
+		}
 
+		#if 0
+		persist u64 DEBUG_total;
+		persist u64 DEBUG_counter;
+		LARGE_INTEGER DEBUG_li0;
+		QueryPerformanceCounter(&DEBUG_li0);
+
+		LARGE_INTEGER DEBUG_li1;
+		QueryPerformanceCounter(&DEBUG_li1);
+		DEBUG_total   += DEBUG_li1.QuadPart - DEBUG_li0.QuadPart;
+		DEBUG_counter += 1;
+		if (DEBUG_counter > 8'000)
+		{
+			DEBUG_printf("%f\n", static_cast<f64>(DEBUG_total) / DEBUG_counter);
+			DEBUG_total   = 0;
+			DEBUG_counter = 0;
+		}
+		#endif
+
+		FOR_RANGE(i, 0, 9)
+		{
 			f32 distance;
-			vf2 portion;
+			f32 portion;
 			if
 			(
-				ray_cast_plane
+				ray_cast_line
 				(
 					&distance,
 					&portion,
-					state->lucia_position + 0.5f * (state->monster_sprite.orientation_x + state->monster_sprite.orientation_y),
-					ray,
-					state->monster_sprite.position,
-					state->monster_sprite.orientation_x,
-					state->monster_sprite.orientation_y
+					state->lucia_position.xy,
+					ray_horizontal,
+					vi2 { i % 3 - 1, i / 3 - 1 } * MAP_DIM * WALL_SPACING + state->monster_sprite.position.xy - rotate90(state->monster_sprite.normal) / 2.0f,
+					vi2 { i % 3 - 1, i / 3 - 1 } * MAP_DIM * WALL_SPACING + state->monster_sprite.position.xy + rotate90(state->monster_sprite.normal) / 2.0f
 				)
-				&& IN_RANGE(portion.x, 0.0f, 1.0f)
-				&& IN_RANGE(portion.y, 0.0f, 1.0f)
+				&& IN_RANGE(portion, 0.0f, 1.0f)
 			)
 			{
-				vf4* sprite_rgba = state->monster_sprite.img->pixels + static_cast<i32>((1.0f - portion.y) * (state->monster_sprite.img->h - 1.0f)) * state->monster_sprite.img->w + static_cast<i32>(portion.x * state->monster_sprite.img->w);
-				f32 k            =
-					flashlight_k
-						* square(CLAMP(1.0f - distance / 32.0f, 0.0f, 1.0f))
-					+ fabsf(dot(ray, cross(state->monster_sprite.orientation_x, state->monster_sprite.orientation_y)))
-						* square(CLAMP(1.0f - distance / AMBIENT_LIGHT_RADIUS, 0.0f, 1.0f));
+				i32 sprite_starting_y       = static_cast<i32>(VIEW_DIM.y / 2.0f + HORT_TO_VERT_K / state->lucia_fov * (state->monster_sprite.position.z - 0.5f - state->lucia_position.z) / (distance + 0.1f));
+				i32 sprite_ending_y         = static_cast<i32>(VIEW_DIM.y / 2.0f + HORT_TO_VERT_K / state->lucia_fov * (state->monster_sprite.position.z + 0.5f - state->lucia_position.z) / (distance + 0.1f));
+				i32 sprite_pixel_starting_y = MAXIMUM(0, sprite_starting_y);
+				i32 sprite_pixel_ending_y   = MINIMUM(sprite_ending_y, VIEW_DIM.y);
 
-				write_pixel
-				(
-					&state->frame_buffer[x][y],
-					{
-						lerp
-						(
-							state->frame_buffer[x][y].color,
-							sprite_rgba->xyz * CLAMP(k, 0.0f, 1.0f),
-							sprite_rgba->w
-						),
-						1.0f / distance
-					}
-				);
+				FOR_RANGE(y, sprite_pixel_starting_y, sprite_pixel_ending_y)
+				{
+					vf3 ray          = normalize({ ray_horizontal.x, ray_horizontal.y, (y - VIEW_DIM.y / 2.0f) * state->lucia_fov / HORT_TO_VERT_K });
+					f32 flashlight_k = powf(CLAMP(dot(ray, state->flashlight_ray), 0.0f, 1.0f), FLASHLIGHT_POW);
+					f32 k =
+						flashlight_k
+							* square(CLAMP(1.0f - distance / 32.0f, 0.0f, 1.0f))
+						+ fabsf(dot(ray, { state->monster_sprite.normal.x, state->monster_sprite.normal.y, 0.0f }))
+							* square(CLAMP(1.0f - distance / AMBIENT_LIGHT_RADIUS, 0.0f, 1.0f));
+
+					vf4* sprite_rgba =
+						state->monster_sprite.img->rgba
+							+ static_cast<i32>(portion * state->monster_sprite.img->dim.x) * state->monster_sprite.img->dim.y
+							+ static_cast<i32>(static_cast<f32>(y - sprite_starting_y) / (sprite_ending_y - sprite_starting_y) * state->monster_sprite.img->dim.y);
+
+					write_pixel
+					(
+						&state->frame_buffer[x][y],
+						{
+							lerp
+							(
+								state->frame_buffer[x][y].color,
+								sprite_rgba->xyz * CLAMP(k, 0.0f, 1.0f),
+								sprite_rgba->w
+							),
+							1.0f / distance
+						}
+					);
+				}
 			}
 		}
 	}

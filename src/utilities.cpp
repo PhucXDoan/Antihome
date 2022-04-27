@@ -59,26 +59,16 @@ struct Intersection
 	f32                distance;
 };
 
-struct ColumnMajorTexture
+struct ImgRGB
 {
-	i32  w;
-	i32  h;
-	vf3* colors;
+	vi2  dim;
+	vf3* rgb;
 };
 
-struct Image
+struct ImgRGBA
 {
-	i32  w;
-	i32  h;
-	vf4* pixels;
-};
-
-struct Sprite
-{
-	Image* img;
-	vf3    orientation_x;
-	vf3    orientation_y;
-	vf3    position;
+	vi2  dim;
+	vf4* rgba;
 };
 
 internal f32 rng(u32* seed)
@@ -108,6 +98,7 @@ internal constexpr vf4 lerp(vf4 a, vf4 b, f32 t) { return a * (1.0f - t) + b * t
 
 internal constexpr f32 dampen(f32 a, f32 b, f32 k, f32 dt) { return lerp(a, b, 1.0f - expf(-k * dt)); }
 internal constexpr vf2 dampen(vf2 a, vf2 b, f32 k, f32 dt) { return lerp(a, b, 1.0f - expf(-k * dt)); }
+internal constexpr vf3 dampen(vf3 a, vf3 b, f32 k, f32 dt) { return lerp(a, b, 1.0f - expf(-k * dt)); }
 internal constexpr vf4 dampen(vf4 a, vf4 b, f32 k, f32 dt) { return lerp(a, b, 1.0f - expf(-k * dt)); }
 
 internal constexpr f32 dot(vf3 u, vf3 v) { return u.x * v.x + u.y * v.y + u.z * v.z; }
@@ -341,26 +332,25 @@ internal void draw_line(SDL_Surface* surface, vf2 start, vf2 end, vf3 color)
 }
 
 // @TODO@ Use arena.
-internal ColumnMajorTexture init_column_major_texture(strlit filepath)
+internal ImgRGB init_img_rgb(strlit filepath)
 {
-	ColumnMajorTexture texture;
+	ImgRGB img;
 
 	i32  iw;
 	i32  ih;
-	u32* img = reinterpret_cast<u32*>(stbi_load(filepath, &iw, &ih, 0, STBI_rgb_alpha));
-	DEFER { stbi_image_free(img); };
-	ASSERT(img);
+	u32* stbimg = reinterpret_cast<u32*>(stbi_load(filepath, &iw, &ih, 0, STBI_rgb_alpha));
+	DEFER { stbi_image_free(stbimg); };
+	ASSERT(stbimg);
 
-	texture.w      = iw;
-	texture.h      = ih;
-	texture.colors = reinterpret_cast<vf3*>(malloc(texture.w * texture.h * sizeof(vf3)));
+	img.dim = { iw, ih };
+	img.rgb = reinterpret_cast<vf3*>(malloc(img.dim.x * img.dim.y * sizeof(vf3)));
 
-	FOR_RANGE(y, texture.h)
+	FOR_RANGE(y, img.dim.y)
 	{
-		FOR_RANGE(x, texture.w)
+		FOR_RANGE(x, img.dim.x)
 		{
-			u32 pixel = *(img + y * texture.w + x);
-			*(texture.colors + x * texture.h + (texture.h - 1 - y)) =
+			u32 pixel = *(stbimg + y * img.dim.x + x);
+			*(img.rgb + x * img.dim.y + (img.dim.y - 1 - y)) =
 				{
 					static_cast<f32>(pixel >>  0 & 0xFF) / 0xFF,
 					static_cast<f32>(pixel >>  8 & 0xFF) / 0xFF,
@@ -369,44 +359,47 @@ internal ColumnMajorTexture init_column_major_texture(strlit filepath)
 		}
 	}
 
-	return texture;
+	return img;
 }
 
-internal void deinit_column_major_texture(ColumnMajorTexture* texture)
+internal void deinit_img_rgb(ImgRGB* img)
 {
-	free(texture->colors);
+	free(img->rgb);
 }
 
 // @TODO@ Use arena.
-internal Image init_image(strlit filepath)
+internal ImgRGBA init_img_rgba(strlit filepath)
 {
-	Image image;
+	ImgRGBA img;
 
 	i32  iw;
 	i32  ih;
-	u32* img = reinterpret_cast<u32*>(stbi_load(filepath, &iw, &ih, 0, STBI_rgb_alpha));
-	DEFER { stbi_image_free(img); };
-	ASSERT(img);
+	u32* stbimg = reinterpret_cast<u32*>(stbi_load(filepath, &iw, &ih, 0, STBI_rgb_alpha));
+	DEFER { stbi_image_free(stbimg); };
+	ASSERT(stbimg);
 
-	image.w      = iw;
-	image.h      = ih;
-	image.pixels = reinterpret_cast<vf4*>(malloc(image.w * image.h * sizeof(vf4)));
+	img.dim  = { iw, ih };
+	img.rgba = reinterpret_cast<vf4*>(malloc(img.dim.x * img.dim.y * sizeof(vf4)));
 
-	FOR_ELEMS(it, image.pixels, image.w * image.h)
+	FOR_RANGE(y, img.dim.y)
 	{
-		*it =
-			{
-				static_cast<f32>(img[it_index] >>  0 & 0xFF) / 0xFF,
-				static_cast<f32>(img[it_index] >>  8 & 0xFF) / 0xFF,
-				static_cast<f32>(img[it_index] >> 16 & 0xFF) / 0xFF,
-				static_cast<f32>(img[it_index] >> 24 & 0xFF) / 0xFF
-			};
+		FOR_RANGE(x, img.dim.x)
+		{
+			u32 pixel = *(stbimg + y * img.dim.x + x);
+			*(img.rgba + x * img.dim.y + (img.dim.y - 1 - y)) =
+				{
+					static_cast<f32>(pixel >>  0 & 0xFF) / 0xFF,
+					static_cast<f32>(pixel >>  8 & 0xFF) / 0xFF,
+					static_cast<f32>(pixel >> 16 & 0xFF) / 0xFF,
+					static_cast<f32>(pixel >> 24 & 0xFF) / 0xFF
+				};
+		}
 	}
 
-	return image;
+	return img;
 }
 
-internal void deinit_image(Image* image)
+internal void deinit_img_rgba(ImgRGBA* img)
 {
-	free(image->pixels);
+	free(img->rgba);
 }
