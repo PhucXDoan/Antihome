@@ -134,11 +134,11 @@ struct MemoryArena
 };
 
 template <typename TYPE>
-internal TYPE* memory_arena_push(MemoryArena* arena, i32 count = 1)
+internal TYPE* memory_arena_push(MemoryArena* arena)
 {
-	ASSERT(arena->used + sizeof(TYPE) * count <= arena->size);
+	ASSERT(arena->used + sizeof(TYPE) <= arena->size);
 	byte* allocation = arena->base + arena->used;
-	arena->used += sizeof(TYPE) * count;
+	arena->used += sizeof(TYPE);
 	return reinterpret_cast<TYPE*>(allocation);
 }
 
