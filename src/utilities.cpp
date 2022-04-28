@@ -108,6 +108,9 @@ internal constexpr vf3 cross(vf3 u, vf3 v) { return { u.y * v.z - u.z * v.y, u.z
 
 internal constexpr vf4 hadamard_product(vf4 u, vf4 v) { return { u.x * v.x, u.y * v.y, u.z * v.z, u.w * v.w }; }
 
+internal f32 norm_sq(vf3 v) { return v.x * v.x + v.y * v.y + v.z * v.z; }
+internal f32 norm_sq(vf2 v) { return v.x * v.x + v.y * v.y            ; }
+
 internal f32 norm(vf3 v) { return sqrtf(v.x * v.x + v.y * v.y + v.z * v.z); }
 internal f32 norm(vf2 v) { return sqrtf(v.x * v.x + v.y * v.y            ); }
 

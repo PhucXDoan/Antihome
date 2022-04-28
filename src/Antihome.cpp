@@ -12,7 +12,7 @@ global constexpr f32 HORT_TO_VERT_K = 0.927295218f * VIEW_DIM.x;
 global constexpr f32 WALL_HEIGHT    = 2.7432f;
 global constexpr f32 WALL_THICKNESS = 0.25f;
 global constexpr f32 LUCIA_HEIGHT   = 1.4986f;
-global constexpr i32 MAP_DIM        = 64;
+global constexpr i32 MAP_DIM        = 8;
 global constexpr f32 WALL_SPACING   = 3.0f;
 
 flag_struct (WallVoxel, u8)
@@ -34,6 +34,19 @@ struct Sprite
 	ImgRGBA* img;
 	vf3      position;
 	vf2      normal;
+};
+
+enum struct PathSide : u32
+{
+	left,
+	bottom
+};
+
+struct PathNode
+{
+	vi2       coordinates;
+	PathSide  side;
+	PathNode* next_node;
 };
 
 struct State
@@ -80,6 +93,44 @@ internal void write_pixel(Pixel* pixel, Pixel new_pixel)
 	{
 		*pixel = new_pixel;
 	}
+}
+
+internal PathNode get_closest_open_path_node(State* state, vf2 position)
+{
+	constexpr struct { vi2 delta_coordinates; vf2 delta_offset; PathSide side; } NODES[] =
+		{
+			{ { 0, 0 }, { 0.0f, 0.5f }, PathSide::left   },
+			{ { 0, 0 }, { 0.5f, 0.0f }, PathSide::bottom },
+			{ { 1, 0 }, { 0.0f, 0.5f }, PathSide::left   },
+			{ { 0, 1 }, { 0.5f, 0.0f }, PathSide::bottom }
+		};
+
+	i32 closest_index       = -1;
+	f32 closest_distance_sq = NAN;
+	vi2 coordinates         = vxx(position / WALL_SPACING);
+	vf2 trunc_offset        = coordinates - position / WALL_SPACING;
+	FOR_ELEMS(it, NODES)
+	{
+		WallVoxel voxel = *get_wall_voxel(state, coordinates + it->delta_coordinates);
+		if (it->side == PathSide::left && !+(voxel & WallVoxel::left) || it->side == PathSide::bottom && !+(voxel & WallVoxel::bottom))
+		{
+			f32 distance_sq = norm_sq(trunc_offset + it->delta_coordinates + it->delta_offset);
+			if (closest_index == -1 || distance_sq < closest_distance_sq)
+			{
+				closest_index       = it_index;
+				closest_distance_sq = distance_sq;
+			}
+		}
+	}
+
+	ASSERT(closest_index != -1);
+
+	PathNode result;
+	result.coordinates    = coordinates + NODES[closest_index].delta_coordinates;
+	result.coordinates.x %= MAP_DIM;
+	result.coordinates.y %= MAP_DIM;
+	result.side           = NODES[closest_index].side;
+	return result;
 }
 
 extern "C" PROTOTYPE_INITIALIZE(initialize)
@@ -360,7 +411,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 	// @TEMP@
 	persist f32 TEMP;
 	TEMP += 1.5f * SECONDS_PER_UPDATE;
-	state->monster_sprite.position.xy = { 1.0f, 4.0f };
+	state->monster_sprite.position.xy = dampen(state->monster_sprite.position.xy, state->lucia_position.xy, 0.1f, SECONDS_PER_UPDATE);
 	state->monster_sprite.position.z = (cosf(TEMP * 2.0f) * 0.15f) + WALL_HEIGHT / 2.0f;
 	state->monster_sprite.normal = normalize(dampen(state->monster_sprite.normal, normalize(state->lucia_position.xy - state->monster_sprite.position.xy), 1.0f, SECONDS_PER_UPDATE));
 	state->item_sprite.position.xy = { 1.0f, 5.0f };
@@ -390,10 +441,10 @@ extern "C" PROTOTYPE_RENDER(render)
 	fill(platform->surface, { 0.05f, 0.10f, 0.15f });
 	memset(state->frame_buffer, 0, sizeof(state->frame_buffer));
 
+	#if 0
 	constexpr f32 AMBIENT_LIGHT_RADIUS = 4.0f;
 	constexpr f32 FLASHLIGHT_POW       = 8.0f;
 
-	#if 1
 	#if 0
 	persist u64 DEBUG_total;
 	persist u64 DEBUG_counter;
@@ -609,32 +660,35 @@ extern "C" PROTOTYPE_RENDER(render)
 
 			FOR_RANGE(y, sprite_pixel_starting_y, sprite_pixel_ending_y)
 			{
-				vf3 ray          = normalize({ ray_horizontal.x, ray_horizontal.y, (y - VIEW_DIM.y / 2.0f) * state->lucia_fov / HORT_TO_VERT_K });
-				f32 flashlight_k = powf(CLAMP(dot(ray, state->flashlight_ray), 0.0f, 1.0f), FLASHLIGHT_POW);
-				f32 k =
-					flashlight_k
-						* square(CLAMP(1.0f - node->distance / 32.0f, 0.0f, 1.0f))
-					+ fabsf(dot(ray, { node->sprite->normal.x, node->sprite->normal.y, 0.0f }))
-						* square(CLAMP(1.0f - node->distance / AMBIENT_LIGHT_RADIUS, 0.0f, 1.0f));
-
 				vf4* sprite_pixel =
 					node->sprite->img->rgba
 						+ static_cast<i32>(node->portion * node->sprite->img->dim.x) * node->sprite->img->dim.y
 						+ static_cast<i32>(static_cast<f32>(y - sprite_starting_y) / (sprite_ending_y - sprite_starting_y) * node->sprite->img->dim.y);
 
-				write_pixel
-				(
-					&state->frame_buffer[x][y],
-					{
-						lerp
-						(
-							state->frame_buffer[x][y].color,
-							sprite_pixel->xyz * CLAMP(k, 0.0f, 1.0f),
-							sprite_pixel->w
-						),
-						1.0f / node->distance
-					}
-				);
+				if (sprite_pixel->w)
+				{
+					vf3 ray          = normalize({ ray_horizontal.x, ray_horizontal.y, (y - VIEW_DIM.y / 2.0f) * state->lucia_fov / HORT_TO_VERT_K });
+					f32 flashlight_k = powf(CLAMP(dot(ray, state->flashlight_ray), 0.0f, 1.0f), FLASHLIGHT_POW);
+					f32 k =
+						flashlight_k
+							* square(CLAMP(1.0f - node->distance / 32.0f, 0.0f, 1.0f))
+						+ fabsf(dot(ray, { node->sprite->normal.x, node->sprite->normal.y, 0.0f }))
+							* square(CLAMP(1.0f - node->distance / AMBIENT_LIGHT_RADIUS, 0.0f, 1.0f));
+
+					write_pixel
+					(
+						&state->frame_buffer[x][y],
+						{
+							lerp
+							(
+								state->frame_buffer[x][y].color,
+								sprite_pixel->xyz * CLAMP(k, 0.0f, 1.0f),
+								sprite_pixel->w
+							),
+							1.0f / node->distance
+						}
+					);
+				}
 			}
 		}
 	}
@@ -676,7 +730,7 @@ extern "C" PROTOTYPE_RENDER(render)
 		cam_pos.y += SPEED * SECONDS_PER_UPDATE;
 	}
 
-	constexpr f32 PIXELS_PER_METER = 5.0f;
+	constexpr f32 PIXELS_PER_METER = 10.0f;
 
 	vf2 ray  = polar(state->lucia_angle);
 	vi2 step =
@@ -698,7 +752,7 @@ extern "C" PROTOTYPE_RENDER(render)
 		};
 
 	vi2 pos = { static_cast<i32>(floorf(state->lucia_position.x / WALL_SPACING)), static_cast<i32>(floorf(state->lucia_position.y / WALL_SPACING)) };
-	FOR_RANGE(32)
+	FOR_RANGE(4)
 	{
 		fill
 		(
@@ -718,6 +772,24 @@ extern "C" PROTOTYPE_RENDER(render)
 			t_max.y += t_delta.y;
 			pos.y   += step.y;
 		}
+	}
+
+	FOR_RANGE(i, MAP_DIM)
+	{
+		draw_line
+		(
+			state->view,
+			VIEW_DIM / 2.0f + conjugate(vi2 { i,       0 } * WALL_SPACING - cam_pos) * PIXELS_PER_METER,
+			VIEW_DIM / 2.0f + conjugate(vi2 { i, MAP_DIM } * WALL_SPACING - cam_pos) * PIXELS_PER_METER,
+			{ 0.8f, 0.8f, 0.8f }
+		);
+		draw_line
+		(
+			state->view,
+			VIEW_DIM / 2.0f + conjugate(vi2 {       0, i } * WALL_SPACING - cam_pos) * PIXELS_PER_METER,
+			VIEW_DIM / 2.0f + conjugate(vi2 { MAP_DIM, i } * WALL_SPACING - cam_pos) * PIXELS_PER_METER,
+			{ 0.8f, 0.8f, 0.8f }
+		);
 	}
 
 	FOR_RANGE(y, MAP_DIM)
@@ -767,9 +839,53 @@ extern "C" PROTOTYPE_RENDER(render)
 					{ 0.0f, 0.0f, 0.0f }
 				);
 			}
+
+			constexpr f32 DIM = 5.0f;
+			fill
+			(
+				state->view,
+				VIEW_DIM / 2.0f + conjugate((vf2 { x + 0.5f, y + 0.0f }) * WALL_SPACING - cam_pos) * PIXELS_PER_METER - vf2 { DIM, DIM } / 2.0f,
+				vf2 { DIM, DIM },
+				{ 0.0f, 0.25f, 0.0f }
+			);
+			fill
+			(
+				state->view,
+				VIEW_DIM / 2.0f + conjugate((vf2 { x + 0.0f, y + 0.5f }) * WALL_SPACING - cam_pos) * PIXELS_PER_METER - vf2 { DIM, DIM } / 2.0f,
+				vf2 { DIM, DIM },
+				{ 0.0f, 0.25f, 0.0f }
+			);
 		}
 	}
 
+	PathNode nodes[] =
+		{
+			get_closest_open_path_node(state, state->monster_sprite.position.xy),
+			get_closest_open_path_node(state, state->lucia_position.xy)
+		};
+
+	PathNode* list = 0;
+
+	FOR_ELEMS_REV(it, nodes)
+	{
+		PathNode* node = memory_arena_push<PathNode>(&state->transient_arena);
+		*node = *it;
+		node->next_node = list;
+		list = node;
+	}
+
+	for (PathNode* node = list; node && node->next_node; node = node->next_node)
+	{
+		draw_line
+		(
+			state->view,
+			VIEW_DIM / 2.0f + conjugate((node           ->coordinates + (node           ->side == PathSide::left ? vf2 { 0.0f, 0.5f } : vf2 { 0.5f, 0.0f })) * WALL_SPACING - cam_pos) * PIXELS_PER_METER - vf2 { 2.5f, 2.5f } / 4.0f,
+			VIEW_DIM / 2.0f + conjugate((node->next_node->coordinates + (node->next_node->side == PathSide::left ? vf2 { 0.0f, 0.5f } : vf2 { 0.5f, 0.0f })) * WALL_SPACING - cam_pos) * PIXELS_PER_METER - vf2 { 2.5f, 2.5f } / 4.0f,
+			{ 0.6f, 0.1f, 0.9f }
+		);
+	}
+
+	fill(state->view, VIEW_DIM / 2.0f + conjugate(state->monster_sprite.position.xy - cam_pos) * PIXELS_PER_METER - vf2 { 2.5f, 2.5f }, { 5.0f, 5.0f }, { 0.0f, 0.0f, 1.0f });
 	fill(state->view, VIEW_DIM / 2.0f + conjugate(state->lucia_position.xy - cam_pos) * PIXELS_PER_METER - vf2 { 2.5f, 2.5f } / 2.0f, { 2.5f, 2.5f }, { 1.0f, 0.0f, 0.0f });
 	draw_line
 	(
