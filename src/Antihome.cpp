@@ -42,36 +42,44 @@ enum struct PathSide : u32
 	bottom
 };
 
-struct PathNode
+struct PathSpot
 {
-	vi2       coordinates;
-	PathSide  side;
-	PathNode* next_node;
+	vi2      coordinates;
+	PathSide side;
+};
+
+struct PathSpotNode
+{
+	PathSpot      spot;
+	PathSpotNode* next_node;
 };
 
 struct State
 {
-	MemoryArena  transient_arena;
+	MemoryArena   long_term_arena;
+	MemoryArena   transient_arena;
+	PathSpotNode* available_path_spot_node;
 
-	u32          seed;
-	SDL_Surface* view;
-	Pixel        frame_buffer[VIEW_DIM.x][VIEW_DIM.y];
-	vf2          lucia_velocity;
-	vf3          lucia_position;
-	f32          lucia_angle_velocity;
-	f32          lucia_angle;
-	f32          lucia_fov;
-	f32          lucia_head_bob_keytime;
-	vf3          flashlight_ray;
-	f32          flashlight_keytime;
-	WallVoxel    wall_voxels[MAP_DIM * MAP_DIM];
-	ImgRGB       wall;
-	ImgRGB       floor;
-	ImgRGB       ceiling;
-	ImgRGBA      monster_img;
-	Sprite       monster_sprite;
-	ImgRGBA      item_img;
-	Sprite       item_sprite;
+	u32           seed;
+	SDL_Surface*  view;
+	Pixel         frame_buffer[VIEW_DIM.x][VIEW_DIM.y];
+	vf2           lucia_velocity;
+	vf3           lucia_position;
+	f32           lucia_angle_velocity;
+	f32           lucia_angle;
+	f32           lucia_fov;
+	f32           lucia_head_bob_keytime;
+	vf3           flashlight_ray;
+	f32           flashlight_keytime;
+	WallVoxel     wall_voxels[MAP_DIM * MAP_DIM];
+	ImgRGB        wall;
+	ImgRGB        floor;
+	ImgRGB        ceiling;
+	ImgRGBA       monster_img;
+	Sprite        monster_sprite;
+	ImgRGBA       item_img;
+	Sprite        item_sprite;
+	PathSpotNode* monster_path;
 };
 
 global constexpr struct { WallVoxel voxel; vf2 start; vf2 end; vf2 normal; } WALL_VOXEL_DATA[] =
@@ -82,9 +90,34 @@ global constexpr struct { WallVoxel voxel; vf2 start; vf2 end; vf2 normal; } WAL
 		{ WallVoxel::forward_slash, { 0.0f, 0.0f }, { 1.0f, 1.0f }, { -INVSQRT2,  INVSQRT2 } }
 	};
 
+internal PathSpotNode* allocate_path_spot_node(State* state)
+{
+	if (state->available_path_spot_node)
+	{
+		PathSpotNode* node = state->available_path_spot_node;
+		state->available_path_spot_node = state->available_path_spot_node->next_node;
+		return node;
+	}
+	else
+	{
+		return memory_arena_push<PathSpotNode>(&state->long_term_arena);
+	}
+}
+
+internal void deallocate_path_node(State* state, PathSpotNode* node)
+{
+	node->next_node = state->available_path_spot_node;
+	state->available_path_spot_node = node;
+}
+
 internal WallVoxel* get_wall_voxel(State* state, vi2 v)
 {
 	return &state->wall_voxels[((v.y % MAP_DIM) + MAP_DIM) % MAP_DIM * MAP_DIM + ((v.x % MAP_DIM) + MAP_DIM) % MAP_DIM];
+}
+
+internal PathSpot make_path_spot(vi2 coordinates, PathSide side)
+{
+	return { { mod(coordinates.x, MAP_DIM), mod(coordinates.y, MAP_DIM) }, side };
 }
 
 internal void write_pixel(Pixel* pixel, Pixel new_pixel)
@@ -95,7 +128,12 @@ internal void write_pixel(Pixel* pixel, Pixel new_pixel)
 	}
 }
 
-internal PathNode get_closest_open_path_node(State* state, vf2 position)
+internal vf2 path_spot_to_position(PathSpot spot)
+{
+	return (spot.coordinates + (spot.side == PathSide::left ? vf2 { 0.0f, 0.5f } : vf2 { 0.5f, 0.0f })) * WALL_SPACING;
+}
+
+internal PathSpot get_closest_path_spot(State* state, vf2 position)
 {
 	constexpr struct { vi2 delta_coordinates; vf2 delta_offset; PathSide side; } NODES[] =
 		{
@@ -125,12 +163,7 @@ internal PathNode get_closest_open_path_node(State* state, vf2 position)
 
 	ASSERT(closest_index != -1);
 
-	PathNode result;
-	result.coordinates    = coordinates + NODES[closest_index].delta_coordinates;
-	result.coordinates.x %= MAP_DIM;
-	result.coordinates.y %= MAP_DIM;
-	result.side           = NODES[closest_index].side;
-	return result;
+	return make_path_spot(coordinates + NODES[closest_index].delta_coordinates, NODES[closest_index].side);
 }
 
 extern "C" PROTOTYPE_INITIALIZE(initialize)
@@ -140,11 +173,15 @@ extern "C" PROTOTYPE_INITIALIZE(initialize)
 
 	*state = {};
 
-	state->transient_arena.size = platform->memory_capacity - sizeof(State);
-	state->transient_arena.base = platform->memory          + sizeof(State);
+	state->long_term_arena.size = static_cast<memsize>((platform->memory_capacity - sizeof(State)) * 0.75f);
+	state->long_term_arena.base = platform->memory + sizeof(State);
+	state->long_term_arena.used = 0;
+
+	state->transient_arena.size = platform->memory_capacity - sizeof(State) - state->long_term_arena.size;
+	state->transient_arena.base = platform->memory          + sizeof(State) + state->long_term_arena.size;
 	state->transient_arena.used = 0;
 
-	state->lucia_position  = { 0.5f, 0.5f, LUCIA_HEIGHT };
+	state->lucia_position  = { 3.75f * WALL_SPACING, 3.5f * WALL_SPACING, LUCIA_HEIGHT };
 	state->lucia_fov       = TAU / 3.0f;
 
 	FOR_RANGE(start_walk_y, MAP_DIM)
@@ -226,6 +263,33 @@ extern "C" PROTOTYPE_INITIALIZE(initialize)
 				*get_wall_voxel(state, { x, y     }) |=  WallVoxel::forward_slash;
 			}
 		}
+	}
+
+	constexpr PathSpot SPOTS[] =
+		{
+			{ { 0, 0 }, PathSide::left },
+			{ { 1, 0 }, PathSide::left },
+			{ { 2, 0 }, PathSide::left },
+			{ { 2, 1 }, PathSide::bottom },
+			{ { 2, 2 }, PathSide::bottom },
+			{ { 2, 3 }, PathSide::bottom },
+			{ { 2, 4 }, PathSide::bottom },
+			{ { 2, 5 }, PathSide::bottom },
+			{ { 3, 5 }, PathSide::left },
+			{ { 4, 5 }, PathSide::left },
+			{ { 4, 5 }, PathSide::bottom },
+			{ { 5, 4 }, PathSide::left },
+			{ { 5, 4 }, PathSide::bottom },
+			{ { 5, 3 }, PathSide::left },
+			{ { 4, 3 }, PathSide::left },
+		};
+
+	FOR_ELEMS_REV(it, SPOTS)
+	{
+		PathSpotNode* node = allocate_path_spot_node(state);
+		node->spot      = *it;
+		node->next_node = state->monster_path;
+		state->monster_path = node;
 	}
 
 	SDL_SetRelativeMouseMode(SDL_TRUE);
@@ -411,9 +475,23 @@ extern "C" PROTOTYPE_UPDATE(update)
 	// @TEMP@
 	persist f32 TEMP;
 	TEMP += 1.5f * SECONDS_PER_UPDATE;
-	state->monster_sprite.position.xy = dampen(state->monster_sprite.position.xy, state->lucia_position.xy, 0.1f, SECONDS_PER_UPDATE);
+
+	#if 0
+	if (state->monster_path)
+	{
+		state->monster_sprite.position.xy = dampen(state->monster_sprite.position.xy, path_spot_to_position(state->monster_path->spot), 1.0f, SECONDS_PER_UPDATE);
+		if (norm_sq(state->monster_sprite.position.xy - path_spot_to_position(state->monster_path->spot)) < 1.0f)
+		{
+			PathSpotNode* tail = state->monster_path->next_node;
+			deallocate_path_node(state, state->monster_path);
+			state->monster_path = tail;
+		}
+	}
+	#endif
+
 	state->monster_sprite.position.z = (cosf(TEMP * 2.0f) * 0.15f) + WALL_HEIGHT / 2.0f;
 	state->monster_sprite.normal = normalize(dampen(state->monster_sprite.normal, normalize(state->lucia_position.xy - state->monster_sprite.position.xy), 1.0f, SECONDS_PER_UPDATE));
+
 	state->item_sprite.position.xy = { 1.0f, 5.0f };
 	state->item_sprite.position.z = (sinf(TEMP * 2.0f) * 0.15f) + WALL_HEIGHT / 2.0f;
 	state->item_sprite.normal = normalize(dampen(state->item_sprite.normal, normalize(state->lucia_position.xy - state->item_sprite.position.xy), 1.0f, SECONDS_PER_UPDATE));
@@ -858,29 +936,13 @@ extern "C" PROTOTYPE_RENDER(render)
 		}
 	}
 
-	PathNode nodes[] =
-		{
-			get_closest_open_path_node(state, state->monster_sprite.position.xy),
-			get_closest_open_path_node(state, state->lucia_position.xy)
-		};
-
-	PathNode* list = 0;
-
-	FOR_ELEMS_REV(it, nodes)
-	{
-		PathNode* node = memory_arena_push<PathNode>(&state->transient_arena);
-		*node = *it;
-		node->next_node = list;
-		list = node;
-	}
-
-	for (PathNode* node = list; node && node->next_node; node = node->next_node)
+	for (PathSpotNode* node = state->monster_path; node && node->next_node; node = node->next_node)
 	{
 		draw_line
 		(
 			state->view,
-			VIEW_DIM / 2.0f + conjugate((node           ->coordinates + (node           ->side == PathSide::left ? vf2 { 0.0f, 0.5f } : vf2 { 0.5f, 0.0f })) * WALL_SPACING - cam_pos) * PIXELS_PER_METER - vf2 { 2.5f, 2.5f } / 4.0f,
-			VIEW_DIM / 2.0f + conjugate((node->next_node->coordinates + (node->next_node->side == PathSide::left ? vf2 { 0.0f, 0.5f } : vf2 { 0.5f, 0.0f })) * WALL_SPACING - cam_pos) * PIXELS_PER_METER - vf2 { 2.5f, 2.5f } / 4.0f,
+			VIEW_DIM / 2.0f + conjugate(path_spot_to_position(node           ->spot) - cam_pos) * PIXELS_PER_METER - vf2 { 2.5f, 2.5f } / 4.0f,
+			VIEW_DIM / 2.0f + conjugate(path_spot_to_position(node->next_node->spot) - cam_pos) * PIXELS_PER_METER - vf2 { 2.5f, 2.5f } / 4.0f,
 			{ 0.6f, 0.1f, 0.9f }
 		);
 	}
@@ -894,6 +956,66 @@ extern "C" PROTOTYPE_RENDER(render)
 		VIEW_DIM / 2.0f + conjugate(state->lucia_position.xy - cam_pos + polar(state->lucia_angle) * 6.0f) * PIXELS_PER_METER - vf2 { 2.5f, 2.5f } / 4.0f,
 		{ 0.6f, 0.1f, 0.1f }
 	);
+
+	PathSpot spot = get_closest_path_spot(state, state->lucia_position.xy);
+
+	fill
+	(
+		state->view,
+		VIEW_DIM / 2.0f + conjugate(path_spot_to_position(spot) - cam_pos) * PIXELS_PER_METER - vf2 { 10.0f, 10.0f } / 2.0f,
+		vf2 { 10.0f, 10.0f },
+		{ 0.75f, 0.1f, 0.0f }
+	);
+
+	constexpr struct { vi2 delta_coordinates; PathSide side; } ADJACENT_SPOTS[] =
+		{
+			{ { -1,  0 }, PathSide::left   },
+			{ { -1,  0 }, PathSide::bottom },
+			{ { -1,  1 }, PathSide::bottom },
+			{ {  0,  0 }, PathSide::bottom },
+			{ {  0,  1 }, PathSide::bottom },
+			{ {  1,  0 }, PathSide::left   }
+		};
+
+	FOR_ELEMS(it, ADJACENT_SPOTS)
+	{
+		PathSpot adjacent_spot =
+			spot.side == PathSide::left
+				? make_path_spot(spot.coordinates + it->delta_coordinates, it->side)
+				: make_path_spot(spot.coordinates + vi2 { it->delta_coordinates.y, it->delta_coordinates.x }, it->side == PathSide::left ? PathSide::bottom : PathSide::left);
+
+		WallVoxel voxel      = *get_wall_voxel(state, adjacent_spot.coordinates);
+		WallVoxel post_voxel = *get_wall_voxel(state, spot.coordinates + (spot.side == PathSide::left ? vi2 { -1, 0 } : vi2 { 0, -1 }));
+		WallVoxel spot_voxel = *get_wall_voxel(state, spot.coordinates);
+		if
+		(
+			(
+				adjacent_spot.side == PathSide::left   && !+(voxel & WallVoxel::left  ) ||
+				adjacent_spot.side == PathSide::bottom && !+(voxel & WallVoxel::bottom)
+			)
+			&&
+			(
+				it->delta_coordinates.x != -1
+				|| (it->delta_coordinates.y == 1                                 || !+(post_voxel & WallVoxel::back_slash))
+				&& (it->delta_coordinates.y == 0 && it->side == PathSide::bottom || !+(post_voxel & WallVoxel::forward_slash))
+			)
+			&&
+			(
+				it->delta_coordinates.x == -1
+				|| (it->delta_coordinates.y == 0 && it->side == PathSide::bottom || !+(spot_voxel & WallVoxel::back_slash))
+				&& (it->delta_coordinates.y == 1                                 || !+(spot_voxel & WallVoxel::forward_slash))
+			)
+		)
+		{
+			fill
+			(
+				state->view,
+				VIEW_DIM / 2.0f + conjugate(path_spot_to_position(adjacent_spot) - cam_pos) * PIXELS_PER_METER - vf2 {  7.5f,  7.5f } / 2.0f,
+				vf2 {  7.5f,  7.5f },
+				{ 0.2f, 0.6f, 0.0f }
+			);
+		}
+	}
 	#endif
 
 	SDL_Rect dst = { VIEW_PADDING, VIEW_PADDING, WIN_DIM.x - VIEW_PADDING * 2, (WIN_DIM.x - VIEW_PADDING * 2) * VIEW_DIM.y / VIEW_DIM.x };
