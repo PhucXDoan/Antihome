@@ -59,7 +59,7 @@ struct State
 	f32                  lucia_head_bob_keytime;
 	vf3                  flashlight_ray;
 	f32                  flashlight_keytime;
-	WallVoxel            wall_voxels[MAP_DIM * MAP_DIM];
+	WallVoxel            wall_voxels[MAP_DIM][MAP_DIM];
 	ImgRGB               wall;
 	ImgRGB               floor;
 	ImgRGB               ceiling;
@@ -80,7 +80,7 @@ global constexpr struct { WallVoxel voxel; vf2 start; vf2 end; vf2 normal; } WAL
 
 internal WallVoxel* get_wall_voxel(State* state, vi2 v)
 {
-	return &state->wall_voxels[((v.y % MAP_DIM) + MAP_DIM) % MAP_DIM * MAP_DIM + ((v.x % MAP_DIM) + MAP_DIM) % MAP_DIM];
+	return &state->wall_voxels[mod(v.y, MAP_DIM)][mod(v.x, MAP_DIM)];
 }
 
 internal PathCoordinatesNode* allocate_path_coordinates_node(State* state)
@@ -97,10 +97,12 @@ internal PathCoordinatesNode* allocate_path_coordinates_node(State* state)
 	}
 }
 
-internal void deallocate_path_coordinates_node(State* state, PathCoordinatesNode* node)
+internal PathCoordinatesNode* deallocate_path_coordinates_node(State* state, PathCoordinatesNode* node)
 {
+	PathCoordinatesNode* tail = node->next_node;
 	node->next_node = state->available_path_coordinates_node;
 	state->available_path_coordinates_node = node;
+	return tail;
 }
 
 internal vf2 path_coordinates_to_position(vi2 coordinates)
@@ -192,6 +194,31 @@ internal vi2 get_closest_open_path_coordinates(State* state, vf2 position)
 	return result;
 }
 
+internal f32 path_distance_function(vi2 coordinates_a, vi2 coordinates_b)
+{
+	coordinates_a.x = mod(coordinates_a.x, MAP_DIM    );
+	coordinates_a.y = mod(coordinates_a.y, MAP_DIM * 2);
+	coordinates_b.x = mod(coordinates_b.x, MAP_DIM    );
+	coordinates_b.y = mod(coordinates_b.y, MAP_DIM * 2);
+
+	vf2 position_a = { coordinates_a.x + (coordinates_a.y % 2 == 0 ? 0.5f : 0.0f), coordinates_a.y / 2.0f };
+	vf2 position_b = { coordinates_b.x + (coordinates_b.y % 2 == 0 ? 0.5f : 0.0f), coordinates_b.y / 2.0f };
+	return
+		MINIMUM
+		(
+			MINIMUM
+			(
+				norm(position_a - position_b + vi2 {       0, 0 }),
+				norm(position_a - position_b + vi2 { MAP_DIM, 0 })
+			),
+			MINIMUM
+			(
+				norm(position_a - position_b + vi2 {       0, MAP_DIM }),
+				norm(position_a - position_b + vi2 { MAP_DIM, MAP_DIM })
+			)
+		);
+}
+
 internal void write_pixel(Pixel* pixel, Pixel new_pixel)
 {
 	if (pixel->inv_depth <= new_pixel.inv_depth)
@@ -215,8 +242,10 @@ extern "C" PROTOTYPE_INITIALIZE(initialize)
 	state->transient_arena.base = platform->memory          + sizeof(State) + state->long_term_arena.size;
 	state->transient_arena.used = 0;
 
-	state->lucia_position  = { 3.75f * WALL_SPACING, 3.5f * WALL_SPACING, LUCIA_HEIGHT };
+	state->lucia_position  = { 3.75f * WALL_SPACING, 1.5f * WALL_SPACING, LUCIA_HEIGHT };
 	state->lucia_fov       = TAU / 3.0f;
+
+	state->monster_sprite.position = { 2.5f * WALL_SPACING, 2.5f * WALL_SPACING, LUCIA_HEIGHT };
 
 	FOR_RANGE(start_walk_y, MAP_DIM)
 	{
@@ -297,24 +326,6 @@ extern "C" PROTOTYPE_INITIALIZE(initialize)
 				*get_wall_voxel(state, { x, y     }) |=  WallVoxel::forward_slash;
 			}
 		}
-	}
-
-	constexpr vi2 COORDINATES[] =
-		{
-			{ 1, 1 },
-			{ 2, 1 },
-			{ 2, 2 },
-			{ 2, 4 },
-			{ 2, 6 },
-			{ 2, 8 }
-		};
-
-	FOR_ELEMS_REV(it, COORDINATES)
-	{
-		PathCoordinatesNode* node = allocate_path_coordinates_node(state);
-		node->coordinates   = *it;
-		node->next_node     = state->monster_path;
-		state->monster_path = node;
 	}
 
 	SDL_SetRelativeMouseMode(SDL_TRUE);
@@ -530,6 +541,183 @@ extern "C" PROTOTYPE_UPDATE(update)
 	state->flashlight_ray.xy  = dampen(state->flashlight_ray.xy, polar(state->lucia_angle + sinf(state->flashlight_keytime * TAU * 2.0f) * 0.03f), 16.0f, SECONDS_PER_UPDATE);
 	state->flashlight_ray.z   = sinf(state->flashlight_keytime * TAU) * 0.05f;
 	state->flashlight_ray     = normalize(state->flashlight_ray);
+
+	persist vi2 TEMP_OLD_CLOSEST = get_closest_open_path_coordinates(state, state->lucia_position.xy);
+
+	if (get_closest_open_path_coordinates(state, state->lucia_position.xy) != TEMP_OLD_CLOSEST)
+	{
+		TEMP_OLD_CLOSEST = get_closest_open_path_coordinates(state, state->lucia_position.xy);
+
+		for (PathCoordinatesNode* node = state->monster_path; node;)
+		{
+			node = deallocate_path_coordinates_node(state, node);
+		}
+
+		state->monster_path = 0;
+
+		struct Vertex
+		{
+			bool32 is_set;
+			f32    best_weight;
+			vi2    prev_coordinates;
+		};
+
+		struct QueueNode
+		{
+			f32        heuristic;
+			f32        total_weight;
+			vi2        prev_coordinates;
+			vi2        coordinates;
+			QueueNode* next_node;
+		};
+
+		Vertex     graph_vertices[MAP_DIM * 2][MAP_DIM] = {};
+		QueueNode* queue;
+
+		vi2 starting_coordinates = get_closest_open_path_coordinates(state, state->monster_sprite.position.xy);
+		vi2 ending_coordinates   = get_closest_open_path_coordinates(state, state->lucia_position.xy);
+
+		graph_vertices[starting_coordinates.y][starting_coordinates.x].is_set           = true;
+		graph_vertices[starting_coordinates.y][starting_coordinates.x].best_weight      = 0;
+		graph_vertices[starting_coordinates.y][starting_coordinates.x].prev_coordinates = { -1, -1 };
+
+		queue                   = memory_arena_push<QueueNode>(&state->transient_arena);
+		queue->heuristic        = path_distance_function(starting_coordinates, ending_coordinates);
+		queue->total_weight     = 0.0f;
+		queue->prev_coordinates = { -1, -1 };
+		queue->coordinates      = starting_coordinates;
+		queue->next_node        = 0;
+
+		while (queue && queue->coordinates != ending_coordinates)
+		{
+			QueueNode* head = queue;
+			queue = queue->next_node; // @TODO@ Fix leak.
+
+			struct ADJACENT { WallVoxel side; vi2 delta_coordinates; };
+			constexpr ADJACENT HORI[] =
+				{
+					{ WallVoxel::bottom, { -1, -1 } },
+					{ WallVoxel::bottom, {  0, -1 } },
+					{ WallVoxel::left  , { -1,  0 } },
+					{ WallVoxel::left  , {  1,  0 } },
+					{ WallVoxel::bottom, { -1,  1 } },
+					{ WallVoxel::bottom, {  0,  1 } }
+				};
+
+			constexpr ADJACENT VERT[] =
+				{
+					{ WallVoxel::bottom, { 0, -2 } },
+					{ WallVoxel::left  , { 0, -1 } },
+					{ WallVoxel::left  , { 1, -1 } },
+					{ WallVoxel::left  , { 0,  1 } },
+					{ WallVoxel::left  , { 1,  1 } },
+					{ WallVoxel::bottom, { 0,  2 } }
+				};
+
+			FOR_ELEMS(it, (head->coordinates.y % 2 == 0 ? VERT : HORI))
+			{
+				vi2 next_coordinates = head->coordinates + it->delta_coordinates;
+				next_coordinates.x = mod(next_coordinates.x, MAP_DIM    );
+				next_coordinates.y = mod(next_coordinates.y, MAP_DIM * 2);
+
+				if (next_coordinates == head->prev_coordinates || +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(next_coordinates)) & it->side))
+				{
+					continue;
+				}
+
+				if (head->coordinates.y % 2 == 0)
+				{
+					if (it->delta_coordinates.y < 0)
+					{
+						if
+						(
+							it->delta_coordinates != vi2 { 1, -1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates) + vi2 { 0, -1 }) & WallVoxel::back_slash   ) ||
+							it->delta_coordinates != vi2 { 0, -1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates) + vi2 { 0, -1 }) & WallVoxel::forward_slash)
+						)
+						{
+							continue;
+						}
+					}
+					else if
+					(
+						it->delta_coordinates != vi2 { 0, 1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates)) & WallVoxel::back_slash   ) ||
+						it->delta_coordinates != vi2 { 1, 1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates)) & WallVoxel::forward_slash)
+					)
+					{
+						continue;
+					}
+				}
+				else if (it->delta_coordinates.x < 0)
+				{
+					if
+					(
+						it->delta_coordinates != vi2 { -1,  1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates) + vi2 { -1, 0 }) & WallVoxel::back_slash   ) ||
+						it->delta_coordinates != vi2 { -1, -1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates) + vi2 { -1, 0 }) & WallVoxel::forward_slash)
+					)
+					{
+						continue;
+					}
+				}
+				else if
+				(
+					it->delta_coordinates != vi2 { 0, -1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates)) & WallVoxel::back_slash) ||
+					it->delta_coordinates != vi2 { 0,  1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates)) & WallVoxel::forward_slash)
+				)
+				{
+					continue;
+				}
+
+				f32     next_heuristic = path_distance_function(next_coordinates, ending_coordinates);
+				f32     next_weight    = head->total_weight + path_distance_function(head->coordinates, next_coordinates);
+				Vertex* next_vertex    = &graph_vertices[next_coordinates.y][next_coordinates.x];
+
+				if (!next_vertex->is_set || next_vertex->best_weight > next_weight)
+				{
+					next_vertex->is_set           = true;
+					next_vertex->best_weight      = next_weight;
+					next_vertex->prev_coordinates = head->coordinates;
+
+					QueueNode** post_node = &queue;
+					while (*post_node && (*post_node)->heuristic < next_heuristic)
+					{
+						post_node = &(*post_node)->next_node;
+					}
+					QueueNode* new_node = memory_arena_push<QueueNode>(&state->transient_arena);
+					new_node->heuristic        = next_heuristic;
+					new_node->total_weight     = next_weight;
+					new_node->prev_coordinates = head->coordinates;
+					new_node->coordinates      = next_coordinates;
+					new_node->next_node        = *post_node;
+					*post_node = new_node;
+				}
+			}
+
+		}
+
+		if (queue && queue->coordinates == ending_coordinates)
+		{
+			vi2 coordinates = ending_coordinates;
+			while (true)
+			{
+				PathCoordinatesNode* path_coordinates_node = allocate_path_coordinates_node(state);
+				path_coordinates_node->coordinates = coordinates;
+				path_coordinates_node->next_node   = state->monster_path;
+				state->monster_path = path_coordinates_node;
+
+				if (coordinates == starting_coordinates)
+				{
+					break;
+				}
+
+				coordinates = graph_vertices[coordinates.y][coordinates.x].prev_coordinates;
+			}
+		}
+		else
+		{
+			ASSERT(false);
+		}
+	}
+
 
 	return UpdateCode::resume;
 }
@@ -968,7 +1156,9 @@ extern "C" PROTOTYPE_RENDER(render)
 			state->view,
 			VIEW_DIM / 2.0f + conjugate(path_coordinates_to_position(node           ->coordinates) - cam_pos) * PIXELS_PER_METER - vf2 { 2.5f, 2.5f } / 4.0f,
 			VIEW_DIM / 2.0f + conjugate(path_coordinates_to_position(node->next_node->coordinates) - cam_pos) * PIXELS_PER_METER - vf2 { 2.5f, 2.5f } / 4.0f,
-			{ 0.6f, 0.1f, 0.9f }
+			abs(node->coordinates.x - node->next_node->coordinates.x) < 3 && abs(node->coordinates.y - node->next_node->coordinates.y) < 3
+				? vf3 { 0.6f, 0.1f, 0.9f }
+				: vf3 { 0.8f, 0.8f, 1.0f }
 		);
 	}
 
@@ -981,95 +1171,6 @@ extern "C" PROTOTYPE_RENDER(render)
 		VIEW_DIM / 2.0f + conjugate(state->lucia_position.xy - cam_pos + polar(state->lucia_angle) * 6.0f) * PIXELS_PER_METER - vf2 { 2.5f, 2.5f } / 4.0f,
 		{ 0.6f, 0.1f, 0.1f }
 	);
-
-	vi2 closest_coordinates = get_closest_open_path_coordinates(state, state->lucia_position.xy);
-
-	fill
-	(
-		state->view,
-		VIEW_DIM / 2.0f + conjugate(path_coordinates_to_position(closest_coordinates) - cam_pos) * PIXELS_PER_METER - vf2 { 10.0f, 10.0f } / 2.0f,
-		vf2 { 10.0f, 10.0f },
-		{ 0.75f, 0.1f, 0.0f }
-	);
-
-	struct ADJACENT { WallVoxel side; vi2 delta_coordinates; };
-	constexpr ADJACENT HORI[] =
-		{
-			{ WallVoxel::bottom, { -1, -1 } },
-			{ WallVoxel::bottom, {  0, -1 } },
-			{ WallVoxel::left  , { -1,  0 } },
-			{ WallVoxel::left  , {  1,  0 } },
-			{ WallVoxel::bottom, { -1,  1 } },
-			{ WallVoxel::bottom, {  0,  1 } }
-		};
-
-	constexpr ADJACENT VERT[] =
-		{
-			{ WallVoxel::bottom, { 0, -2 } },
-			{ WallVoxel::left  , { 0, -1 } },
-			{ WallVoxel::left  , { 1, -1 } },
-			{ WallVoxel::left  , { 0,  1 } },
-			{ WallVoxel::left  , { 1,  1 } },
-			{ WallVoxel::bottom, { 0,  2 } }
-		};
-
-	FOR_ELEMS(it, (closest_coordinates.y % 2 == 0 ? VERT : HORI))
-	{
-		if (+(*get_wall_voxel(state, path_coordinates_to_map_coordinates(closest_coordinates + it->delta_coordinates)) & it->side))
-		{
-			continue;
-		}
-
-		if (closest_coordinates.y % 2 == 0)
-		{
-			if (it->delta_coordinates.y < 0)
-			{
-				if
-				(
-					it->delta_coordinates != vi2 { 1, -1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(closest_coordinates) + vi2 { 0, -1 }) & WallVoxel::back_slash   ) ||
-					it->delta_coordinates != vi2 { 0, -1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(closest_coordinates) + vi2 { 0, -1 }) & WallVoxel::forward_slash)
-				)
-				{
-					continue;
-				}
-			}
-			else if
-			(
-				it->delta_coordinates != vi2 { 0, 1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(closest_coordinates)) & WallVoxel::back_slash   ) ||
-				it->delta_coordinates != vi2 { 1, 1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(closest_coordinates)) & WallVoxel::forward_slash)
-			)
-			{
-				continue;
-			}
-		}
-		else if (it->delta_coordinates.x < 0)
-		{
-			if
-			(
-				it->delta_coordinates != vi2 { -1,  1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(closest_coordinates) + vi2 { -1, 0 }) & WallVoxel::back_slash   ) ||
-				it->delta_coordinates != vi2 { -1, -1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(closest_coordinates) + vi2 { -1, 0 }) & WallVoxel::forward_slash)
-			)
-			{
-				continue;
-			}
-		}
-		else if
-		(
-			it->delta_coordinates != vi2 { 0, -1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(closest_coordinates)) & WallVoxel::back_slash) ||
-			it->delta_coordinates != vi2 { 0,  1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(closest_coordinates)) & WallVoxel::forward_slash)
-		)
-		{
-			continue;
-		}
-
-		fill
-		(
-			state->view,
-			VIEW_DIM / 2.0f + conjugate(path_coordinates_to_position(closest_coordinates + it->delta_coordinates) - cam_pos) * PIXELS_PER_METER - vf2 {  7.5f,  7.5f } / 2.0f,
-			vf2 {  7.5f,  7.5f },
-			{ 0.2f, 0.6f, 0.0f }
-		);
-	}
 	#endif
 
 	SDL_Rect dst = { VIEW_PADDING, VIEW_PADDING, WIN_DIM.x - VIEW_PADDING * 2, (WIN_DIM.x - VIEW_PADDING * 2) * VIEW_DIM.y / VIEW_DIM.x };
