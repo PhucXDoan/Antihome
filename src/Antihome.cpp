@@ -117,12 +117,14 @@ internal vf2 path_coordinates_to_position(vi2 coordinates)
 
 internal vi2 path_coordinates_to_map_coordinates(vi2 coordinates)
 {
-	return { coordinates.x, mod(coordinates.y, MAP_DIM * 2) / 2 };
+	return { mod(coordinates.x, MAP_DIM), mod(coordinates.y, MAP_DIM * 2) / 2 };
 }
 
 internal vi2 get_closest_open_path_coordinates(State* state, vf2 position)
 {
-	// @TODO@ Handle torus topology?
+	position.x = mod(position.x, MAP_DIM * WALL_SPACING);
+	position.y = mod(position.y, MAP_DIM * WALL_SPACING);
+
 	vi2 map_coordinates       = vxx(position / WALL_SPACING);
 	vf2 remainder_coordinates = position / WALL_SPACING - map_coordinates;
 
@@ -201,22 +203,51 @@ internal f32 path_distance_function(vi2 coordinates_a, vi2 coordinates_b)
 	coordinates_b.x = mod(coordinates_b.x, MAP_DIM    );
 	coordinates_b.y = mod(coordinates_b.y, MAP_DIM * 2);
 
-	vf2 position_a = { coordinates_a.x + (coordinates_a.y % 2 == 0 ? 0.5f : 0.0f), coordinates_a.y / 2.0f };
-	vf2 position_b = { coordinates_b.x + (coordinates_b.y % 2 == 0 ? 0.5f : 0.0f), coordinates_b.y / 2.0f };
+	vf2 ray =
+		{
+			coordinates_a.x - coordinates_b.x + (coordinates_a.y % 2 == 0 ? 0.5f : 0.0f) - (coordinates_b.y % 2 == 0 ? 0.5f : 0.0f),
+			(coordinates_a.y - coordinates_b.y) / 2.0f
+		};
 	return
-		MINIMUM
+		min
 		(
-			MINIMUM
+			min
 			(
-				norm(position_a - position_b + vi2 {       0, 0 }),
-				norm(position_a - position_b + vi2 { MAP_DIM, 0 })
+				norm(ray + vi2 {       0, 0 }),
+				norm(ray + vi2 { MAP_DIM, 0 })
 			),
-			MINIMUM
+			min
 			(
-				norm(position_a - position_b + vi2 {       0, MAP_DIM }),
-				norm(position_a - position_b + vi2 { MAP_DIM, MAP_DIM })
+				norm(ray + vi2 {       0, MAP_DIM }),
+				norm(ray + vi2 { MAP_DIM, MAP_DIM })
 			)
 		);
+}
+
+internal vf2 ray_to_closest(vf2 position, vf2 target)
+{
+	position.x = mod(position.x, MAP_DIM * WALL_SPACING);
+	position.y = mod(position.y, MAP_DIM * WALL_SPACING);
+	target.x   = mod(target  .x, MAP_DIM * WALL_SPACING);
+	target.y   = mod(target  .y, MAP_DIM * WALL_SPACING);
+
+	i32 closest_index = -1;
+	f32 best_distance = NAN;
+	vf2 best_ray      = { NAN, NAN };
+	FOR_RANGE(i, 9)
+	{
+		vf2 ray      = target - position + vi2 { i % 3 - 1, i / 3 - 1 } * MAP_DIM * WALL_SPACING;
+		f32 distance = norm(ray);
+
+		if (closest_index == -1 || best_distance > distance)
+		{
+			closest_index = i;
+			best_distance = distance;
+			best_ray      = ray;
+		}
+	}
+
+	return best_ray;
 }
 
 internal void write_pixel(Pixel* pixel, Pixel new_pixel)
@@ -512,15 +543,15 @@ extern "C" PROTOTYPE_UPDATE(update)
 	persist f32 TEMP;
 	TEMP += 1.5f * SECONDS_PER_UPDATE;
 
-	#if 0
+	#if 1
 	if (state->monster_path)
 	{
-		state->monster_sprite.position.xy = dampen(state->monster_sprite.position.xy, path_coordinates_to_position(state->monster_path->coordinates), 1.0f, SECONDS_PER_UPDATE);
-		if (norm_sq(state->monster_sprite.position.xy - path_coordinates_to_position(state->monster_path->coordinates)) < 1.0f)
+		state->monster_sprite.position.xy += ray_to_closest(state->monster_sprite.position.xy, path_coordinates_to_position(state->monster_path->coordinates)) * 1.0f * SECONDS_PER_UPDATE;
+		state->monster_sprite.position.x = mod(state->monster_sprite.position.x, MAP_DIM * WALL_SPACING);
+		state->monster_sprite.position.y = mod(state->monster_sprite.position.y, MAP_DIM * WALL_SPACING);
+		if (norm_sq(ray_to_closest(state->monster_sprite.position.xy, path_coordinates_to_position(state->monster_path->coordinates))) < WALL_SPACING / 2.0f)
 		{
-			PathCoordinatesNode* tail = state->monster_path->next_node;
-			deallocate_path_coordinates_node(state, state->monster_path);
-			state->monster_path = tail;
+			state->monster_path = deallocate_path_coordinates_node(state, state->monster_path);
 		}
 	}
 	#endif
@@ -543,17 +574,14 @@ extern "C" PROTOTYPE_UPDATE(update)
 	state->flashlight_ray     = normalize(state->flashlight_ray);
 
 	persist vi2 TEMP_OLD_CLOSEST = get_closest_open_path_coordinates(state, state->lucia_position.xy);
-
 	if (get_closest_open_path_coordinates(state, state->lucia_position.xy) != TEMP_OLD_CLOSEST)
 	{
 		TEMP_OLD_CLOSEST = get_closest_open_path_coordinates(state, state->lucia_position.xy);
 
-		for (PathCoordinatesNode* node = state->monster_path; node;)
+		while (state->monster_path)
 		{
-			node = deallocate_path_coordinates_node(state, node);
+			state->monster_path = deallocate_path_coordinates_node(state, state->monster_path);
 		}
-
-		state->monster_path = 0;
 
 		struct Vertex
 		{
@@ -717,7 +745,6 @@ extern "C" PROTOTYPE_UPDATE(update)
 			ASSERT(false);
 		}
 	}
-
 
 	return UpdateCode::resume;
 }
