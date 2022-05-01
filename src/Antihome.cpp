@@ -33,6 +33,7 @@ struct Sprite
 {
 	ImgRGBA* img;
 	vf3      position;
+	vf2      velocity;
 	vf2      normal;
 };
 
@@ -280,7 +281,7 @@ extern "C" PROTOTYPE_INITIALIZE(initialize)
 				vi2 walk = { start_walk_x, start_walk_y };
 				FOR_RANGE(64)
 				{
-					switch (static_cast<i32>(rng(&state->seed) * 2.0f))
+					switch (static_cast<i32>(rng(&state->seed) * 4.0f))
 					{
 						case 0:
 						{
@@ -546,19 +547,34 @@ extern "C" PROTOTYPE_UPDATE(update)
 		}
 		else
 		{
-			state->monster_sprite.position.xy += normalize(ray) * 4.0f * SECONDS_PER_UPDATE;
-			state->monster_sprite.position.x = mod(state->monster_sprite.position.x, MAP_DIM * WALL_SPACING);
-			state->monster_sprite.position.y = mod(state->monster_sprite.position.y, MAP_DIM * WALL_SPACING);
+			state->monster_sprite.velocity = dampen(state->monster_sprite.velocity, normalize(ray) * 3.0f, 4.0f, SECONDS_PER_UPDATE);
+		}
+	}
+	else
+	{
+		vf2 ray = ray_to_closest(state->monster_sprite.position.xy, state->lucia_position.xy);
+		if (norm(ray) > 1.0f)
+		{
+			state->monster_sprite.velocity = dampen(state->monster_sprite.velocity, normalize(ray) * 3.0f, 4.0f, SECONDS_PER_UPDATE);
+		}
+		else
+		{
+			state->monster_sprite.velocity = dampen(state->monster_sprite.velocity, { 0.0f, 0.0f }, 4.0f, SECONDS_PER_UPDATE);
 		}
 	}
 	#endif
 
-	state->monster_sprite.position.z = (cosf(TEMP * 2.0f) * 0.15f) + WALL_HEIGHT / 2.0f;
-	state->monster_sprite.normal = normalize(dampen(state->monster_sprite.normal, normalize(state->lucia_position.xy - state->monster_sprite.position.xy), 1.0f, SECONDS_PER_UPDATE));
+	state->monster_sprite.position.xy += state->monster_sprite.velocity * SECONDS_PER_UPDATE;
+	state->monster_sprite.position.x   = mod(state->monster_sprite.position.x, MAP_DIM * WALL_SPACING);
+	state->monster_sprite.position.y   = mod(state->monster_sprite.position.y, MAP_DIM * WALL_SPACING);
+	state->monster_sprite.position.z   = (cosf(TEMP * 2.0f) * 0.15f) + WALL_HEIGHT / 2.0f;
+	state->monster_sprite.normal       = normalize(dampen(state->monster_sprite.normal, normalize(state->lucia_position.xy - state->monster_sprite.position.xy), 1.0f, SECONDS_PER_UPDATE));
 
-	state->item_sprite.position.xy = { 1.0f, 5.0f };
-	state->item_sprite.position.z = (sinf(TEMP * 2.0f) * 0.15f) + WALL_HEIGHT / 2.0f;
-	state->item_sprite.normal = normalize(dampen(state->item_sprite.normal, normalize(state->lucia_position.xy - state->item_sprite.position.xy), 1.0f, SECONDS_PER_UPDATE));
+	state->item_sprite.position.xy += state->item_sprite.velocity * SECONDS_PER_UPDATE;
+	state->item_sprite.position.x   = mod(state->item_sprite.position.x, MAP_DIM * WALL_SPACING);
+	state->item_sprite.position.y   = mod(state->item_sprite.position.y, MAP_DIM * WALL_SPACING);
+	state->item_sprite.position.z   = (sinf(TEMP * 2.0f) * 0.15f) + WALL_HEIGHT / 2.0f;
+	state->item_sprite.normal       = normalize(dampen(state->item_sprite.normal, normalize(state->lucia_position.xy - state->item_sprite.position.xy), 1.0f, SECONDS_PER_UPDATE));
 
 	state->flashlight_keytime += 0.0025f + 0.05f * norm(state->lucia_velocity) * SECONDS_PER_UPDATE;
 	if (state->flashlight_keytime > 1.0f)
@@ -1072,7 +1088,7 @@ extern "C" PROTOTYPE_RENDER(render)
 	}
 	#endif
 
-	constexpr f32 PIXELS_PER_METER = 2.5f;
+	constexpr f32 PIXELS_PER_METER = 5.0f;
 
 	vf2 ray  = polar(state->lucia_angle);
 	vi2 step =
