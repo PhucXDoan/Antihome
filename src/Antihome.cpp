@@ -29,18 +29,27 @@ struct Pixel
 	f32 inv_depth;
 };
 
-struct Sprite
-{
-	ImgRGBA* img;
-	vf3      position;
-	vf2      velocity;
-	vf2      normal;
-};
-
 struct PathCoordinatesNode
 {
 	vi2                  coordinates;
 	PathCoordinatesNode* next_node;
+};
+
+enum_loose (ThingType, u32)
+{
+	monster,
+	battery,
+	paper,
+	hand,
+	CAPACITY
+};
+
+struct Thing
+{
+	ThingType type;
+	vf3       position;
+	vf2       velocity;
+	vf2       normal;
 };
 
 struct State
@@ -50,25 +59,34 @@ struct State
 	PathCoordinatesNode* available_path_coordinates_node;
 
 	u32                  seed;
+	f32                  time;
 	SDL_Surface*         view;
 	Pixel                frame_buffer[VIEW_DIM.x][VIEW_DIM.y];
+
+	WallVoxel            wall_voxels[MAP_DIM][MAP_DIM];
+	PathCoordinatesNode* monster_path;
+
 	vf2                  lucia_velocity;
 	vf3                  lucia_position;
 	f32                  lucia_angle_velocity;
 	f32                  lucia_angle;
 	f32                  lucia_fov;
 	f32                  lucia_head_bob_keytime;
+
 	vf3                  flashlight_ray;
 	f32                  flashlight_keytime;
-	WallVoxel            wall_voxels[MAP_DIM][MAP_DIM];
+	Thing*               hand_hovered_thing;
+
+	Thing                monster;
+	Thing                battery;
+	Thing                paper;
+	Thing                hand;
+
 	ImgRGB               wall;
 	ImgRGB               floor;
 	ImgRGB               ceiling;
-	ImgRGBA              monster_img;
-	Sprite               monster_sprite;
-	ImgRGBA              item_img;
-	Sprite               item_sprite;
-	PathCoordinatesNode* monster_path;
+	ImgRGBA              hand_img;
+	ImgRGBA              thing_imgs[ThingType::CAPACITY];
 };
 
 global constexpr struct { WallVoxel voxel; vf2 start; vf2 end; vf2 normal; } WALL_VOXEL_DATA[] =
@@ -267,11 +285,6 @@ extern "C" PROTOTYPE_INITIALIZE(initialize)
 	state->transient_arena.base = platform->memory          + sizeof(State) + state->long_term_arena.size;
 	state->transient_arena.used = 0;
 
-	state->lucia_position  = { 3.75f * WALL_SPACING, 1.5f * WALL_SPACING, LUCIA_HEIGHT };
-	state->lucia_fov       = TAU / 3.0f;
-
-	state->monster_sprite.position = { 2.5f * WALL_SPACING, 2.5f * WALL_SPACING, LUCIA_HEIGHT };
-
 	FOR_RANGE(start_walk_y, MAP_DIM)
 	{
 		FOR_RANGE(start_walk_x, MAP_DIM)
@@ -353,6 +366,23 @@ extern "C" PROTOTYPE_INITIALIZE(initialize)
 		}
 	}
 
+	state->lucia_position.xy = { 0.75f * WALL_SPACING, 0.5f * WALL_SPACING };
+	state->lucia_fov         = TAU / 3.0f;
+
+	state->monster.type     = ThingType::monster;
+	state->monster.position = { 2.5f * WALL_SPACING, 2.5f * WALL_SPACING };
+
+	state->battery.type        = ThingType::battery;
+	state->battery.position.xy = state->lucia_position.xy + vf2 { 0.5f * WALL_SPACING, 0.0f * WALL_SPACING };
+
+	state->paper.type        = ThingType::paper;
+	state->paper.position.xy = state->lucia_position.xy + vf2 { 0.5f * WALL_SPACING, 1.0f * WALL_SPACING };
+	state->paper.normal      = { 0.5f, -1.0f };
+
+	state->hand.type = ThingType::hand;
+
+	state->hand_hovered_thing = &state->paper;
+
 	SDL_SetRelativeMouseMode(SDL_TRUE);
 }
 
@@ -375,14 +405,14 @@ extern "C" PROTOTYPE_BOOT_UP(boot_up)
 			0xFF000000
 		);
 
-	state->wall        = init_img_rgb (DATA_DIR "wall.png");
-	state->floor       = init_img_rgb (DATA_DIR "floor.png");
-	state->ceiling     = init_img_rgb (DATA_DIR "ceiling.png");
-	state->monster_img = init_img_rgba(DATA_DIR "sprite.png");
-	state->item_img    = init_img_rgba(DATA_DIR "item.png");
+	state->wall    = init_img_rgb(DATA_DIR "wall.png");
+	state->floor   = init_img_rgb(DATA_DIR "floor.png");
+	state->ceiling = init_img_rgb(DATA_DIR "ceiling.png");
 
-	state->monster_sprite.img = &state->monster_img;
-	state->item_sprite.img    = &state->item_img;
+	state->thing_imgs[+ThingType::monster] = init_img_rgba(DATA_DIR "monster.png");
+	state->thing_imgs[+ThingType::battery] = init_img_rgba(DATA_DIR "battery.png");
+	state->thing_imgs[+ThingType::paper  ] = init_img_rgba(DATA_DIR "paper.png");
+	state->thing_imgs[+ThingType::hand   ] = init_img_rgba(DATA_DIR "hand.png");
 }
 
 extern "C" PROTOTYPE_BOOT_DOWN(boot_down)
@@ -390,11 +420,14 @@ extern "C" PROTOTYPE_BOOT_DOWN(boot_down)
 	ASSERT(sizeof(State) <= platform->memory_capacity);
 	State* state = reinterpret_cast<State*>(platform->memory);
 
-	deinit_img_rgba(&state->item_img);
-	deinit_img_rgba(&state->monster_img);
-	deinit_img_rgb (&state->ceiling);
-	deinit_img_rgb (&state->floor);
-	deinit_img_rgb (&state->wall);
+	deinit_img_rgb(&state->wall);
+	deinit_img_rgb(&state->floor);
+	deinit_img_rgb(&state->ceiling);
+
+	FOR_ELEMS(it, state->thing_imgs)
+	{
+		deinit_img_rgba(it);
+	}
 }
 
 extern "C" PROTOTYPE_UPDATE(update)
@@ -533,48 +566,46 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 	state->lucia_fov += platform->scroll * 0.1f;
 
-	// @TEMP@
-	persist f32 TEMP;
-	TEMP += 1.5f * SECONDS_PER_UPDATE;
-
-	#if 1
 	if (state->monster_path)
 	{
-		vf2 ray = ray_to_closest(state->monster_sprite.position.xy, path_coordinates_to_position(state->monster_path->coordinates));
+		vf2 ray = ray_to_closest(state->monster.position.xy, path_coordinates_to_position(state->monster_path->coordinates));
 		if (norm(ray) < WALL_SPACING / 2.0f)
 		{
 			state->monster_path = deallocate_path_coordinates_node(state, state->monster_path);
 		}
 		else
 		{
-			state->monster_sprite.velocity = dampen(state->monster_sprite.velocity, normalize(ray) * 3.0f, 4.0f, SECONDS_PER_UPDATE);
+			state->monster.velocity = dampen(state->monster.velocity, normalize(ray) * 3.0f, 4.0f, SECONDS_PER_UPDATE);
 		}
 	}
 	else
 	{
-		vf2 ray = ray_to_closest(state->monster_sprite.position.xy, state->lucia_position.xy);
-		if (norm(ray) > 1.0f)
+		vf2 ray = ray_to_closest(state->monster.position.xy, state->lucia_position.xy);
+		if (norm(ray) > 3.0f)
 		{
-			state->monster_sprite.velocity = dampen(state->monster_sprite.velocity, normalize(ray) * 3.0f, 4.0f, SECONDS_PER_UPDATE);
+			state->monster.velocity = dampen(state->monster.velocity, normalize(ray) * 3.0f, 4.0f, SECONDS_PER_UPDATE);
 		}
 		else
 		{
-			state->monster_sprite.velocity = dampen(state->monster_sprite.velocity, { 0.0f, 0.0f }, 4.0f, SECONDS_PER_UPDATE);
+			state->monster.velocity = dampen(state->monster.velocity, { 0.0f, 0.0f }, 4.0f, SECONDS_PER_UPDATE);
 		}
 	}
-	#endif
 
-	state->monster_sprite.position.xy += state->monster_sprite.velocity * SECONDS_PER_UPDATE;
-	state->monster_sprite.position.x   = mod(state->monster_sprite.position.x, MAP_DIM * WALL_SPACING);
-	state->monster_sprite.position.y   = mod(state->monster_sprite.position.y, MAP_DIM * WALL_SPACING);
-	state->monster_sprite.position.z   = (cosf(TEMP * 2.0f) * 0.15f) + WALL_HEIGHT / 2.0f;
-	state->monster_sprite.normal       = normalize(dampen(state->monster_sprite.normal, normalize(state->lucia_position.xy - state->monster_sprite.position.xy), 1.0f, SECONDS_PER_UPDATE));
+	// @TEMP@
+	persist f32 TEMP;
+	TEMP += 1.5f * SECONDS_PER_UPDATE;
 
-	state->item_sprite.position.xy += state->item_sprite.velocity * SECONDS_PER_UPDATE;
-	state->item_sprite.position.x   = mod(state->item_sprite.position.x, MAP_DIM * WALL_SPACING);
-	state->item_sprite.position.y   = mod(state->item_sprite.position.y, MAP_DIM * WALL_SPACING);
-	state->item_sprite.position.z   = (sinf(TEMP * 2.0f) * 0.15f) + WALL_HEIGHT / 2.0f;
-	state->item_sprite.normal       = normalize(dampen(state->item_sprite.normal, normalize(state->lucia_position.xy - state->item_sprite.position.xy), 1.0f, SECONDS_PER_UPDATE));
+	state->monster.position.xy += state->monster.velocity * SECONDS_PER_UPDATE;
+	state->monster.position.x   = mod(state->monster.position.x, MAP_DIM * WALL_SPACING);
+	state->monster.position.y   = mod(state->monster.position.y, MAP_DIM * WALL_SPACING);
+	state->monster.position.z   = cosf(TEMP * 2.0f) * 0.15f + WALL_HEIGHT / 2.0f;
+	state->monster.normal       = normalize(dampen(state->monster.normal, normalize(state->lucia_position.xy - state->monster.position.xy), 1.0f, SECONDS_PER_UPDATE));
+
+	state->battery.position.z = 1.0f + sinf(TEMP * 2.0f) * 0.1f;
+	state->battery.normal     = polar(TEMP);
+
+	state->paper.position.z = 1.0f + sinf(TEMP * 2.0f) * 0.1f;
+	state->paper.normal     = polar(TEMP);
 
 	state->flashlight_keytime += 0.0025f + 0.05f * norm(state->lucia_velocity) * SECONDS_PER_UPDATE;
 	if (state->flashlight_keytime > 1.0f)
@@ -591,7 +622,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 	{
 		TEMP_OLD_CLOSEST = get_closest_open_path_coordinates(state, state->lucia_position.xy);
 
-		vi2 starting_coordinates = get_closest_open_path_coordinates(state, state->monster_sprite.position.xy);
+		vi2 starting_coordinates = get_closest_open_path_coordinates(state, state->monster.position.xy);
 		vi2 ending_coordinates   = get_closest_open_path_coordinates(state, state->lucia_position.xy);
 
 		struct PathVertex
@@ -784,6 +815,15 @@ extern "C" PROTOTYPE_UPDATE(update)
 		}
 	}
 
+	if (state->hand_hovered_thing)
+	{
+		vf2 ray = ray_to_closest(state->hand_hovered_thing->position.xy, state->lucia_position.xy);
+
+		state->hand.position.xy = state->hand_hovered_thing->position.xy + ray / 2.0f;
+		state->hand.position.z  = lerp(state->hand_hovered_thing->position.z, state->lucia_position.z, 0.75f);
+		state->hand.normal      = normalize(ray) * 0.15f;
+	}
+
 	return UpdateCode::resume;
 }
 
@@ -958,20 +998,20 @@ extern "C" PROTOTYPE_RENDER(render)
 			}
 		}
 
-		struct SpriteNode
+		struct ThingNode
 		{
-			Sprite*     sprite;
-			f32         distance;
-			f32         portion;
-			SpriteNode* next_node;
+			Thing*     thing;
+			f32        distance;
+			f32        portion;
+			ThingNode* next_node;
 		};
 
-		SpriteNode* intersected_sprite_node = 0;
+		ThingNode* intersected_thing_node = 0;
 
-		Sprite* sprites[] = { &state->monster_sprite, &state->item_sprite };
-		FOR_ELEMS(it, sprites)
+		Thing* things[] = { &state->monster, &state->battery, &state->paper, &state->hand };
+		FOR_ELEMS(it, things)
 		{
-			Sprite* sprite = *it;
+			Thing* thing = *it;
 
 			FOR_RANGE(i, 0, 9)
 			{
@@ -985,20 +1025,20 @@ extern "C" PROTOTYPE_RENDER(render)
 						&portion,
 						state->lucia_position.xy,
 						ray_horizontal,
-						vi2 { i % 3 - 1, i / 3 - 1 } * MAP_DIM * WALL_SPACING + sprite->position.xy - rotate90(sprite->normal) / 2.0f,
-						vi2 { i % 3 - 1, i / 3 - 1 } * MAP_DIM * WALL_SPACING + sprite->position.xy + rotate90(sprite->normal) / 2.0f
+						vi2 { i % 3 - 1, i / 3 - 1 } * MAP_DIM * WALL_SPACING + thing->position.xy - rotate90(thing->normal) / 2.0f,
+						vi2 { i % 3 - 1, i / 3 - 1 } * MAP_DIM * WALL_SPACING + thing->position.xy + rotate90(thing->normal) / 2.0f
 					)
 					&& IN_RANGE(portion, 0.0f, 1.0f)
 				)
 				{
-					SpriteNode** post_node = &intersected_sprite_node;
+					ThingNode** post_node = &intersected_thing_node;
 					while (*post_node && (*post_node)->distance > distance)
 					{
 						post_node = &(*post_node)->next_node;
 					}
 
-					SpriteNode* new_node = memory_arena_push<SpriteNode>(&state->transient_arena);
-					new_node->sprite    = *it;
+					ThingNode* new_node = memory_arena_push<ThingNode>(&state->transient_arena);
+					new_node->thing     = *it;
 					new_node->distance  = distance;
 					new_node->portion   = portion;
 					new_node->next_node = *post_node;
@@ -1007,28 +1047,28 @@ extern "C" PROTOTYPE_RENDER(render)
 			}
 		}
 
-		for (SpriteNode* node = intersected_sprite_node; node; node = node->next_node)
+		for (ThingNode* node = intersected_thing_node; node; node = node->next_node)
 		{
-			i32 sprite_starting_y       = static_cast<i32>(VIEW_DIM.y / 2.0f + HORT_TO_VERT_K / state->lucia_fov * (node->sprite->position.z - 0.5f - state->lucia_position.z) / (node->distance + 0.1f));
-			i32 sprite_ending_y         = static_cast<i32>(VIEW_DIM.y / 2.0f + HORT_TO_VERT_K / state->lucia_fov * (node->sprite->position.z + 0.5f - state->lucia_position.z) / (node->distance + 0.1f));
-			i32 sprite_pixel_starting_y = MAXIMUM(0, sprite_starting_y);
-			i32 sprite_pixel_ending_y   = MINIMUM(sprite_ending_y, VIEW_DIM.y);
+			i32 thing_starting_y       = static_cast<i32>(VIEW_DIM.y / 2.0f + HORT_TO_VERT_K / state->lucia_fov * (node->thing->position.z - norm(node->thing->normal) / 2.0f - state->lucia_position.z) / (node->distance + 0.1f));
+			i32 thing_ending_y         = static_cast<i32>(VIEW_DIM.y / 2.0f + HORT_TO_VERT_K / state->lucia_fov * (node->thing->position.z + norm(node->thing->normal) / 2.0f - state->lucia_position.z) / (node->distance + 0.1f));
+			i32 thing_pixel_starting_y = MAXIMUM(0, thing_starting_y);
+			i32 thing_pixel_ending_y   = MINIMUM(thing_ending_y, VIEW_DIM.y);
 
-			FOR_RANGE(y, sprite_pixel_starting_y, sprite_pixel_ending_y)
+			FOR_RANGE(y, thing_pixel_starting_y, thing_pixel_ending_y)
 			{
-				vf4* sprite_pixel =
-					node->sprite->img->rgba
-						+ static_cast<i32>(node->portion * node->sprite->img->dim.x) * node->sprite->img->dim.y
-						+ static_cast<i32>(static_cast<f32>(y - sprite_starting_y) / (sprite_ending_y - sprite_starting_y) * node->sprite->img->dim.y);
+				vf4* thing_pixel =
+					state->thing_imgs[+node->thing->type].rgba
+						+ static_cast<i32>(node->portion * state->thing_imgs[+node->thing->type].dim.x) * state->thing_imgs[+node->thing->type].dim.y
+						+ static_cast<i32>(static_cast<f32>(y - thing_starting_y) / (thing_ending_y - thing_starting_y) * state->thing_imgs[+node->thing->type].dim.y);
 
-				if (sprite_pixel->w)
+				if (thing_pixel->w)
 				{
 					vf3 ray          = normalize({ ray_horizontal.x, ray_horizontal.y, (y - VIEW_DIM.y / 2.0f) * state->lucia_fov / HORT_TO_VERT_K });
 					f32 flashlight_k = powf(CLAMP(dot(ray, state->flashlight_ray), 0.0f, 1.0f), FLASHLIGHT_POW);
 					f32 k =
 						flashlight_k
 							* square(CLAMP(1.0f - node->distance / 32.0f, 0.0f, 1.0f))
-						+ fabsf(dot(ray, { node->sprite->normal.x, node->sprite->normal.y, 0.0f }))
+						+ fabsf(dot(ray, { node->thing->normal.x, node->thing->normal.y, 0.0f }))
 							* square(CLAMP(1.0f - node->distance / AMBIENT_LIGHT_RADIUS, 0.0f, 1.0f));
 
 					write_pixel
@@ -1038,8 +1078,8 @@ extern "C" PROTOTYPE_RENDER(render)
 							lerp
 							(
 								state->frame_buffer[x][y].color,
-								sprite_pixel->xyz * CLAMP(k, 0.0f, 1.0f),
-								sprite_pixel->w
+								thing_pixel->xyz * CLAMP(k, 0.0f, 1.0f),
+								thing_pixel->w
 							),
 							1.0f / node->distance
 						}
@@ -1229,7 +1269,7 @@ extern "C" PROTOTYPE_RENDER(render)
 		);
 	}
 
-	fill(state->view, VIEW_DIM / 2.0f + conjugate(state->monster_sprite.position.xy - cam_pos) * PIXELS_PER_METER - vf2 { 2.5f, 2.5f }, { 5.0f, 5.0f }, { 0.0f, 0.0f, 1.0f });
+	fill(state->view, VIEW_DIM / 2.0f + conjugate(state->monster.position.xy - cam_pos) * PIXELS_PER_METER - vf2 { 2.5f, 2.5f }, { 5.0f, 5.0f }, { 0.0f, 0.0f, 1.0f });
 	fill(state->view, VIEW_DIM / 2.0f + conjugate(state->lucia_position.xy - cam_pos) * PIXELS_PER_METER - vf2 { 2.5f, 2.5f } / 2.0f, { 2.5f, 2.5f }, { 1.0f, 0.0f, 0.0f });
 	draw_line
 	(
