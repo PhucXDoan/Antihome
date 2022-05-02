@@ -77,8 +77,24 @@ struct State
 
 	PathCoordinatesNode* monster_path;
 	Thing*               hand_hovered_thing;
-	i32                  things_count;
-	Thing                things_buffer[32];
+
+	i32 items_count;
+	union
+	{
+		struct
+		{
+			Thing monster;
+			Thing hand;
+		} unique;
+
+		struct
+		{
+			Thing PADDING_[sizeof(unique) / sizeof(Thing)];
+			Thing items_buffer[16];
+		};
+
+		Thing things_buffer[sizeof(unique) / sizeof(Thing) + ARRAY_CAPACITY(items_buffer)];
+	};
 
 	ImgRGB               wall;
 	ImgRGB               floor;
@@ -268,11 +284,11 @@ internal void write_pixel(Pixel* pixel, Pixel new_pixel)
 	}
 }
 
-internal Thing* allocate_thing(State* state)
+internal Thing* allocate_item(State* state)
 {
-	ASSERT(IN_RANGE(state->things_count, 0, ARRAY_CAPACITY(state->things_buffer)));
-	Thing* thing = &state->things_buffer[state->things_count++];
-	return thing;
+	ASSERT(IN_RANGE(state->items_count, 0, ARRAY_CAPACITY(state->items_buffer)));
+	Thing* item = &state->items_buffer[state->items_count++];
+	return item;
 }
 
 internal vf2 rng_open_position(State* state)
@@ -393,31 +409,28 @@ extern "C" PROTOTYPE_INITIALIZE(initialize)
 	state->lucia_fov         = TAU / 3.0f;
 
 	{
-		Thing* thing = allocate_thing(state);
-		*thing             = {};
-		thing->type        = ThingType::monster;
-		thing->position.xy = rng_open_position(state);
-		thing->normal      = { 1.0f, 0.0f };
+		state->unique.monster             = {};
+		state->unique.monster.type        = ThingType::monster;
+		state->unique.monster.position.xy = rng_open_position(state);
+		state->unique.monster.normal      = { 1.0f, 0.0f };
 	}
 	{
-		Thing* thing = allocate_thing(state);
-		*thing             = {};
-		thing->type        = ThingType::battery;
-		thing->position.xy = rng_open_position(state);
-		thing->normal      = { 1.0f, 0.0f };
+		state->unique.hand      = {};
+		state->unique.hand.type = ThingType::hand;
 	}
 	{
-		Thing* thing = allocate_thing(state);
-		*thing             = {};
-		thing->type        = ThingType::paper;
-		thing->position.xy = rng_open_position(state);
-		thing->normal      = { 1.0f, 0.0f };
+		Thing* item = allocate_item(state);
+		*item             = {};
+		item->type        = ThingType::battery;
+		item->position.xy = rng_open_position(state);
+		item->normal      = { 1.0f, 0.0f };
 	}
 	{
-		Thing* thing = allocate_thing(state);
-		*thing             = {};
-		thing->type        = ThingType::hand;
-		thing->position.xy = rng_open_position(state);
+		Thing* item = allocate_item(state);
+		*item             = {};
+		item->type        = ThingType::paper;
+		item->position.xy = rng_open_position(state);
+		item->normal      = { 1.0f, 0.0f };
 	}
 
 	SDL_SetRelativeMouseMode(SDL_TRUE);
@@ -607,242 +620,269 @@ extern "C" PROTOTYPE_UPDATE(update)
 	persist f32 TEMP;
 	TEMP += 1.5f * SECONDS_PER_UPDATE;
 
-	FOR_ELEMS(thing, state->things_buffer, state->things_count)
+	persist vi2 TEMP_OLD_CLOSEST = get_closest_open_path_coordinates(state, state->lucia_position.xy);
+	if (get_closest_open_path_coordinates(state, state->lucia_position.xy) != TEMP_OLD_CLOSEST)
+	{
+		TEMP_OLD_CLOSEST = get_closest_open_path_coordinates(state, state->lucia_position.xy);
+
+		vi2 starting_coordinates = get_closest_open_path_coordinates(state, state->unique.monster.position.xy);
+		vi2 ending_coordinates   = get_closest_open_path_coordinates(state, state->lucia_position.xy);
+
+		struct PathVertex
+		{
+			bool32 is_set;
+			f32    best_weight;
+			vi2    prev_coordinates;
+		};
+
+		struct PathQueueNode
+		{
+			f32            estimated_length;
+			vi2            prev_coordinates;
+			vi2            coordinates;
+			PathQueueNode* next_node;
+		};
+
+		PathVertex path_vertices[MAP_DIM * 2][MAP_DIM] = {};
+		path_vertices[starting_coordinates.y][starting_coordinates.x].is_set = true;
+
+		PathQueueNode* path_queue = memory_arena_push<PathQueueNode>(&state->transient_arena);
+		path_queue->estimated_length = path_distance_function(starting_coordinates, ending_coordinates);
+		path_queue->prev_coordinates = { -1, -1 };
+		path_queue->coordinates      = starting_coordinates;
+		path_queue->next_node        = 0;
+
+		PathQueueNode* available_path_queue_node = 0;
+
+		while (path_queue && path_queue->coordinates != ending_coordinates)
+		{
+			PathQueueNode* head = path_queue;
+			path_queue = path_queue->next_node;
+
+			struct ADJACENT { WallVoxel side; vi2 delta_coordinates; };
+			constexpr ADJACENT HORI[] =
+				{
+					{ WallVoxel::bottom, { -1, -1 } },
+					{ WallVoxel::bottom, {  0, -1 } },
+					{ WallVoxel::left  , { -1,  0 } },
+					{ WallVoxel::left  , {  1,  0 } },
+					{ WallVoxel::bottom, { -1,  1 } },
+					{ WallVoxel::bottom, {  0,  1 } }
+				};
+
+			constexpr ADJACENT VERT[] =
+				{
+					{ WallVoxel::bottom, { 0, -2 } },
+					{ WallVoxel::left  , { 0, -1 } },
+					{ WallVoxel::left  , { 1, -1 } },
+					{ WallVoxel::left  , { 0,  1 } },
+					{ WallVoxel::left  , { 1,  1 } },
+					{ WallVoxel::bottom, { 0,  2 } }
+				};
+
+			FOR_ELEMS(it, head->coordinates.y % 2 == 0 ? VERT : HORI)
+			{
+				vi2 next_coordinates =
+					{
+						mod(head->coordinates.x + it->delta_coordinates.x, MAP_DIM    ),
+						mod(head->coordinates.y + it->delta_coordinates.y, MAP_DIM * 2)
+					};
+
+				if (next_coordinates == head->prev_coordinates || +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(next_coordinates)) & it->side))
+				{
+					continue;
+				}
+
+				if (head->coordinates.y % 2 == 0)
+				{
+					if (it->delta_coordinates.y < 0)
+					{
+						if
+						(
+							it->delta_coordinates != vi2 { 1, -1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates) + vi2 { 0, -1 }) & WallVoxel::back_slash   ) ||
+							it->delta_coordinates != vi2 { 0, -1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates) + vi2 { 0, -1 }) & WallVoxel::forward_slash)
+						)
+						{
+							continue;
+						}
+					}
+					else if
+					(
+						it->delta_coordinates != vi2 { 0, 1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates)) & WallVoxel::back_slash   ) ||
+						it->delta_coordinates != vi2 { 1, 1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates)) & WallVoxel::forward_slash)
+					)
+					{
+						continue;
+					}
+				}
+				else if (it->delta_coordinates.x < 0)
+				{
+					if
+					(
+						it->delta_coordinates != vi2 { -1,  1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates) + vi2 { -1, 0 }) & WallVoxel::back_slash   ) ||
+						it->delta_coordinates != vi2 { -1, -1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates) + vi2 { -1, 0 }) & WallVoxel::forward_slash)
+					)
+					{
+						continue;
+					}
+				}
+				else if
+				(
+					it->delta_coordinates != vi2 { 0, -1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates)) & WallVoxel::back_slash   ) ||
+					it->delta_coordinates != vi2 { 0,  1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates)) & WallVoxel::forward_slash)
+				)
+				{
+					continue;
+				}
+
+				f32         next_weight = path_vertices[head->coordinates.y][head->coordinates.x].best_weight + path_distance_function(head->coordinates, next_coordinates);
+				PathVertex* next_vertex = &path_vertices[next_coordinates.y][next_coordinates.x];
+
+				if (!next_vertex->is_set || next_vertex->best_weight > next_weight)
+				{
+					next_vertex->is_set           = true;
+					next_vertex->best_weight      = next_weight;
+					next_vertex->prev_coordinates = head->coordinates;
+
+					PathQueueNode** repeated_node = &path_queue;
+
+					while (*repeated_node && (*repeated_node)->coordinates != next_coordinates)
+					{
+						repeated_node = &(*repeated_node)->next_node;
+					}
+
+					if (*repeated_node)
+					{
+						PathQueueNode* tail = (*repeated_node)->next_node;
+						(*repeated_node)->next_node = available_path_queue_node;
+						available_path_queue_node = *repeated_node;
+						*repeated_node = tail;
+					}
+
+					f32             next_estimated_length = next_weight + path_distance_function(next_coordinates, ending_coordinates);
+					PathQueueNode** post_node             = &path_queue;
+					while (*post_node && (*post_node)->estimated_length < next_estimated_length)
+					{
+						post_node = &(*post_node)->next_node;
+					}
+
+					PathQueueNode* new_node;
+					if (available_path_queue_node)
+					{
+						new_node                  = available_path_queue_node;
+						available_path_queue_node = available_path_queue_node->next_node;
+					}
+					else
+					{
+						new_node = memory_arena_push<PathQueueNode>(&state->transient_arena);
+					}
+
+					new_node->estimated_length = next_estimated_length;
+					new_node->prev_coordinates = head->coordinates;
+					new_node->coordinates      = next_coordinates;
+					new_node->next_node        = *post_node;
+					*post_node = new_node;
+				}
+			}
+
+			head->next_node = available_path_queue_node;
+			available_path_queue_node = head;
+		}
+
+		if (path_queue && path_queue->coordinates == ending_coordinates)
+		{
+			while (state->monster_path)
+			{
+				state->monster_path = deallocate_path_coordinates_node(state, state->monster_path);
+			}
+
+			vi2 coordinates = ending_coordinates;
+			while (true)
+			{
+				PathCoordinatesNode* path_coordinates_node = allocate_path_coordinates_node(state);
+				path_coordinates_node->coordinates = coordinates;
+				path_coordinates_node->next_node   = state->monster_path;
+				state->monster_path = path_coordinates_node;
+
+				if (coordinates == starting_coordinates)
+				{
+					break;
+				}
+
+				coordinates = path_vertices[coordinates.y][coordinates.x].prev_coordinates;
+			}
+		}
+		else
+		{
+			ASSERT(false);
+		}
+	}
+
+	if (state->monster_path)
+	{
+		vf2 ray = ray_to_closest(state->unique.monster.position.xy, path_coordinates_to_position(state->monster_path->coordinates));
+		if (norm(ray) < WALL_SPACING / 2.0f)
+		{
+			state->monster_path = deallocate_path_coordinates_node(state, state->monster_path);
+		}
+		else
+		{
+			state->unique.monster.velocity = dampen(state->unique.monster.velocity, normalize(ray) * 3.0f, 4.0f, SECONDS_PER_UPDATE);
+		}
+	}
+	else
+	{
+		vf2 ray = ray_to_closest(state->unique.monster.position.xy, state->lucia_position.xy);
+		if (norm(ray) > 4.0f)
+		{
+			state->unique.monster.velocity = dampen(state->unique.monster.velocity, normalize(ray) * 3.0f, 4.0f, SECONDS_PER_UPDATE);
+		}
+		else
+		{
+			state->unique.monster.velocity = dampen(state->unique.monster.velocity, { 0.0f, 0.0f }, 4.0f, SECONDS_PER_UPDATE);
+		}
+	}
+
+	state->unique.monster.position.xy += state->unique.monster.velocity * SECONDS_PER_UPDATE;
+	state->unique.monster.position.x   = mod(state->unique.monster.position.x, MAP_DIM * WALL_SPACING);
+	state->unique.monster.position.y   = mod(state->unique.monster.position.y, MAP_DIM * WALL_SPACING);
+	state->unique.monster.position.z   = cosf(TEMP * 2.0f) * 0.15f + WALL_HEIGHT / 2.0f;
+	state->unique.monster.normal       = normalize(dampen(state->unique.monster.normal, normalize(ray_to_closest(state->lucia_position.xy, state->unique.monster.position.xy)), 1.0f, SECONDS_PER_UPDATE));
+
+	state->hand_hovered_thing = 0;
+
+	f32 closest_distance = NAN;
+	FOR_ELEMS(item, state->items_buffer, state->items_count)
+	{
+		if (item->type == ThingType::battery || item->type == ThingType::paper)
+		{
+			f32 distance = norm(ray_to_closest(state->lucia_position.xy, item->position.xy));
+			if (!state->hand_hovered_thing && distance < 2.0f || closest_distance > distance)
+			{
+				state->hand_hovered_thing = item;
+				closest_distance          = distance;
+				break;
+			}
+		}
+	}
+
+	if (state->hand_hovered_thing)
+	{
+		vf2 ray = ray_to_closest(state->hand_hovered_thing->position.xy, state->lucia_position.xy);
+
+		state->unique.hand.position.xy = state->hand_hovered_thing->position.xy + ray / 2.0f;
+		state->unique.hand.position.z  = lerp(state->hand_hovered_thing->position.z, state->lucia_position.z, 0.75f);
+		state->unique.hand.normal      = normalize(ray) * 0.15f;
+	}
+	else
+	{
+		state->unique.hand.normal = { 0.0f, 0.0f };
+	}
+
+	FOR_ELEMS(thing, state->items_buffer, state->items_count)
 	{
 		switch (thing->type)
 		{
-			case ThingType::monster:
-			{
-				persist vi2 TEMP_OLD_CLOSEST = get_closest_open_path_coordinates(state, state->lucia_position.xy);
-				if (get_closest_open_path_coordinates(state, state->lucia_position.xy) != TEMP_OLD_CLOSEST)
-				{
-					TEMP_OLD_CLOSEST = get_closest_open_path_coordinates(state, state->lucia_position.xy);
-
-					vi2 starting_coordinates = get_closest_open_path_coordinates(state, thing->position.xy);
-					vi2 ending_coordinates   = get_closest_open_path_coordinates(state, state->lucia_position.xy);
-
-					struct PathVertex
-					{
-						bool32 is_set;
-						f32    best_weight;
-						vi2    prev_coordinates;
-					};
-
-					struct PathQueueNode
-					{
-						f32            estimated_length;
-						vi2            prev_coordinates;
-						vi2            coordinates;
-						PathQueueNode* next_node;
-					};
-
-					PathVertex path_vertices[MAP_DIM * 2][MAP_DIM] = {};
-					path_vertices[starting_coordinates.y][starting_coordinates.x].is_set = true;
-
-					PathQueueNode* path_queue = memory_arena_push<PathQueueNode>(&state->transient_arena);
-					path_queue->estimated_length = path_distance_function(starting_coordinates, ending_coordinates);
-					path_queue->prev_coordinates = { -1, -1 };
-					path_queue->coordinates      = starting_coordinates;
-					path_queue->next_node        = 0;
-
-					PathQueueNode* available_path_queue_node = 0;
-
-					while (path_queue && path_queue->coordinates != ending_coordinates)
-					{
-						PathQueueNode* head = path_queue;
-						path_queue = path_queue->next_node;
-
-						struct ADJACENT { WallVoxel side; vi2 delta_coordinates; };
-						constexpr ADJACENT HORI[] =
-							{
-								{ WallVoxel::bottom, { -1, -1 } },
-								{ WallVoxel::bottom, {  0, -1 } },
-								{ WallVoxel::left  , { -1,  0 } },
-								{ WallVoxel::left  , {  1,  0 } },
-								{ WallVoxel::bottom, { -1,  1 } },
-								{ WallVoxel::bottom, {  0,  1 } }
-							};
-
-						constexpr ADJACENT VERT[] =
-							{
-								{ WallVoxel::bottom, { 0, -2 } },
-								{ WallVoxel::left  , { 0, -1 } },
-								{ WallVoxel::left  , { 1, -1 } },
-								{ WallVoxel::left  , { 0,  1 } },
-								{ WallVoxel::left  , { 1,  1 } },
-								{ WallVoxel::bottom, { 0,  2 } }
-							};
-
-						FOR_ELEMS(it, head->coordinates.y % 2 == 0 ? VERT : HORI)
-						{
-							vi2 next_coordinates =
-								{
-									mod(head->coordinates.x + it->delta_coordinates.x, MAP_DIM    ),
-									mod(head->coordinates.y + it->delta_coordinates.y, MAP_DIM * 2)
-								};
-
-							if (next_coordinates == head->prev_coordinates || +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(next_coordinates)) & it->side))
-							{
-								continue;
-							}
-
-							if (head->coordinates.y % 2 == 0)
-							{
-								if (it->delta_coordinates.y < 0)
-								{
-									if
-									(
-										it->delta_coordinates != vi2 { 1, -1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates) + vi2 { 0, -1 }) & WallVoxel::back_slash   ) ||
-										it->delta_coordinates != vi2 { 0, -1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates) + vi2 { 0, -1 }) & WallVoxel::forward_slash)
-									)
-									{
-										continue;
-									}
-								}
-								else if
-								(
-									it->delta_coordinates != vi2 { 0, 1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates)) & WallVoxel::back_slash   ) ||
-									it->delta_coordinates != vi2 { 1, 1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates)) & WallVoxel::forward_slash)
-								)
-								{
-									continue;
-								}
-							}
-							else if (it->delta_coordinates.x < 0)
-							{
-								if
-								(
-									it->delta_coordinates != vi2 { -1,  1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates) + vi2 { -1, 0 }) & WallVoxel::back_slash   ) ||
-									it->delta_coordinates != vi2 { -1, -1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates) + vi2 { -1, 0 }) & WallVoxel::forward_slash)
-								)
-								{
-									continue;
-								}
-							}
-							else if
-							(
-								it->delta_coordinates != vi2 { 0, -1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates)) & WallVoxel::back_slash   ) ||
-								it->delta_coordinates != vi2 { 0,  1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates)) & WallVoxel::forward_slash)
-							)
-							{
-								continue;
-							}
-
-							f32         next_weight = path_vertices[head->coordinates.y][head->coordinates.x].best_weight + path_distance_function(head->coordinates, next_coordinates);
-							PathVertex* next_vertex = &path_vertices[next_coordinates.y][next_coordinates.x];
-
-							if (!next_vertex->is_set || next_vertex->best_weight > next_weight)
-							{
-								next_vertex->is_set           = true;
-								next_vertex->best_weight      = next_weight;
-								next_vertex->prev_coordinates = head->coordinates;
-
-								PathQueueNode** repeated_node = &path_queue;
-
-								while (*repeated_node && (*repeated_node)->coordinates != next_coordinates)
-								{
-									repeated_node = &(*repeated_node)->next_node;
-								}
-
-								if (*repeated_node)
-								{
-									PathQueueNode* tail = (*repeated_node)->next_node;
-									(*repeated_node)->next_node = available_path_queue_node;
-									available_path_queue_node = *repeated_node;
-									*repeated_node = tail;
-								}
-
-								f32             next_estimated_length = next_weight + path_distance_function(next_coordinates, ending_coordinates);
-								PathQueueNode** post_node             = &path_queue;
-								while (*post_node && (*post_node)->estimated_length < next_estimated_length)
-								{
-									post_node = &(*post_node)->next_node;
-								}
-
-								PathQueueNode* new_node;
-								if (available_path_queue_node)
-								{
-									new_node                  = available_path_queue_node;
-									available_path_queue_node = available_path_queue_node->next_node;
-								}
-								else
-								{
-									new_node = memory_arena_push<PathQueueNode>(&state->transient_arena);
-								}
-
-								new_node->estimated_length = next_estimated_length;
-								new_node->prev_coordinates = head->coordinates;
-								new_node->coordinates      = next_coordinates;
-								new_node->next_node        = *post_node;
-								*post_node = new_node;
-							}
-						}
-
-						head->next_node = available_path_queue_node;
-						available_path_queue_node = head;
-					}
-
-					if (path_queue && path_queue->coordinates == ending_coordinates)
-					{
-						while (state->monster_path)
-						{
-							state->monster_path = deallocate_path_coordinates_node(state, state->monster_path);
-						}
-
-						vi2 coordinates = ending_coordinates;
-						while (true)
-						{
-							PathCoordinatesNode* path_coordinates_node = allocate_path_coordinates_node(state);
-							path_coordinates_node->coordinates = coordinates;
-							path_coordinates_node->next_node   = state->monster_path;
-							state->monster_path = path_coordinates_node;
-
-							if (coordinates == starting_coordinates)
-							{
-								break;
-							}
-
-							coordinates = path_vertices[coordinates.y][coordinates.x].prev_coordinates;
-						}
-					}
-					else
-					{
-						ASSERT(false);
-					}
-				}
-
-				if (state->monster_path)
-				{
-					vf2 ray = ray_to_closest(thing->position.xy, path_coordinates_to_position(state->monster_path->coordinates));
-					if (norm(ray) < WALL_SPACING / 2.0f)
-					{
-						state->monster_path = deallocate_path_coordinates_node(state, state->monster_path);
-					}
-					else
-					{
-						thing->velocity = dampen(thing->velocity, normalize(ray) * 3.0f, 4.0f, SECONDS_PER_UPDATE);
-					}
-				}
-				else
-				{
-					vf2 ray = ray_to_closest(thing->position.xy, state->lucia_position.xy);
-					if (norm(ray) > 4.0f)
-					{
-						thing->velocity = dampen(thing->velocity, normalize(ray) * 3.0f, 4.0f, SECONDS_PER_UPDATE);
-					}
-					else
-					{
-						thing->velocity = dampen(thing->velocity, { 0.0f, 0.0f }, 4.0f, SECONDS_PER_UPDATE);
-					}
-				}
-
-				thing->position.xy += thing->velocity * SECONDS_PER_UPDATE;
-				thing->position.x   = mod(thing->position.x, MAP_DIM * WALL_SPACING);
-				thing->position.y   = mod(thing->position.y, MAP_DIM * WALL_SPACING);
-				thing->position.z   = cosf(TEMP * 2.0f) * 0.15f + WALL_HEIGHT / 2.0f;
-				thing->normal       = normalize(dampen(thing->normal, normalize(ray_to_closest(state->lucia_position.xy, thing->position.xy)), 1.0f, SECONDS_PER_UPDATE));
-			} break;
-
 			case ThingType::battery:
 			{
 				thing->position.z = 1.0f + sinf(TEMP * 2.0f) * 0.1f;
@@ -853,39 +893,6 @@ extern "C" PROTOTYPE_UPDATE(update)
 			{
 				thing->position.z = 1.0f + sinf(TEMP * 2.0f) * 0.1f;
 				thing->normal     = polar(TEMP);
-			} break;
-
-			case ThingType::hand:
-			{
-				state->hand_hovered_thing = 0;
-
-				f32 closest_distance = NAN;
-				FOR_ELEMS(item, state->things_buffer, state->things_count)
-				{
-					if (item->type == ThingType::battery || item->type == ThingType::paper)
-					{
-						f32 distance = norm(ray_to_closest(state->lucia_position.xy, item->position.xy));
-						if (!state->hand_hovered_thing && distance < 2.0f || closest_distance > distance)
-						{
-							state->hand_hovered_thing = item;
-							closest_distance          = distance;
-							break;
-						}
-					}
-				}
-
-				if (state->hand_hovered_thing)
-				{
-					vf2 ray = ray_to_closest(state->hand_hovered_thing->position.xy, state->lucia_position.xy);
-
-					thing->position.xy = state->hand_hovered_thing->position.xy + ray / 2.0f;
-					thing->position.z  = lerp(state->hand_hovered_thing->position.z, state->lucia_position.z, 0.75f);
-					thing->normal      = normalize(ray) * 0.15f;
-				}
-				else
-				{
-					thing->normal = { 0.0f, 0.0f };
-				}
 			} break;
 		}
 	}
@@ -1084,7 +1091,7 @@ extern "C" PROTOTYPE_RENDER(render)
 
 		ThingNode* intersected_thing_node = 0;
 
-		FOR_ELEMS(thing, state->things_buffer, state->things_count)
+		FOR_ELEMS(thing, state->things_buffer, sizeof(state->unique) / sizeof(Thing) + state->items_count)
 		{
 			FOR_RANGE(i, 0, 9)
 			{
