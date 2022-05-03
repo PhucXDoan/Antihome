@@ -104,6 +104,7 @@ struct State
 		f32                  lucia_head_bob_keytime;
 
 		PathCoordinatesNode* monster_path;
+		vi2                  monster_path_goal;
 		Thing*               hand_hovered_item;
 
 		i32 items_count;
@@ -546,19 +547,14 @@ extern "C" PROTOTYPE_UPDATE(update)
 					}
 				}
 
-				state->game.lucia_position = { 0.75f * WALL_SPACING, 0.5f * WALL_SPACING, LUCIA_HEIGHT };
-				state->game.lucia_fov      = TAU / 3.0f;
+				state->game.lucia_position.xy = rng_open_position(state);
+				state->game.lucia_position.z  = LUCIA_HEIGHT;
+				state->game.lucia_fov         = TAU / 3.0f;
 
-				{
-					state->game.unique.monster             = {};
-					state->game.unique.monster.type        = ThingType::monster;
-					state->game.unique.monster.position.xy = rng_open_position(state);
-					state->game.unique.monster.normal      = { 1.0f, 0.0f };
-				}
-				{
-					state->game.unique.hand      = {};
-					state->game.unique.hand.type = ThingType::hand;
-				}
+				state->game.unique.monster.type        = ThingType::monster;
+				state->game.unique.monster.position.xy = rng_open_position(state);
+
+				state->game.unique.hand.type = ThingType::hand;
 
 				FOR_RANGE(8)
 				{
@@ -566,6 +562,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 					*item             = {};
 					item->type        = static_cast<ThingType>(rng(&state->seed, static_cast<i32>(ThingType::battery), static_cast<i32>(ThingType::CAPACITY)));
 					item->position.xy = rng_open_position(state);
+					item->position.z  = 1.0f + sinf(state->time * 3.0f) * 0.1f;
 					item->normal      = { 1.0f, 0.0f };
 				}
 
@@ -587,43 +584,21 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 			state->game.lucia_angle_velocity -= platform->cursor_delta.x * 0.01f / SECONDS_PER_UPDATE;
 			state->game.lucia_angle_velocity *= 0.4f;
-			state->game.lucia_angle          += state->game.lucia_angle_velocity * SECONDS_PER_UPDATE;
-			if (state->game.lucia_angle < 0.0f)
-			{
-				state->game.lucia_angle += TAU;
-			}
-			else if (state->game.lucia_angle >= TAU)
-			{
-				state->game.lucia_angle -= TAU;
-			}
+			state->game.lucia_angle           = mod(state->game.lucia_angle + state->game.lucia_angle_velocity * SECONDS_PER_UPDATE, TAU);
 
-			vf2 lucia_move = { 0.0f, 0.0f };
-			if (HOLDING(Input::s))
+			vf2 wasd = { 0.0f, 0.0f };
+			if (HOLDING(Input::s)) { wasd.x -= 1.0f; }
+			if (HOLDING(Input::w)) { wasd.x += 1.0f; }
+			if (HOLDING(Input::d)) { wasd.y -= 1.0f; }
+			if (HOLDING(Input::a)) { wasd.y += 1.0f; }
+			if (+wasd)
 			{
-				lucia_move.x -= 1.0f;
-			}
-			if (HOLDING(Input::w))
-			{
-				lucia_move.x += 1.0f;
-			}
-			if (HOLDING(Input::d))
-			{
-				lucia_move.y -= 1.0f;
-			}
-			if (HOLDING(Input::a))
-			{
-				lucia_move.y += 1.0f;
-			}
-
-			if (+lucia_move)
-			{
-				state->game.lucia_velocity += rotate(normalize(lucia_move), state->game.lucia_angle) * 2.0f;
+				state->game.lucia_velocity += rotate(normalize(wasd), state->game.lucia_angle) * 2.0f;
 			}
 
 			state->game.lucia_velocity *= HOLDING(Input::shift) ? 0.75f : 0.6f;
 
 			vf2 displacement = state->game.lucia_velocity * SECONDS_PER_UPDATE;
-
 			FOR_RANGE(4)
 			{
 				Intersection closest_intersection;
@@ -658,10 +633,15 @@ extern "C" PROTOTYPE_UPDATE(update)
 					{
 						if (+(*get_wall_voxel(state, coordinates) & voxel_data->voxel))
 						{
-							vf2 start = (coordinates + voxel_data->start) * WALL_SPACING;
-							vf2 end   = (coordinates + voxel_data->end  ) * WALL_SPACING;
-
-							Intersection intersection = intersect_thick_line_segment(state->game.lucia_position.xy, displacement, start, end, WALL_THICKNESS);
+							Intersection intersection =
+								intersect_thick_line_segment
+								(
+									state->game.lucia_position.xy,
+									displacement,
+									(coordinates + voxel_data->start) * WALL_SPACING,
+									(coordinates + voxel_data->end  ) * WALL_SPACING,
+									WALL_THICKNESS
+								);
 
 							if
 							(
@@ -696,33 +676,27 @@ extern "C" PROTOTYPE_UPDATE(update)
 				{
 					break;
 				}
-				else
-				{
-					state->game.lucia_position.xy = closest_intersection.position;
-					displacement             = dot(state->game.lucia_position.xy + displacement - closest_intersection.position, { -closest_intersection.normal.y, closest_intersection.normal.x }) * vf2 { -closest_intersection.normal.y, closest_intersection.normal.x };
-				}
+
+				state->game.lucia_position.xy = closest_intersection.position;
+				displacement = dot(state->game.lucia_position.xy + displacement - closest_intersection.position, rotate90(closest_intersection.normal)) * rotate90(closest_intersection.normal);
 			}
 			state->game.lucia_position.xy += displacement;
+			state->game.lucia_position.x   = mod(state->game.lucia_position.x, MAP_DIM * WALL_SPACING);
+			state->game.lucia_position.y   = mod(state->game.lucia_position.y, MAP_DIM * WALL_SPACING);
 			state->game.lucia_position.z   = LUCIA_HEIGHT + 0.1f * (cosf(state->game.lucia_head_bob_keytime * TAU) - 1.0f);
 
-			state->game.lucia_position.x = mod(state->game.lucia_position.x, MAP_DIM * WALL_SPACING);
-			state->game.lucia_position.y = mod(state->game.lucia_position.y, MAP_DIM * WALL_SPACING);
-
-			state->game.lucia_head_bob_keytime += 0.001f + 0.35f * norm(state->game.lucia_velocity) * SECONDS_PER_UPDATE;
-			if (state->game.lucia_head_bob_keytime > 1.0f)
-			{
-				state->game.lucia_head_bob_keytime -= 1.0f;
-			}
+			state->game.lucia_head_bob_keytime = mod(state->game.lucia_head_bob_keytime + 0.001f + 0.35f * norm(state->game.lucia_velocity) * SECONDS_PER_UPDATE, 1.0f);
 
 			state->game.lucia_fov += platform->scroll * 0.1f;
 
-			persist vi2 TEMP_OLD_CLOSEST = get_closest_open_path_coordinates(state, state->game.lucia_position.xy);
-			if (get_closest_open_path_coordinates(state, state->game.lucia_position.xy) != TEMP_OLD_CLOSEST)
+			vi2 current_lucia_coordinates = get_closest_open_path_coordinates(state, state->game.lucia_position.xy);
+			if
+			(
+				!state->game.monster_path && norm(ray_to_closest(state->game.unique.monster.position.xy, state->game.lucia_position.xy)) > 2.0f
+				|| state->game.monster_path && current_lucia_coordinates != state->game.monster_path_goal)
 			{
-				TEMP_OLD_CLOSEST = get_closest_open_path_coordinates(state, state->game.lucia_position.xy);
-
 				vi2 starting_coordinates = get_closest_open_path_coordinates(state, state->game.unique.monster.position.xy);
-				vi2 ending_coordinates   = get_closest_open_path_coordinates(state, state->game.lucia_position.xy);
+				state->game.monster_path_goal = current_lucia_coordinates;
 
 				struct PathVertex
 				{
@@ -743,14 +717,14 @@ extern "C" PROTOTYPE_UPDATE(update)
 				path_vertices[starting_coordinates.y][starting_coordinates.x].is_set = true;
 
 				PathQueueNode* path_queue = memory_arena_push<PathQueueNode>(&state->transient_arena);
-				path_queue->estimated_length = path_distance_function(starting_coordinates, ending_coordinates);
+				path_queue->estimated_length = path_distance_function(starting_coordinates, state->game.monster_path_goal);
 				path_queue->prev_coordinates = { -1, -1 };
 				path_queue->coordinates      = starting_coordinates;
 				path_queue->next_node        = 0;
 
 				PathQueueNode* available_path_queue_node = 0;
 
-				while (path_queue && path_queue->coordinates != ending_coordinates)
+				while (path_queue && path_queue->coordinates != state->game.monster_path_goal)
 				{
 					PathQueueNode* head = path_queue;
 					path_queue = path_queue->next_node;
@@ -855,7 +829,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 								*repeated_node = tail;
 							}
 
-							f32             next_estimated_length = next_weight + path_distance_function(next_coordinates, ending_coordinates);
+							f32             next_estimated_length = next_weight + path_distance_function(next_coordinates, state->game.monster_path_goal);
 							PathQueueNode** post_node             = &path_queue;
 							while (*post_node && (*post_node)->estimated_length < next_estimated_length)
 							{
@@ -885,14 +859,14 @@ extern "C" PROTOTYPE_UPDATE(update)
 					available_path_queue_node = head;
 				}
 
-				if (path_queue && path_queue->coordinates == ending_coordinates)
+				if (path_queue && path_queue->coordinates == state->game.monster_path_goal)
 				{
 					while (state->game.monster_path)
 					{
 						state->game.monster_path = deallocate_path_coordinates_node(state, state->game.monster_path);
 					}
 
-					vi2 coordinates = ending_coordinates;
+					vi2 coordinates = state->game.monster_path_goal;
 					while (true)
 					{
 						PathCoordinatesNode* path_coordinates_node = allocate_path_coordinates_node(state);
@@ -912,6 +886,8 @@ extern "C" PROTOTYPE_UPDATE(update)
 				{
 					ASSERT(false);
 				}
+
+				ASSERT(get_closest_open_path_coordinates(state, state->game.lucia_position.xy) == state->game.monster_path_goal);
 			}
 
 			if (state->game.monster_path)
@@ -938,6 +914,16 @@ extern "C" PROTOTYPE_UPDATE(update)
 					state->game.unique.monster.velocity = dampen(state->game.unique.monster.velocity, { 0.0f, 0.0f }, 4.0f, SECONDS_PER_UPDATE);
 				}
 			}
+
+			state->game.flashlight_keytime += 0.0025f + 0.05f * norm(state->game.lucia_velocity) * SECONDS_PER_UPDATE;
+			if (state->game.flashlight_keytime > 1.0f)
+			{
+				state->game.flashlight_keytime -= 1.0f;
+			}
+
+			state->game.flashlight_ray.xy  = dampen(state->game.flashlight_ray.xy, polar(state->game.lucia_angle + sinf(state->game.flashlight_keytime * TAU * 2.0f) * 0.03f), 16.0f, SECONDS_PER_UPDATE);
+			state->game.flashlight_ray.z   = sinf(state->game.flashlight_keytime * TAU) * 0.05f;
+			state->game.flashlight_ray     = normalize(state->game.flashlight_ray);
 
 			state->game.unique.monster.position.xy += state->game.unique.monster.velocity * SECONDS_PER_UPDATE;
 			state->game.unique.monster.position.x   = mod(state->game.unique.monster.position.x, MAP_DIM * WALL_SPACING);
@@ -984,29 +970,11 @@ extern "C" PROTOTYPE_UPDATE(update)
 				state->game.unique.hand.normal = { 0.0f, 0.0f };
 			}
 
-			FOR_ELEMS(thing, state->game.items_buffer, state->game.items_count)
+			FOR_ELEMS(item, state->game.items_buffer, state->game.items_count)
 			{
-				switch (thing->type)
-				{
-					case ThingType::battery:
-					case ThingType::paper:
-					case ThingType::flashlight:
-					{
-						thing->position.z = 1.0f + sinf(state->time * 3.0f) * 0.1f;
-						thing->normal     = polar(state->time * 1.5f);
-					} break;
-				}
+				item->position.z = 1.0f + sinf(state->time * 3.0f) * 0.1f;
+				item->normal     = polar(state->time * 1.5f);
 			}
-
-			state->game.flashlight_keytime += 0.0025f + 0.05f * norm(state->game.lucia_velocity) * SECONDS_PER_UPDATE;
-			if (state->game.flashlight_keytime > 1.0f)
-			{
-				state->game.flashlight_keytime -= 1.0f;
-			}
-
-			state->game.flashlight_ray.xy  = dampen(state->game.flashlight_ray.xy, polar(state->game.lucia_angle + sinf(state->game.flashlight_keytime * TAU * 2.0f) * 0.03f), 16.0f, SECONDS_PER_UPDATE);
-			state->game.flashlight_ray.z   = sinf(state->game.flashlight_keytime * TAU) * 0.05f;
-			state->game.flashlight_ray     = normalize(state->game.flashlight_ray);
 
 			if (state->game.inventory_count)
 			{
