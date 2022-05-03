@@ -7,7 +7,9 @@
 #include "platform.h"
 #include "utilities.cpp"
 
-global constexpr vi2 VIEW_DIM       = { 350, 175 };
+global constexpr i32 VIEW_PADDING   = 10;
+global constexpr vi2 VIEW_DIM       = vi2 { 2, 1 } * 175;
+global constexpr vi2 HUD_DIM        = vi2 { WIN_DIM.x - VIEW_PADDING * 2, WIN_DIM.y + (VIEW_PADDING * 2 - WIN_DIM.x) * VIEW_DIM.y / VIEW_DIM.x - VIEW_PADDING * 3 } / 2;
 global constexpr f32 HORT_TO_VERT_K = 0.927295218f * VIEW_DIM.x;
 global constexpr f32 WALL_HEIGHT    = 2.7432f;
 global constexpr f32 WALL_THICKNESS = 0.25f;
@@ -38,9 +40,12 @@ struct PathCoordinatesNode
 enum_loose (ThingType, u32)
 {
 	monster,
+	hand,
+
 	battery,
 	paper,
-	hand,
+	flashlight,
+
 	CAPACITY
 };
 
@@ -61,6 +66,7 @@ struct State
 	u32                  seed;
 	f32                  time;
 	SDL_Surface*         view;
+	SDL_Surface*         hud;
 	Pixel                frame_buffer[VIEW_DIM.x][VIEW_DIM.y];
 
 	WallVoxel            wall_voxels[MAP_DIM][MAP_DIM];
@@ -434,7 +440,7 @@ extern "C" PROTOTYPE_INITIALIZE(initialize)
 	{
 		Thing* item = allocate_item(state);
 		*item             = {};
-		item->type        = rng(&state->seed) < 0.5f ? ThingType::battery : ThingType::paper;
+		item->type        = static_cast<ThingType>(rng(&state->seed, static_cast<i32>(ThingType::battery), static_cast<i32>(ThingType::CAPACITY)));
 		item->position.xy = rng_open_position(state);
 		item->normal      = { 1.0f, 0.0f };
 	}
@@ -461,14 +467,28 @@ extern "C" PROTOTYPE_BOOT_UP(boot_up)
 			0xFF000000
 		);
 
+	state->hud =
+		SDL_CreateRGBSurface
+		(
+			0,
+			HUD_DIM.x,
+			HUD_DIM.y,
+			32,
+			0x000000FF,
+			0x0000FF00,
+			0x00FF0000,
+			0xFF000000
+		);
+
 	state->wall    = init_img_rgb(DATA_DIR "wall.png");
 	state->floor   = init_img_rgb(DATA_DIR "floor.png");
 	state->ceiling = init_img_rgb(DATA_DIR "ceiling.png");
 
-	state->thing_imgs[+ThingType::monster] = init_img_rgba(DATA_DIR "monster.png");
-	state->thing_imgs[+ThingType::battery] = init_img_rgba(DATA_DIR "battery.png");
-	state->thing_imgs[+ThingType::paper  ] = init_img_rgba(DATA_DIR "paper.png");
-	state->thing_imgs[+ThingType::hand   ] = init_img_rgba(DATA_DIR "hand.png");
+	state->thing_imgs[+ThingType::monster   ] = init_img_rgba(DATA_DIR "monster.png");
+	state->thing_imgs[+ThingType::hand      ] = init_img_rgba(DATA_DIR "hand.png");
+	state->thing_imgs[+ThingType::battery   ] = init_img_rgba(DATA_DIR "battery.png");
+	state->thing_imgs[+ThingType::paper     ] = init_img_rgba(DATA_DIR "paper.png");
+	state->thing_imgs[+ThingType::flashlight] = init_img_rgba(DATA_DIR "flashlight.png");
 }
 
 extern "C" PROTOTYPE_BOOT_DOWN(boot_down)
@@ -484,6 +504,9 @@ extern "C" PROTOTYPE_BOOT_DOWN(boot_down)
 	{
 		deinit_img_rgba(it);
 	}
+
+	SDL_FreeSurface(state->view);
+	SDL_FreeSurface(state->hud);
 }
 
 extern "C" PROTOTYPE_UPDATE(update)
@@ -860,7 +883,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 	f32 closest_distance = NAN;
 	FOR_ELEMS(item, state->items_buffer, state->items_count)
 	{
-		if (item->type == ThingType::battery || item->type == ThingType::paper)
+		if (item->type == ThingType::battery || item->type == ThingType::paper || item->type == ThingType::flashlight)
 		{
 			f32 distance = norm(ray_to_closest(state->lucia_position.xy, item->position.xy));
 			if (!state->hand_hovered_item && distance < 2.0f || closest_distance > distance)
@@ -899,12 +922,8 @@ extern "C" PROTOTYPE_UPDATE(update)
 		switch (thing->type)
 		{
 			case ThingType::battery:
-			{
-				thing->position.z = 1.0f + sinf(TEMP * 2.0f) * 0.1f;
-				thing->normal     = polar(TEMP);
-			} break;
-
 			case ThingType::paper:
+			case ThingType::flashlight:
 			{
 				thing->position.z = 1.0f + sinf(TEMP * 2.0f) * 0.1f;
 				thing->normal     = polar(TEMP);
@@ -944,9 +963,8 @@ extern "C" PROTOTYPE_RENDER(render)
 	State* state = reinterpret_cast<State*>(platform->memory);
 	state->transient_arena.used = 0;
 
-	constexpr i32 VIEW_PADDING = 10;
-
 	fill(platform->surface, { 0.05f, 0.10f, 0.15f });
+	fill(state->hud, { 0.0f, 0.0f, 0.0f });
 	memset(state->frame_buffer, 0, sizeof(state->frame_buffer));
 
 	#if 1
@@ -1215,34 +1233,38 @@ extern "C" PROTOTYPE_RENDER(render)
 		}
 	}
 
-	vi2 inventory_box_position   = { 50, WIN_DIM.y - 160 };
-	vi2 inventory_box_dimensions = { 125, 125 };
-	fill(platform->surface, vxx(inventory_box_position), vxx(inventory_box_dimensions), { 0.25f, 0.25f, 0.25f });
+	fill(state->hud, { 0.0f, 0.0f }, vxx(vi2 { HUD_DIM.y, HUD_DIM.y }), { 0.15f, 0.15f, 0.15f });
 
 	if (state->inventory_count)
 	{
 		ASSERT(IN_RANGE(state->inventory_index, 0, state->inventory_count));
 
-		FOR_RANGE(x, inventory_box_dimensions.x)
+		FOR_RANGE(x, HUD_DIM.y)
 		{
-			FOR_RANGE(y, inventory_box_dimensions.y)
+			FOR_RANGE(y, HUD_DIM.y)
 			{
-				u32*     pixel = reinterpret_cast<u32*>(platform->surface->pixels) + (inventory_box_position.y + y) * platform->surface->w + inventory_box_position.x + x;
+				u32*     pixel = reinterpret_cast<u32*>(state->hud->pixels) + y * state->hud->w + x;
 				ImgRGBA* img   = &state->thing_imgs[+state->inventory_buffer[state->inventory_index]];
 				vf4*     rgba  =
 					img->rgba
-						+ static_cast<i32>(static_cast<f32>(x) / inventory_box_dimensions.x * img->dim.x) * img->dim.y
-						+ static_cast<i32>(static_cast<f32>(inventory_box_dimensions.y - 1 - y) / inventory_box_dimensions.y * img->dim.y);
+						+ static_cast<i32>(static_cast<f32>(x) / HUD_DIM.y * img->dim.x) * img->dim.y
+						+ static_cast<i32>((1.0f - (1.0f + y) / HUD_DIM.y) * img->dim.y);
 
 				*pixel =
 					to_pixel
 					(
-						platform->surface,
-						lerp(to_color(platform->surface, *pixel), rgba->xyz, rgba->w)
+						state->hud,
+						lerp(to_color(state->hud, *pixel), rgba->xyz, rgba->w)
 					);
 			}
 		}
 	}
+
+	SDL_Rect dst = { VIEW_PADDING, VIEW_PADDING, WIN_DIM.x - VIEW_PADDING * 2, (WIN_DIM.x - VIEW_PADDING * 2) * VIEW_DIM.y / VIEW_DIM.x };
+	SDL_BlitScaled(state->view, 0, platform->surface, &dst);
+
+	dst = { dst.x, dst.y + dst.h + VIEW_PADDING, dst.w, WIN_DIM.y - dst.y - dst.h - VIEW_PADDING * 2 };
+	SDL_BlitScaled(state->hud, 0, platform->surface, &dst);
 
 	#else
 	fill(state->view, { 1.0f, 1.0f, 1.0f });
@@ -1419,8 +1441,8 @@ extern "C" PROTOTYPE_RENDER(render)
 		VIEW_DIM / 2.0f + conjugate(state->lucia_position.xy - cam_pos + polar(state->lucia_angle) * 6.0f) * PIXELS_PER_METER - vf2 { 2.5f, 2.5f } / 4.0f,
 		{ 0.6f, 0.1f, 0.1f }
 	);
-	#endif
 
 	SDL_Rect dst = { VIEW_PADDING, VIEW_PADDING, WIN_DIM.x - VIEW_PADDING * 2, (WIN_DIM.x - VIEW_PADDING * 2) * VIEW_DIM.y / VIEW_DIM.x };
 	SDL_BlitScaled(state->view, 0, platform->surface, &dst);
+	#endif
 }
