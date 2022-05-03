@@ -64,6 +64,9 @@ struct State
 	Pixel                frame_buffer[VIEW_DIM.x][VIEW_DIM.y];
 
 	WallVoxel            wall_voxels[MAP_DIM][MAP_DIM];
+	i32                  inventory_index;
+	i32                  inventory_count;
+	ThingType            inventory_buffer[4];
 
 	vf2                  lucia_velocity;
 	vf3                  lucia_position;
@@ -76,7 +79,7 @@ struct State
 	f32                  flashlight_keytime;
 
 	PathCoordinatesNode* monster_path;
-	Thing*               hand_hovered_thing;
+	Thing*               hand_hovered_item;
 
 	i32 items_count;
 	union
@@ -96,11 +99,11 @@ struct State
 		Thing things_buffer[sizeof(unique) / sizeof(Thing) + ARRAY_CAPACITY(items_buffer)];
 	};
 
-	ImgRGB               wall;
-	ImgRGB               floor;
-	ImgRGB               ceiling;
-	ImgRGBA              hand_img;
-	ImgRGBA              thing_imgs[ThingType::CAPACITY];
+	ImgRGB  wall;
+	ImgRGB  floor;
+	ImgRGB  ceiling;
+	ImgRGBA hand_img;
+	ImgRGBA thing_imgs[ThingType::CAPACITY];
 };
 
 global constexpr struct { WallVoxel voxel; vf2 start; vf2 end; vf2 normal; } WALL_VOXEL_DATA[] =
@@ -291,17 +294,25 @@ internal Thing* allocate_item(State* state)
 	return item;
 }
 
+internal void deallocate_item(State* state, Thing* item)
+{
+	ASSERT(IN_RANGE(item, state->items_buffer, state->items_buffer + state->items_count));
+
+	*item = state->items_buffer[state->items_count - 1];
+	state->items_count -= 1;
+}
+
 internal vf2 rng_open_position(State* state)
 {
 	vi2 coordinates = { rng(&state->seed, 0, MAP_DIM), rng(&state->seed, 0, MAP_DIM) };
 
 	if (+(*get_wall_voxel(state, coordinates) & WallVoxel::back_slash))
 	{
-		return (coordinates + (rng(&state->seed) < 0.5f ? vf2 { 0.25f, 0.75f } : vf2 { 0.75f, 0.25f })) * WALL_SPACING;
-	}
-	else if (+(*get_wall_voxel(state, coordinates) & WallVoxel::back_slash))
-	{
 		return (coordinates + (rng(&state->seed) < 0.5f ? vf2 { 0.25f, 0.25f } : vf2 { 0.75f, 0.75f })) * WALL_SPACING;
+	}
+	else if (+(*get_wall_voxel(state, coordinates) & WallVoxel::forward_slash))
+	{
+		return (coordinates + (rng(&state->seed) < 0.5f ? vf2 { 0.25f, 0.75f } : vf2 { 0.75f, 0.25f })) * WALL_SPACING;
 	}
 	else
 	{
@@ -418,17 +429,12 @@ extern "C" PROTOTYPE_INITIALIZE(initialize)
 		state->unique.hand      = {};
 		state->unique.hand.type = ThingType::hand;
 	}
+
+	FOR_RANGE(8)
 	{
 		Thing* item = allocate_item(state);
 		*item             = {};
-		item->type        = ThingType::battery;
-		item->position.xy = rng_open_position(state);
-		item->normal      = { 1.0f, 0.0f };
-	}
-	{
-		Thing* item = allocate_item(state);
-		*item             = {};
-		item->type        = ThingType::paper;
+		item->type        = rng(&state->seed) < 0.5f ? ThingType::battery : ThingType::paper;
 		item->position.xy = rng_open_position(state);
 		item->normal      = { 1.0f, 0.0f };
 	}
@@ -849,7 +855,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 	state->unique.monster.position.z   = cosf(TEMP * 2.0f) * 0.15f + WALL_HEIGHT / 2.0f;
 	state->unique.monster.normal       = normalize(dampen(state->unique.monster.normal, normalize(ray_to_closest(state->lucia_position.xy, state->unique.monster.position.xy)), 1.0f, SECONDS_PER_UPDATE));
 
-	state->hand_hovered_thing = 0;
+	state->hand_hovered_item = 0;
 
 	f32 closest_distance = NAN;
 	FOR_ELEMS(item, state->items_buffer, state->items_count)
@@ -857,22 +863,31 @@ extern "C" PROTOTYPE_UPDATE(update)
 		if (item->type == ThingType::battery || item->type == ThingType::paper)
 		{
 			f32 distance = norm(ray_to_closest(state->lucia_position.xy, item->position.xy));
-			if (!state->hand_hovered_thing && distance < 2.0f || closest_distance > distance)
+			if (!state->hand_hovered_item && distance < 2.0f || closest_distance > distance)
 			{
-				state->hand_hovered_thing = item;
-				closest_distance          = distance;
+				state->hand_hovered_item = item;
+				closest_distance         = distance;
 				break;
 			}
 		}
 	}
 
-	if (state->hand_hovered_thing)
+	if (state->hand_hovered_item)
 	{
-		vf2 ray = ray_to_closest(state->hand_hovered_thing->position.xy, state->lucia_position.xy);
+		vf2 ray = ray_to_closest(state->hand_hovered_item->position.xy, state->lucia_position.xy);
 
-		state->unique.hand.position.xy = state->hand_hovered_thing->position.xy + ray / 2.0f;
-		state->unique.hand.position.z  = lerp(state->hand_hovered_thing->position.z, state->lucia_position.z, 0.75f);
+		state->unique.hand.position.xy = state->hand_hovered_item->position.xy + ray / 2.0f;
+		state->unique.hand.position.z  = lerp(state->hand_hovered_item->position.z, state->lucia_position.z, 0.75f);
 		state->unique.hand.normal      = normalize(ray) * 0.15f;
+
+		if (PRESSED(Input::space) && state->inventory_count < ARRAY_CAPACITY(state->inventory_buffer))
+		{
+			state->inventory_buffer[state->inventory_count] = state->hand_hovered_item->type;
+			state->inventory_count += 1;
+
+			deallocate_item(state, state->hand_hovered_item);
+			state->hand_hovered_item = 0;
+		}
 	}
 	else
 	{
@@ -906,6 +921,20 @@ extern "C" PROTOTYPE_UPDATE(update)
 	state->flashlight_ray.xy  = dampen(state->flashlight_ray.xy, polar(state->lucia_angle + sinf(state->flashlight_keytime * TAU * 2.0f) * 0.03f), 16.0f, SECONDS_PER_UPDATE);
 	state->flashlight_ray.z   = sinf(state->flashlight_keytime * TAU) * 0.05f;
 	state->flashlight_ray     = normalize(state->flashlight_ray);
+
+	if (state->inventory_count)
+	{
+		i32 delta_index = 0;
+		if (PRESSED(Input::q))
+		{
+			delta_index -= 1;
+		}
+		if (PRESSED(Input::e))
+		{
+			delta_index += 1;
+		}
+		state->inventory_index = mod(state->inventory_index + delta_index, state->inventory_count);
+	}
 
 	return UpdateCode::resume;
 }
@@ -944,6 +973,7 @@ extern "C" PROTOTYPE_RENDER(render)
 
 	FOR_RANGE(x, VIEW_DIM.x)
 	{
+
 		vf2 ray_horizontal = polar(state->lucia_angle + (0.5f - static_cast<f32>(x) / VIEW_DIM.x) * state->lucia_fov);
 
 		bool32 wall_exists   = false;
@@ -1081,6 +1111,8 @@ extern "C" PROTOTYPE_RENDER(render)
 			}
 		}
 
+		state->transient_arena.used = 0;
+
 		struct ThingNode
 		{
 			Thing*     thing;
@@ -1091,38 +1123,43 @@ extern "C" PROTOTYPE_RENDER(render)
 
 		ThingNode* intersected_thing_node = 0;
 
-		FOR_ELEMS(thing, state->things_buffer, sizeof(state->unique) / sizeof(Thing) + state->items_count)
 		{
-			FOR_RANGE(i, 0, 9)
-			{
-				f32 distance;
-				f32 portion;
-				if
-				(
-					ray_cast_line
-					(
-						&distance,
-						&portion,
-						state->lucia_position.xy,
-						ray_horizontal,
-						vi2 { i % 3 - 1, i / 3 - 1 } * MAP_DIM * WALL_SPACING + thing->position.xy - rotate90(thing->normal) / 2.0f,
-						vi2 { i % 3 - 1, i / 3 - 1 } * MAP_DIM * WALL_SPACING + thing->position.xy + rotate90(thing->normal) / 2.0f
-					)
-					&& IN_RANGE(portion, 0.0f, 1.0f)
-				)
-				{
-					ThingNode** post_node = &intersected_thing_node;
-					while (*post_node && (*post_node)->distance > distance)
-					{
-						post_node = &(*post_node)->next_node;
-					}
+			memsize old_transient_arena_used = state->transient_arena.used;
+			DEFER { state->transient_arena.used = old_transient_arena_used; };
 
-					ThingNode* new_node = memory_arena_push<ThingNode>(&state->transient_arena);
-					new_node->thing     = thing;
-					new_node->distance  = distance;
-					new_node->portion   = portion;
-					new_node->next_node = *post_node;
-					*post_node = new_node;
+			FOR_ELEMS(thing, state->things_buffer, sizeof(state->unique) / sizeof(Thing) + state->items_count)
+			{
+				FOR_RANGE(i, 9)
+				{
+					f32 distance;
+					f32 portion;
+					if
+					(
+						ray_cast_line
+						(
+							&distance,
+							&portion,
+							state->lucia_position.xy,
+							ray_horizontal,
+							vi2 { i % 3 - 1, i / 3 - 1 } * MAP_DIM * WALL_SPACING + thing->position.xy - rotate90(thing->normal) / 2.0f,
+							vi2 { i % 3 - 1, i / 3 - 1 } * MAP_DIM * WALL_SPACING + thing->position.xy + rotate90(thing->normal) / 2.0f
+						)
+						&& IN_RANGE(portion, 0.0f, 1.0f)
+					)
+					{
+						ThingNode** post_node = &intersected_thing_node;
+						while (*post_node && (*post_node)->distance > distance)
+						{
+							post_node = &(*post_node)->next_node;
+						}
+
+						ThingNode* new_node = memory_arena_push<ThingNode>(&state->transient_arena);
+						new_node->thing     = thing;
+						new_node->distance  = distance;
+						new_node->portion   = portion;
+						new_node->next_node = *post_node;
+						*post_node = new_node;
+					}
 				}
 			}
 		}
@@ -1174,15 +1211,39 @@ extern "C" PROTOTYPE_RENDER(render)
 		FOR_RANGE(x, VIEW_DIM.x)
 		{
 			*(reinterpret_cast<u32*>(state->view->pixels) + (VIEW_DIM.y - 1 - y) * state->view->w + x) =
-				SDL_MapRGB
-				(
-					state->view->format,
-					static_cast<u8>(state->frame_buffer[x][y].color.x * 255.0f),
-					static_cast<u8>(state->frame_buffer[x][y].color.y * 255.0f),
-					static_cast<u8>(state->frame_buffer[x][y].color.z * 255.0f)
-				);
+				to_pixel(state->view, state->frame_buffer[x][y].color);
 		}
 	}
+
+	vi2 inventory_box_position   = { 50, WIN_DIM.y - 160 };
+	vi2 inventory_box_dimensions = { 125, 125 };
+	fill(platform->surface, vxx(inventory_box_position), vxx(inventory_box_dimensions), { 0.25f, 0.25f, 0.25f });
+
+	if (state->inventory_count)
+	{
+		ASSERT(IN_RANGE(state->inventory_index, 0, state->inventory_count));
+
+		FOR_RANGE(x, inventory_box_dimensions.x)
+		{
+			FOR_RANGE(y, inventory_box_dimensions.y)
+			{
+				u32*     pixel = reinterpret_cast<u32*>(platform->surface->pixels) + (inventory_box_position.y + y) * platform->surface->w + inventory_box_position.x + x;
+				ImgRGBA* img   = &state->thing_imgs[+state->inventory_buffer[state->inventory_index]];
+				vf4*     rgba  =
+					img->rgba
+						+ static_cast<i32>(static_cast<f32>(x) / inventory_box_dimensions.x * img->dim.x) * img->dim.y
+						+ static_cast<i32>(static_cast<f32>(inventory_box_dimensions.y - 1 - y) / inventory_box_dimensions.y * img->dim.y);
+
+				*pixel =
+					to_pixel
+					(
+						platform->surface,
+						lerp(to_color(platform->surface, *pixel), rgba->xyz, rgba->w)
+					);
+			}
+		}
+	}
+
 	#else
 	fill(state->view, { 1.0f, 1.0f, 1.0f });
 
