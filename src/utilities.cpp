@@ -1,6 +1,6 @@
-#define PRESSED(INPUT)  (platform->inputs[+(INPUT)].curr && !platform->inputs[+(INPUT)].prev)
-#define HOLDING(INPUT)  (platform->inputs[+(INPUT)].curr)
-#define RELEASED(INPUT) (!platform->inputs[+(INPUT)].curr && platform->inputs[+(INPUT)].prev)
+#define PRESSED(INPUT)  (!!platform->inputs[+(INPUT)].curr && !platform->inputs[+(INPUT)].prev)
+#define HOLDING(INPUT)  (!!platform->inputs[+(INPUT)].curr)
+#define RELEASED(INPUT) (!platform->inputs[+(INPUT)].curr && !!platform->inputs[+(INPUT)].prev)
 
 global constexpr f32 TAU      = 6.28318530717f;
 global constexpr f32 SQRT2    = 1.41421356237f;
@@ -320,6 +320,32 @@ internal void fill_rect(SDL_Renderer* renderer, vf2 position, vf2 dimensions)
 	SDL_RenderFillRect(renderer, &rect);
 }
 
+template <typename... ARGUMENTS>
+internal void draw_text(SDL_Renderer* renderer, FC_Font* font, vf2 coordinates, FC_AlignEnum alignment, f32 scalar, vf4 rgba, strlit fstr, ARGUMENTS... arguments)
+{
+	FC_DrawEffect
+	(
+		font,
+		renderer,
+		coordinates.x,
+		coordinates.y,
+		FC_MakeEffect
+		(
+			alignment,
+			FC_MakeScale(scalar, scalar),
+			FC_MakeColor
+			(
+				static_cast<u8>(rgba.x * 255.0f),
+				static_cast<u8>(rgba.y * 255.0f),
+				static_cast<u8>(rgba.z * 255.0f),
+				static_cast<u8>(rgba.w * 255.0f)
+			)
+		),
+		fstr,
+		arguments...
+	);
+}
+
 internal ImgRGB init_img_rgb(strlit filepath)
 {
 	ImgRGB img;
@@ -389,4 +415,38 @@ internal ImgRGBA init_img_rgba(strlit filepath)
 internal void deinit_img_rgba(ImgRGBA* img)
 {
 	free(img->rgba);
+}
+
+internal i32 iterate_repeated_movement(Platform* platform, Input negative_input, Input positive_input, f32* current_repeat_countdown, f32 repeat_threshold = 0.3f, f32 repeat_frequency = 0.1f)
+{
+	i32 delta = 0;
+
+	if (HOLDING(negative_input) != HOLDING(positive_input))
+	{
+		if (*current_repeat_countdown <= 0.0f)
+		{
+			if (HOLDING(negative_input))
+			{
+				delta                     = -1;
+				*current_repeat_countdown =
+					PRESSED(negative_input)
+						? repeat_threshold
+						: repeat_frequency;
+			}
+			else
+			{
+				delta                     = 1;
+				*current_repeat_countdown =
+					PRESSED(positive_input)
+						? repeat_threshold
+						: repeat_frequency;
+			}
+		}
+	}
+	else
+	{
+		*current_repeat_countdown = 0.0f;
+	}
+
+	return delta;
 }

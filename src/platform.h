@@ -33,6 +33,7 @@ enum_loose (Input, u32)
 	backspace,
 	shift,
 	escape,
+	enter,
 	left_mouse,
 	right_mouse,
 
