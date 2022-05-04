@@ -1,6 +1,8 @@
 // @NOTE@ Credits
 // "A Fast Voxel Traversal Algorithm for Ray Tracing" https://www.flipcode.com/archives/A%20faster%20voxel%20traversal%20algorithm%20for%20ray%20tracing.pdf
 
+// @TODO@ Consider half-precision floats for framebuffer.
+
 #define STB_IMAGE_IMPLEMENTATION true
 #include <stb_image.h>
 #include "unified.h"
@@ -34,6 +36,21 @@ global constexpr strlit TITLE_MENU_OPTIONS[TitleMenuOption::CAPACITY] =
 		"Credits",
 		"Exit"
 	};
+
+enum_loose (SettingOption, i32)
+{
+	master_volume,
+	brightness,
+	done,
+	CAPACITY
+};
+
+global constexpr strlit SETTING_OPTIONS[SettingOption::CAPACITY]
+{
+	"Master Volume",
+	"Brightness",
+	"Done"
+};
 
 enum_loose (ThingType, i32)
 {
@@ -104,6 +121,8 @@ struct State
 
 	u32          seed;
 	f32          time;
+	f32          master_volume;
+	f32          brightness;
 	StateContext context;
 
 	struct
@@ -495,7 +514,6 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 					if (PRESSED(Input::space) || PRESSED(Input::enter))
 					{
-						bool32 new_context = true;
 						switch (state->title_menu.option_index)
 						{
 							case TitleMenuOption::start:
@@ -606,34 +624,33 @@ extern "C" PROTOTYPE_UPDATE(update)
 								}
 
 								state->game.flashlight_ray = { 1.0f, 0.0f };
+
+								return UpdateCode::resume;
 							} break;
 
 							case TitleMenuOption::settings:
 							{
-								state->title_menu.context = TitleMenuContext::settings;
+								state->title_menu.context                                  = TitleMenuContext::settings;
+								state->title_menu.settings                                 = {};
+								state->title_menu.option_index                             = 0;
+								state->title_menu.option_index_repeated_movement_countdown = 0.0f;
+								state->title_menu.option_cursor_interpolated_index         = 0.0f;
+
+								return UpdateCode::resume;
 							} break;
 
 							case TitleMenuOption::credits:
 							{
 								state->title_menu.context = TitleMenuContext::credits;
+								state->title_menu.credits = {};
+
+								return UpdateCode::resume;
 							} break;
 
 							case TitleMenuOption::exit:
 							{
 								return UpdateCode::terminate;
 							} break;
-
-							default:
-							{
-								new_context = false;
-							} break;
-						}
-
-						if (new_context)
-						{
-							state->title_menu.option_cursor_interpolated_index      = static_cast<f32>(state->title_menu.option_index);
-							state->title_menu.option_cursor_interpolated_text_width = static_cast<f32>(FC_GetWidth(state->main_font, TITLE_MENU_OPTIONS[state->title_menu.option_index]));
-							return UpdateCode::resume;
 						}
 					}
 
@@ -643,18 +660,57 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 				case TitleMenuContext::settings:
 				{
-					if (PRESSED(Input::space) || PRESSED(Input::enter))
+					state->title_menu.option_index_repeated_movement_countdown -= SECONDS_PER_UPDATE;
+
+					// @TODO@ Compatable with arrows.
+					state->title_menu.option_index += iterate_repeated_movement(platform, Input::w, Input::s, &state->title_menu.option_index_repeated_movement_countdown);
+					state->title_menu.option_index  = CLAMP(state->title_menu.option_index, 0, +SettingOption::CAPACITY - 1);
+
+					if ((PRESSED(Input::space) || PRESSED(Input::enter)) && state->title_menu.option_index == +SettingOption::done)
 					{
-						state->title_menu.context = TitleMenuContext::title_menu;
+						state->title_menu.context                               = TitleMenuContext::title_menu;
+						state->title_menu                                       = {};
+						state->title_menu.option_index                          = +TitleMenuOption::settings;
+						state->title_menu.option_cursor_interpolated_index      = static_cast<f32>(TitleMenuOption::settings);
+						state->title_menu.option_cursor_interpolated_text_width = static_cast<f32>(FC_GetWidth(state->main_font, TITLE_MENU_OPTIONS[state->title_menu.option_index]));
+
 						return UpdateCode::resume;
 					}
+
+					switch (state->title_menu.option_index)
+					{
+						case SettingOption::master_volume:
+						{
+							f32 delta = 0.0f;
+							if (HOLDING(Input::a)) { delta -= 1.0f; }
+							if (HOLDING(Input::d)) { delta += 1.0f; }
+							state->master_volume += delta * 0.5f * SECONDS_PER_UPDATE;
+							state->master_volume  = CLAMP(state->master_volume, 0.0f, 1.0f);
+						} break;
+
+						case SettingOption::brightness:
+						{
+							f32 delta = 0.0f;
+							if (HOLDING(Input::a)) { delta -= 1.0f; }
+							if (HOLDING(Input::d)) { delta += 1.0f; }
+							state->brightness += delta * 0.5f * SECONDS_PER_UPDATE;
+							state->brightness  = CLAMP(state->brightness, 0.0f, 1.0f);
+						} break;
+					}
+
+					state->title_menu.option_cursor_interpolated_index      = dampen(state->title_menu.option_cursor_interpolated_index, static_cast<f32>(state->title_menu.option_index), 8.0f, SECONDS_PER_UPDATE);
+					state->title_menu.option_cursor_interpolated_text_width = dampen(state->title_menu.option_cursor_interpolated_text_width, FC_GetWidth(state->main_font, TITLE_MENU_OPTIONS[state->title_menu.option_index]), 8.0f, SECONDS_PER_UPDATE);
 				} break;
 
 				case TitleMenuContext::credits:
 				{
 					if (PRESSED(Input::space) || PRESSED(Input::enter))
 					{
-						state->title_menu.context = TitleMenuContext::title_menu;
+						state->title_menu.context                               = TitleMenuContext::title_menu;
+						state->title_menu                                       = {};
+						state->title_menu.option_index                          = +TitleMenuOption::credits;
+						state->title_menu.option_cursor_interpolated_index      = static_cast<f32>(TitleMenuOption::credits);
+						state->title_menu.option_cursor_interpolated_text_width = static_cast<f32>(FC_GetWidth(state->main_font, TITLE_MENU_OPTIONS[state->title_menu.option_index]));
 						return UpdateCode::resume;
 					}
 				} break;
@@ -1115,7 +1171,8 @@ extern "C" PROTOTYPE_RENDER(render)
 			{
 				case TitleMenuContext::title_menu:
 				{
-					constexpr f32 OPTION_SCALAR = 0.5f;
+					constexpr f32 OPTION_SCALAR  = 0.425f;
+					constexpr f32 OPTION_SPACING = 0.1f;
 					FOR_ELEMS(it, TITLE_MENU_OPTIONS)
 					{
 						f32 activation = 1.0f - CLAMP(fabsf(it_index - state->title_menu.option_cursor_interpolated_index), 0.0f, 1.0f);
@@ -1123,7 +1180,7 @@ extern "C" PROTOTYPE_RENDER(render)
 						(
 							platform->renderer,
 							state->main_font,
-							{ WIN_RES.x * 0.5f, WIN_RES.y * (0.37f + it_index * 0.12f) },
+							{ WIN_RES.x * 0.5f, WIN_RES.y * (0.37f + it_index * OPTION_SPACING) },
 							FC_ALIGN_CENTER,
 							OPTION_SCALAR,
 							vxx
@@ -1139,7 +1196,7 @@ extern "C" PROTOTYPE_RENDER(render)
 					(
 						platform->renderer,
 						state->main_font,
-						{ WIN_RES.x * 0.5f - state->title_menu.option_cursor_interpolated_text_width * OPTION_SCALAR * 0.6f, WIN_RES.y * (0.37f + state->title_menu.option_cursor_interpolated_index * 0.12f) },
+						{ WIN_RES.x * 0.5f - state->title_menu.option_cursor_interpolated_text_width * OPTION_SCALAR * 0.6f, WIN_RES.y * (0.37f + state->title_menu.option_cursor_interpolated_index * OPTION_SPACING) },
 						FC_ALIGN_RIGHT,
 						OPTION_SCALAR,
 						{ 1.0f, 1.0f, 0.2f, 1.0f },
@@ -1149,7 +1206,7 @@ extern "C" PROTOTYPE_RENDER(render)
 					(
 						platform->renderer,
 						state->main_font,
-						{ WIN_RES.x * 0.5f + state->title_menu.option_cursor_interpolated_text_width * OPTION_SCALAR * 0.6f, WIN_RES.y * (0.37f + state->title_menu.option_cursor_interpolated_index * 0.12f) },
+						{ WIN_RES.x * 0.5f + state->title_menu.option_cursor_interpolated_text_width * OPTION_SCALAR * 0.6f, WIN_RES.y * (0.37f + state->title_menu.option_cursor_interpolated_index * OPTION_SPACING) },
 						FC_ALIGN_LEFT,
 						OPTION_SCALAR,
 						{ 1.0f, 1.0f, 0.2f, 1.0f },
@@ -1159,6 +1216,54 @@ extern "C" PROTOTYPE_RENDER(render)
 
 				case TitleMenuContext::settings:
 				{
+					constexpr f32 OPTION_SCALAR  = 0.3f;
+					constexpr f32 OPTION_SPACING = 0.12f;
+					FOR_ELEMS(it, SETTING_OPTIONS)
+					{
+						f32 activation = 1.0f - CLAMP(fabsf(it_index - state->title_menu.option_cursor_interpolated_index), 0.0f, 1.0f);
+						draw_text
+						(
+							platform->renderer,
+							state->main_font,
+							{ WIN_RES.x * 0.1f, WIN_RES.y * (0.37f + it_index * OPTION_SPACING) },
+							FC_ALIGN_LEFT,
+							OPTION_SCALAR,
+							vxx
+							(
+								lerp(vf3 { 0.75f, 0.75f, 0.75f }, { 1.0f, 1.0f, 0.2f }, activation),
+								lerp(0.95f, 1.0f, activation)
+							),
+							*it
+						);
+
+						switch (it_index)
+						{
+							case SettingOption::master_volume:
+							{
+								set_color(platform->renderer, { 1.0f, 1.0f, 1.0f });
+								draw_line(platform->renderer, { WIN_RES.x * 0.5f, WIN_RES.y * (0.37f + it_index * OPTION_SPACING) }, { WIN_RES.x * 0.9f, WIN_RES.y * (0.37f + it_index * OPTION_SPACING) });
+								draw_circle(platform->renderer, { WIN_RES.x * lerp(0.5f, 0.9f, state->master_volume), WIN_RES.y * (0.37f + it_index * OPTION_SPACING) }, 5);
+							} break;
+
+							case SettingOption::brightness:
+							{
+								set_color(platform->renderer, { 1.0f, 1.0f, 1.0f });
+								draw_line(platform->renderer, { WIN_RES.x * 0.5f, WIN_RES.y * (0.37f + it_index * OPTION_SPACING) }, { WIN_RES.x * 0.9f, WIN_RES.y * (0.37f + it_index * OPTION_SPACING) });
+								draw_circle(platform->renderer, { WIN_RES.x * lerp(0.5f, 0.9f, state->brightness), WIN_RES.y * (0.37f + it_index * OPTION_SPACING) }, 5);
+							} break;
+						}
+					}
+
+					draw_text
+					(
+						platform->renderer,
+						state->main_font,
+						{ WIN_RES.x * 0.09f, WIN_RES.y * (0.37f + state->title_menu.option_cursor_interpolated_index * OPTION_SPACING) },
+						FC_ALIGN_RIGHT,
+						OPTION_SCALAR,
+						{ 1.0f, 1.0f, 0.2f, 1.0f },
+						">"
+					);
 				} break;
 
 				case TitleMenuContext::credits:
@@ -1167,7 +1272,7 @@ extern "C" PROTOTYPE_RENDER(render)
 						{
 							"Phuc Doan\n    Programmer",
 							"Mila Matthews\n    Artist",
-							"Lauren Stolebarger\n    Voice Actor"
+							"Ren Stolebarger\n    Voice Actor"
 						};
 					FOR_ELEMS(it, CREDITS)
 					{
@@ -1441,7 +1546,7 @@ extern "C" PROTOTYPE_RENDER(render)
 			}
 
 			set_color(platform->renderer, { 0.15f, 0.15f, 0.15f });
-			fill_rect(platform->renderer, vxx(vi2 { PADDING, VIEW_RES.y + PADDING * 2 }), vxx(HUD_RES));
+			draw_rect(platform->renderer, vxx(vi2 { PADDING, VIEW_RES.y + PADDING * 2 }), vxx(HUD_RES));
 
 			if (state->game.inventory_count)
 			{
