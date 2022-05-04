@@ -35,6 +35,33 @@ global constexpr strlit TITLE_MENU_OPTIONS[TitleMenuOption::CAPACITY] =
 		"Exit"
 	};
 
+enum_loose (ThingType, i32)
+{
+	monster,
+	hand,
+	battery,
+	paper,
+	flashlight,
+	CAPACITY
+};
+
+global constexpr strlit THING_IMG_PATHS[ThingType::CAPACITY] =
+	{
+		DATA_DIR "monster.png",
+		DATA_DIR "hand.png",
+		DATA_DIR "battery.png",
+		DATA_DIR "paper.png",
+		DATA_DIR "flashlight.png"
+	};
+
+struct Thing
+{
+	ThingType type;
+	vf3       position;
+	vf2       velocity;
+	vf2       normal;
+};
+
 flag_struct (WallVoxel, u8)
 {
 	left          = 1 << 0,
@@ -55,30 +82,17 @@ struct PathCoordinatesNode
 	PathCoordinatesNode* next_node;
 };
 
-enum_loose (ThingType, u32)
-{
-	monster,
-	hand,
-
-	battery,
-	paper,
-	flashlight,
-
-	CAPACITY
-};
-
-struct Thing
-{
-	ThingType type;
-	vf3       position;
-	vf2       velocity;
-	vf2       normal;
-};
-
-enum struct StateType : u32
+enum struct StateContext : u32
 {
 	title_menu,
 	game
+};
+
+enum struct TitleMenuContext : u32
+{
+	title_menu,
+	settings,
+	credits
 };
 
 struct State
@@ -88,15 +102,26 @@ struct State
 
 	FC_Font*    main_font;
 
-	u32         seed;
-	f32         time;
-	StateType   type;
+	u32          seed;
+	f32          time;
+	StateContext context;
 
 	struct
 	{
-		f32 option_activations[TitleMenuOption::CAPACITY];
-		i32 current_option_index;
-		f32 current_option_repeated_movement_countdown;
+		TitleMenuContext context;
+
+		i32 option_index;
+		f32 option_index_repeated_movement_countdown;
+		f32 option_cursor_interpolated_index;
+		f32 option_cursor_interpolated_text_width;
+
+		struct
+		{
+		} settings;
+
+		struct
+		{
+		} credits;
 	} title_menu;
 
 	struct
@@ -362,38 +387,38 @@ internal vf2 rng_open_position(State* state)
 	}
 }
 
-internal void boot_up_state_type(State* state, StateType type)
+internal void boot_up_state(State* state)
 {
-	switch (type)
+	switch (state->context)
 	{
-		case StateType::title_menu:
+		case StateContext::title_menu:
 		{
+			state->title_menu.option_cursor_interpolated_text_width = FC_GetWidth(state->main_font, TITLE_MENU_OPTIONS[state->title_menu.option_index]);
 		} break;
 
-		case StateType::game:
+		case StateContext::game:
 		{
 			state->game.wall    = init_img_rgb(DATA_DIR "wall.png");
 			state->game.floor   = init_img_rgb(DATA_DIR "floor.png");
 			state->game.ceiling = init_img_rgb(DATA_DIR "ceiling.png");
 
-			state->game.thing_imgs[+ThingType::monster   ] = init_img_rgba(DATA_DIR "monster.png");
-			state->game.thing_imgs[+ThingType::hand      ] = init_img_rgba(DATA_DIR "hand.png");
-			state->game.thing_imgs[+ThingType::battery   ] = init_img_rgba(DATA_DIR "battery.png");
-			state->game.thing_imgs[+ThingType::paper     ] = init_img_rgba(DATA_DIR "paper.png");
-			state->game.thing_imgs[+ThingType::flashlight] = init_img_rgba(DATA_DIR "flashlight.png");
+			FOR_ELEMS(it, THING_IMG_PATHS)
+			{
+				state->game.thing_imgs[it_index] = init_img_rgba(*it);
+			}
 		} break;
 	}
 }
 
-internal void boot_down_state_type(State* state, StateType type)
+internal void boot_down_state(State* state)
 {
-	switch (type)
+	switch (state->context)
 	{
-		case StateType::title_menu:
+		case StateContext::title_menu:
 		{
 		} break;
 
-		case StateType::game:
+		case StateContext::game:
 		{
 			deinit_img_rgb(&state->game.wall);
 			deinit_img_rgb(&state->game.floor);
@@ -434,7 +459,7 @@ extern "C" PROTOTYPE_BOOT_UP(boot_up)
 	state->main_font = FC_CreateFont();
 	FC_LoadFont(state->main_font, platform->renderer, DATA_DIR "Consolas.ttf", 32, FC_MakeColor(255, 255, 255, 255), TTF_STYLE_NORMAL);
 
-	boot_up_state_type(state, state->type);
+	boot_up_state(state);
 }
 
 extern "C" PROTOTYPE_BOOT_DOWN(boot_down)
@@ -444,7 +469,7 @@ extern "C" PROTOTYPE_BOOT_DOWN(boot_down)
 
 	FC_FreeFont(state->main_font);
 
-	boot_down_state_type(state, state->type);
+	boot_down_state(state);
 }
 
 extern "C" PROTOTYPE_UPDATE(update)
@@ -454,162 +479,198 @@ extern "C" PROTOTYPE_UPDATE(update)
 	state->time                 += SECONDS_PER_UPDATE;
 	state->transient_arena.used  = 0;
 
-	switch (state->type)
+	switch (state->context)
 	{
-		case StateType::title_menu:
+		case StateContext::title_menu:
 		{
-			state->title_menu.current_option_repeated_movement_countdown -= SECONDS_PER_UPDATE;
-
-			// @TODO@ Compatable with arrows.
-			state->title_menu.current_option_index += iterate_repeated_movement(platform, Input::w, Input::s, &state->title_menu.current_option_repeated_movement_countdown);
-			state->title_menu.current_option_index  = CLAMP(state->title_menu.current_option_index, 0, +TitleMenuOption::CAPACITY - 1);
-
-			if (PRESSED(Input::space) || PRESSED(Input::enter))
+			switch (state->title_menu.context)
 			{
-				switch (state->title_menu.current_option_index)
+				case TitleMenuContext::title_menu:
 				{
-					case TitleMenuOption::start:
+					state->title_menu.option_index_repeated_movement_countdown -= SECONDS_PER_UPDATE;
+
+					// @TODO@ Compatable with arrows.
+					state->title_menu.option_index += iterate_repeated_movement(platform, Input::w, Input::s, &state->title_menu.option_index_repeated_movement_countdown);
+					state->title_menu.option_index  = CLAMP(state->title_menu.option_index, 0, +TitleMenuOption::CAPACITY - 1);
+
+					if (PRESSED(Input::space) || PRESSED(Input::enter))
 					{
-						state->type = StateType::game;
-						state->game = {};
-
-						FOR_RANGE(start_walk_y, MAP_DIM)
+						bool32 new_context = true;
+						switch (state->title_menu.option_index)
 						{
-							FOR_RANGE(start_walk_x, MAP_DIM)
+							case TitleMenuOption::start:
 							{
-								if (!+*get_wall_voxel(state, { start_walk_x, start_walk_y }) && rng(&state->seed) < 0.15f)
+								boot_down_state(state);
+								state->context = StateContext::game;
+								state->game    = {};
+								boot_up_state(state);
+
+								FOR_RANGE(start_walk_y, MAP_DIM)
 								{
-									vi2 walk = { start_walk_x, start_walk_y };
-									FOR_RANGE(64)
+									FOR_RANGE(start_walk_x, MAP_DIM)
 									{
-										switch (static_cast<i32>(rng(&state->seed) * 4.0f))
+										if (!+*get_wall_voxel(state, { start_walk_x, start_walk_y }) && rng(&state->seed) < 0.15f)
 										{
-											case 0:
+											vi2 walk = { start_walk_x, start_walk_y };
+											FOR_RANGE(64)
 											{
-												if (!+*get_wall_voxel(state, walk + vi2 { -1, 0 }) && !+(*get_wall_voxel(state, walk + vi2 { -1, -1 }) & WallVoxel::left) && !+(*get_wall_voxel(state, walk + vi2 { -2, 0 }) & WallVoxel::bottom))
+												switch (static_cast<i32>(rng(&state->seed) * 4.0f))
 												{
-													walk.x = mod(walk.x - 1, MAP_DIM);
-													*get_wall_voxel(state, walk) |= WallVoxel::bottom;
-												}
-											} break;
+													case 0:
+													{
+														if (!+*get_wall_voxel(state, walk + vi2 { -1, 0 }) && !+(*get_wall_voxel(state, walk + vi2 { -1, -1 }) & WallVoxel::left) && !+(*get_wall_voxel(state, walk + vi2 { -2, 0 }) & WallVoxel::bottom))
+														{
+															walk.x = mod(walk.x - 1, MAP_DIM);
+															*get_wall_voxel(state, walk) |= WallVoxel::bottom;
+														}
+													} break;
 
-											case 1:
-											{
-												if (!+*get_wall_voxel(state, walk + vi2 { 1, 0 }) && !+(*get_wall_voxel(state, walk) & WallVoxel::bottom) && !+(*get_wall_voxel(state, walk + vi2 { 1, -1 }) & WallVoxel::left))
-												{
-													*get_wall_voxel(state, walk) |= WallVoxel::bottom;
-													walk.x = mod(walk.x + 1, MAP_DIM);
-												}
-											} break;
+													case 1:
+													{
+														if (!+*get_wall_voxel(state, walk + vi2 { 1, 0 }) && !+(*get_wall_voxel(state, walk) & WallVoxel::bottom) && !+(*get_wall_voxel(state, walk + vi2 { 1, -1 }) & WallVoxel::left))
+														{
+															*get_wall_voxel(state, walk) |= WallVoxel::bottom;
+															walk.x = mod(walk.x + 1, MAP_DIM);
+														}
+													} break;
 
-											case 2:
-											{
-												if (!+*get_wall_voxel(state, walk + vi2 { 0, -1 }) && !+(*get_wall_voxel(state, walk + vi2 { -1, -1 }) & WallVoxel::bottom) && !+(*get_wall_voxel(state, walk + vi2 { 0, -2 }) & WallVoxel::left))
-												{
-													walk.y = mod(walk.y - 1, MAP_DIM);
-													*get_wall_voxel(state, walk) |= WallVoxel::left;
-												}
-											} break;
+													case 2:
+													{
+														if (!+*get_wall_voxel(state, walk + vi2 { 0, -1 }) && !+(*get_wall_voxel(state, walk + vi2 { -1, -1 }) & WallVoxel::bottom) && !+(*get_wall_voxel(state, walk + vi2 { 0, -2 }) & WallVoxel::left))
+														{
+															walk.y = mod(walk.y - 1, MAP_DIM);
+															*get_wall_voxel(state, walk) |= WallVoxel::left;
+														}
+													} break;
 
-											case 3:
-											{
-												if (!+*get_wall_voxel(state, walk + vi2 { 0, 1 }) && !+(*get_wall_voxel(state, walk) & WallVoxel::left) && !+(*get_wall_voxel(state, walk + vi2 { -1, 1 }) & WallVoxel::bottom))
-												{
-													*get_wall_voxel(state, walk) |= WallVoxel::left;
-													walk.y = mod(walk.y + 1, MAP_DIM);
+													case 3:
+													{
+														if (!+*get_wall_voxel(state, walk + vi2 { 0, 1 }) && !+(*get_wall_voxel(state, walk) & WallVoxel::left) && !+(*get_wall_voxel(state, walk + vi2 { -1, 1 }) & WallVoxel::bottom))
+														{
+															*get_wall_voxel(state, walk) |= WallVoxel::left;
+															walk.y = mod(walk.y + 1, MAP_DIM);
+														}
+													} break;
 												}
-											} break;
+											}
 										}
 									}
 								}
-							}
-						}
 
-						FOR_RANGE(y, MAP_DIM)
-						{
-							FOR_RANGE(x, MAP_DIM)
+								FOR_RANGE(y, MAP_DIM)
+								{
+									FOR_RANGE(x, MAP_DIM)
+									{
+										if (*get_wall_voxel(state, { x, y }) == (WallVoxel::left | WallVoxel::bottom) && rng(&state->seed) < 0.5f)
+										{
+											*get_wall_voxel(state, { x, y }) = WallVoxel::back_slash;
+										}
+										else if (+(*get_wall_voxel(state, { x + 1, y }) & WallVoxel::left) && +(*get_wall_voxel(state, { x, y + 1 }) & WallVoxel::bottom) && rng(&state->seed) < 0.5f)
+										{
+											*get_wall_voxel(state, { x + 1, y     }) &= ~WallVoxel::left;
+											*get_wall_voxel(state, { x    , y + 1 }) &= ~WallVoxel::bottom;
+											*get_wall_voxel(state, { x    , y     }) |= WallVoxel::back_slash;
+										}
+										else if (+(*get_wall_voxel(state, { x, y }) & WallVoxel::bottom) && *get_wall_voxel(state, { x + 1, y }) == WallVoxel::left && rng(&state->seed) < 0.5f)
+										{
+											*get_wall_voxel(state, { x    , y }) &= ~WallVoxel::bottom;
+											*get_wall_voxel(state, { x + 1, y }) &= ~WallVoxel::left;
+											*get_wall_voxel(state, { x    , y }) |=  WallVoxel::forward_slash;
+										}
+										else if (+(*get_wall_voxel(state, { x, y }) & WallVoxel::left) && *get_wall_voxel(state, { x, y + 1 }) == WallVoxel::bottom && rng(&state->seed) < 0.5f)
+										{
+											*get_wall_voxel(state, { x, y     }) &= ~WallVoxel::left;
+											*get_wall_voxel(state, { x, y + 1 }) &= ~WallVoxel::bottom;
+											*get_wall_voxel(state, { x, y     }) |=  WallVoxel::forward_slash;
+										}
+									}
+								}
+
+								state->game.lucia_position.xy = rng_open_position(state);
+								state->game.lucia_position.z  = LUCIA_HEIGHT;
+								state->game.lucia_fov         = TAU / 3.0f;
+
+								state->game.unique.monster.type        = ThingType::monster;
+								state->game.unique.monster.position.xy = rng_open_position(state);
+
+								state->game.unique.hand.type = ThingType::hand;
+
+								FOR_RANGE(8)
+								{
+									Thing* item = allocate_item(state);
+									*item             = {};
+									item->type        = static_cast<ThingType>(rng(&state->seed, static_cast<i32>(ThingType::battery), static_cast<i32>(ThingType::CAPACITY)));
+									item->position.xy = rng_open_position(state);
+									item->position.z  = 1.0f + sinf(state->time * 3.0f) * 0.1f;
+									item->normal      = polar(state->time * 1.5f);
+								}
+
+								state->game.flashlight_ray = { 1.0f, 0.0f };
+							} break;
+
+							case TitleMenuOption::settings:
 							{
-								if (*get_wall_voxel(state, { x, y }) == (WallVoxel::left | WallVoxel::bottom) && rng(&state->seed) < 0.5f)
-								{
-									*get_wall_voxel(state, { x, y }) = WallVoxel::back_slash;
-								}
-								else if (+(*get_wall_voxel(state, { x + 1, y }) & WallVoxel::left) && +(*get_wall_voxel(state, { x, y + 1 }) & WallVoxel::bottom) && rng(&state->seed) < 0.5f)
-								{
-									*get_wall_voxel(state, { x + 1, y     }) &= ~WallVoxel::left;
-									*get_wall_voxel(state, { x    , y + 1 }) &= ~WallVoxel::bottom;
-									*get_wall_voxel(state, { x    , y     }) |= WallVoxel::back_slash;
-								}
-								else if (+(*get_wall_voxel(state, { x, y }) & WallVoxel::bottom) && *get_wall_voxel(state, { x + 1, y }) == WallVoxel::left && rng(&state->seed) < 0.5f)
-								{
-									*get_wall_voxel(state, { x    , y }) &= ~WallVoxel::bottom;
-									*get_wall_voxel(state, { x + 1, y }) &= ~WallVoxel::left;
-									*get_wall_voxel(state, { x    , y }) |=  WallVoxel::forward_slash;
-								}
-								else if (+(*get_wall_voxel(state, { x, y }) & WallVoxel::left) && *get_wall_voxel(state, { x, y + 1 }) == WallVoxel::bottom && rng(&state->seed) < 0.5f)
-								{
-									*get_wall_voxel(state, { x, y     }) &= ~WallVoxel::left;
-									*get_wall_voxel(state, { x, y + 1 }) &= ~WallVoxel::bottom;
-									*get_wall_voxel(state, { x, y     }) |=  WallVoxel::forward_slash;
-								}
-							}
+								state->title_menu.context = TitleMenuContext::settings;
+							} break;
+
+							case TitleMenuOption::credits:
+							{
+								state->title_menu.context = TitleMenuContext::credits;
+							} break;
+
+							case TitleMenuOption::exit:
+							{
+								return UpdateCode::terminate;
+							} break;
+
+							default:
+							{
+								new_context = false;
+							} break;
 						}
 
-						state->game.lucia_position.xy = rng_open_position(state);
-						state->game.lucia_position.z  = LUCIA_HEIGHT;
-						state->game.lucia_fov         = TAU / 3.0f;
-
-						state->game.unique.monster.type        = ThingType::monster;
-						state->game.unique.monster.position.xy = rng_open_position(state);
-
-						state->game.unique.hand.type = ThingType::hand;
-
-						FOR_RANGE(8)
+						if (new_context)
 						{
-							Thing* item = allocate_item(state);
-							*item             = {};
-							item->type        = static_cast<ThingType>(rng(&state->seed, static_cast<i32>(ThingType::battery), static_cast<i32>(ThingType::CAPACITY)));
-							item->position.xy = rng_open_position(state);
-							item->position.z  = 1.0f + sinf(state->time * 3.0f) * 0.1f;
-							item->normal      = polar(state->time * 1.5f);
+							state->title_menu.option_cursor_interpolated_index      = static_cast<f32>(state->title_menu.option_index);
+							state->title_menu.option_cursor_interpolated_text_width = static_cast<f32>(FC_GetWidth(state->main_font, TITLE_MENU_OPTIONS[state->title_menu.option_index]));
+							return UpdateCode::resume;
 						}
+					}
 
-						state->game.flashlight_ray = { 1.0f, 0.0f };
+					state->title_menu.option_cursor_interpolated_index      = dampen(state->title_menu.option_cursor_interpolated_index, static_cast<f32>(state->title_menu.option_index), 8.0f, SECONDS_PER_UPDATE);
+					state->title_menu.option_cursor_interpolated_text_width = dampen(state->title_menu.option_cursor_interpolated_text_width, FC_GetWidth(state->main_font, TITLE_MENU_OPTIONS[state->title_menu.option_index]), 8.0f, SECONDS_PER_UPDATE);
+				} break;
 
-						boot_up_state_type(state, StateType::game);
-
+				case TitleMenuContext::settings:
+				{
+					if (PRESSED(Input::space) || PRESSED(Input::enter))
+					{
+						state->title_menu.context = TitleMenuContext::title_menu;
 						return UpdateCode::resume;
-					} break;
+					}
+				} break;
 
-					case TitleMenuOption::settings:
+				case TitleMenuContext::credits:
+				{
+					if (PRESSED(Input::space) || PRESSED(Input::enter))
 					{
-					} break;
-
-					case TitleMenuOption::credits:
-					{
-					} break;
-
-					case TitleMenuOption::exit:
-					{
-						boot_down_state_type(state, StateType::title_menu);
-						return UpdateCode::terminate;
-					} break;
-				}
-			}
-
-			FOR_RANGE(i, +TitleMenuOption::CAPACITY)
-			{
-				state->title_menu.option_activations[i] = dampen(state->title_menu.option_activations[i], i == state->title_menu.current_option_index ? 1.0f : 0.0f, 8.0f, SECONDS_PER_UPDATE);
+						state->title_menu.context = TitleMenuContext::title_menu;
+						return UpdateCode::resume;
+					}
+				} break;
 			}
 		} break;
 
-		case StateType::game:
+		case StateContext::game:
 		{
 			if (PRESSED(Input::escape))
 			{
-				boot_down_state_type(state, StateType::game);
-				state->type = StateType::title_menu;
-				boot_up_state_type(state, StateType::title_menu);
-				break;
+				boot_down_state(state);
+				state->context    = StateContext::title_menu;
+				state->title_menu = {};
+				boot_up_state(state);
+
+				return UpdateCode::resume;
 			}
 
 			state->game.lucia_angle_velocity -= platform->cursor_delta.x * 0.01f / SECONDS_PER_UPDATE;
@@ -718,6 +779,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 			state->game.lucia_head_bob_keytime = mod(state->game.lucia_head_bob_keytime + 0.001f + 0.35f * norm(state->game.lucia_velocity) * SECONDS_PER_UPDATE, 1.0f);
 
 			state->game.lucia_fov += platform->scroll * 0.1f;
+			state->game.lucia_fov  = max(state->game.lucia_fov, 0.1f);
 
 			vi2 current_lucia_coordinates = get_closest_open_path_coordinates(state, state->game.lucia_position.xy);
 			if
@@ -1031,12 +1093,12 @@ extern "C" PROTOTYPE_RENDER(render)
 
 	state->transient_arena.used = 0;
 
-	set_color(platform->renderer, { 0.1f, 0.2f, 0.3f });
+	set_color(platform->renderer, { 0.05f, 0.1f, 0.15f });
 	SDL_RenderClear(platform->renderer);
 
-	switch (state->type)
+	switch (state->context)
 	{
-		case StateType::title_menu:
+		case StateContext::title_menu:
 		{
 			draw_text
 			(
@@ -1049,26 +1111,82 @@ extern "C" PROTOTYPE_RENDER(render)
 				"Antihome"
 			);
 
-			FOR_ELEMS(it, TITLE_MENU_OPTIONS)
+			switch (state->title_menu.context)
 			{
-				draw_text
-				(
-					platform->renderer,
-					state->main_font,
-					{ WIN_RES.x * 0.5f, WIN_RES.y * (0.37f + it_index * 0.12f) },
-					FC_ALIGN_CENTER,
-					0.5f,
-					vxx
+				case TitleMenuContext::title_menu:
+				{
+					constexpr f32 OPTION_SCALAR = 0.5f;
+					FOR_ELEMS(it, TITLE_MENU_OPTIONS)
+					{
+						f32 activation = 1.0f - CLAMP(fabsf(it_index - state->title_menu.option_cursor_interpolated_index), 0.0f, 1.0f);
+						draw_text
+						(
+							platform->renderer,
+							state->main_font,
+							{ WIN_RES.x * 0.5f, WIN_RES.y * (0.37f + it_index * 0.12f) },
+							FC_ALIGN_CENTER,
+							OPTION_SCALAR,
+							vxx
+							(
+								lerp(vf3 { 0.75f, 0.75f, 0.75f }, { 1.0f, 1.0f, 0.2f }, activation),
+								lerp(0.95f, 1.0f, activation)
+							),
+							*it
+						);
+					}
+
+					draw_text
 					(
-						lerp(vf3 { 0.75f, 0.75f, 0.75f }, { 1.0f, 1.0f, 0.2f }, state->title_menu.option_activations[it_index]),
-						lerp(0.95f, 1.0f, state->title_menu.option_activations[it_index])
-					),
-					*it
-				);
+						platform->renderer,
+						state->main_font,
+						{ WIN_RES.x * 0.5f - state->title_menu.option_cursor_interpolated_text_width * OPTION_SCALAR * 0.6f, WIN_RES.y * (0.37f + state->title_menu.option_cursor_interpolated_index * 0.12f) },
+						FC_ALIGN_RIGHT,
+						OPTION_SCALAR,
+						{ 1.0f, 1.0f, 0.2f, 1.0f },
+						">"
+					);
+					draw_text
+					(
+						platform->renderer,
+						state->main_font,
+						{ WIN_RES.x * 0.5f + state->title_menu.option_cursor_interpolated_text_width * OPTION_SCALAR * 0.6f, WIN_RES.y * (0.37f + state->title_menu.option_cursor_interpolated_index * 0.12f) },
+						FC_ALIGN_LEFT,
+						OPTION_SCALAR,
+						{ 1.0f, 1.0f, 0.2f, 1.0f },
+						"<"
+					);
+				} break;
+
+				case TitleMenuContext::settings:
+				{
+				} break;
+
+				case TitleMenuContext::credits:
+				{
+					constexpr strlit CREDITS[] =
+						{
+							"Phuc Doan\n    Programmer",
+							"Mila Matthews\n    Artist",
+							"Lauren Stolebarger\n    Voice Actor"
+						};
+					FOR_ELEMS(it, CREDITS)
+					{
+						draw_text
+						(
+							platform->renderer,
+							state->main_font,
+							{ WIN_RES.x * 0.1f, WIN_RES.y * (0.37f + it_index * 0.12f) },
+							FC_ALIGN_LEFT,
+							0.3f,
+							{ 1.0f, 1.0f, 1.0f, 1.0f },
+							*it
+						);
+					}
+				} break;
 			}
 		} break;
 
-		case StateType::game:
+		case StateContext::game:
 		{
 			memset(state->game.view_framebuffer, 0, sizeof(state->game.view_framebuffer));
 
@@ -1205,7 +1323,7 @@ extern "C" PROTOTYPE_RENDER(render)
 							}
 						);
 					}
-					else
+					else if (fabs(ray.z) > 0.1f)
 					{
 						f32 zk       = ((y < VIEW_RES.y / 2 ? 0 : WALL_HEIGHT) - state->game.lucia_position.z) / ray.z;
 						vf2 portions = (state->game.lucia_position.xy + zk * ray.xy) / 4.0f;
