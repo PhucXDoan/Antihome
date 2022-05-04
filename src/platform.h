@@ -53,13 +53,13 @@ enum struct UpdateCode : u32
 
 struct Platform
 {
-	SDL_Surface* surface;
-	memsize      memory_capacity;
-	byte*        memory;
-	InputState   inputs[Input::CAPACITY];
-	vf2          cursor_delta;
-	vf2          cursor;
-	f32          scroll;
+	SDL_Renderer* renderer;
+	memsize       memory_capacity;
+	byte*         memory;
+	InputState    inputs[Input::CAPACITY];
+	vf2           cursor_delta;
+	vf2           cursor;
+	f32           scroll;
 };
 
 #define PROTOTYPE_INITIALIZE(NAME) void NAME(Platform* platform)

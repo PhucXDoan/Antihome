@@ -7,10 +7,11 @@
 #include "platform.h"
 #include "utilities.cpp"
 
-global constexpr i32 VIEW_PADDING   = 10;
-global constexpr vi2 VIEW_DIM       = vi2 { 2, 1 } * 175;
-global constexpr vi2 HUD_DIM        = vi2 { WIN_DIM.x - VIEW_PADDING * 2, WIN_DIM.y + (VIEW_PADDING * 2 - WIN_DIM.x) * VIEW_DIM.y / VIEW_DIM.x - VIEW_PADDING * 3 } / 2;
-global constexpr f32 HORT_TO_VERT_K = 0.927295218f * VIEW_DIM.x;
+global constexpr vi2 WIN_RES        = WIN_DIM / 3;
+global constexpr i32 PADDING        = 5;
+global constexpr vi2 VIEW_RES       = vxx(vf2 { 1.0f, 0.5f } * (WIN_RES.x - PADDING * 2.0f));
+global constexpr vi2 HUD_RES        = { WIN_RES.x - PADDING * 2, WIN_RES.y - VIEW_RES.y - PADDING * 3 };
+global constexpr f32 HORT_TO_VERT_K = 0.927295218f * VIEW_RES.x;
 global constexpr f32 WALL_HEIGHT    = 2.7432f;
 global constexpr f32 WALL_THICKNESS = 0.25f;
 global constexpr f32 LUCIA_HEIGHT   = 1.4986f;
@@ -78,15 +79,13 @@ struct State
 
 	struct
 	{
-		SDL_Surface*         view;
-		SDL_Surface*         hud;
 		ImgRGB               wall;
 		ImgRGB               floor;
 		ImgRGB               ceiling;
 		ImgRGBA              hand_img;
 		ImgRGBA              thing_imgs[ThingType::CAPACITY];
 
-		Pixel                frame_buffer[VIEW_DIM.x][VIEW_DIM.y];
+		Pixel                view_framebuffer[VIEW_RES.x][VIEW_RES.y];
 		PathCoordinatesNode* available_path_coordinates_node;
 
 		WallVoxel            wall_voxels[MAP_DIM][MAP_DIM];
@@ -351,33 +350,6 @@ internal void boot_up_state_type(State* state, StateType type)
 
 		case StateType::game:
 		{
-			// @TODO@ More robustiness needed here.
-			state->game.view =
-				SDL_CreateRGBSurface
-				(
-					0,
-					VIEW_DIM.x,
-					VIEW_DIM.y,
-					32,
-					0x000000FF,
-					0x0000FF00,
-					0x00FF0000,
-					0xFF000000
-				);
-
-			state->game.hud =
-				SDL_CreateRGBSurface
-				(
-					0,
-					HUD_DIM.x,
-					HUD_DIM.y,
-					32,
-					0x000000FF,
-					0x0000FF00,
-					0x00FF0000,
-					0xFF000000
-				);
-
 			state->game.wall    = init_img_rgb(DATA_DIR "wall.png");
 			state->game.floor   = init_img_rgb(DATA_DIR "floor.png");
 			state->game.ceiling = init_img_rgb(DATA_DIR "ceiling.png");
@@ -409,9 +381,6 @@ internal void boot_down_state_type(State* state, StateType type)
 			{
 				deinit_img_rgba(it);
 			}
-
-			SDL_FreeSurface(state->game.view);
-			SDL_FreeSurface(state->game.hud);
 		} break;
 	}
 }
@@ -432,6 +401,7 @@ extern "C" PROTOTYPE_INITIALIZE(initialize)
 	state->transient_arena.used = 0;
 
 	SDL_SetRelativeMouseMode(SDL_TRUE);
+	SDL_RenderSetLogicalSize(platform->renderer, WIN_RES.x, WIN_RES.y);
 }
 
 extern "C" PROTOTYPE_BOOT_UP(boot_up)
@@ -999,20 +969,21 @@ extern "C" PROTOTYPE_RENDER(render)
 {
 	State* state = reinterpret_cast<State*>(platform->memory);
 
+	SDL_SetRenderDrawColor(platform->renderer, 32, 64, 128, 255);
+	SDL_RenderClear(platform->renderer);
+
 	state->transient_arena.used = 0;
 
 	switch (state->type)
 	{
 		case StateType::title_menu:
 		{
-			fill(platform->surface, { 0.0f, 0.0f, 0.0f });
+			// fill(platform->surface, { 0.0f, 0.0f, 0.0f });
 		} break;
 
 		case StateType::game:
 		{
-			fill(platform->surface, { 0.05f, 0.10f, 0.15f });
-			fill(state->game.hud, { 0.0f, 0.0f, 0.0f });
-			memset(state->game.frame_buffer, 0, sizeof(state->game.frame_buffer));
+			memset(state->game.view_framebuffer, 0, sizeof(state->game.view_framebuffer));
 
 			constexpr f32 AMBIENT_LIGHT_RADIUS = 4.0f;
 			constexpr f32 FLASHLIGHT_POW       = 8.0f;
@@ -1035,10 +1006,9 @@ extern "C" PROTOTYPE_RENDER(render)
 			}
 			#endif
 
-			FOR_RANGE(x, VIEW_DIM.x)
+			FOR_RANGE(x, VIEW_RES.x)
 			{
-
-				vf2 ray_horizontal = polar(state->game.lucia_angle + (0.5f - static_cast<f32>(x) / VIEW_DIM.x) * state->game.lucia_fov);
+				vf2 ray_horizontal = polar(state->game.lucia_angle + (0.5f - static_cast<f32>(x) / VIEW_RES.x) * state->game.lucia_fov);
 
 				bool32 wall_exists   = false;
 				vf2    wall_normal   = { NAN, NAN };
@@ -1119,15 +1089,15 @@ extern "C" PROTOTYPE_RENDER(render)
 				i32 pixel_ending_y   = 0;
 				if (wall_exists)
 				{
-					starting_y       = static_cast<i32>(VIEW_DIM.y / 2.0f - HORT_TO_VERT_K / state->game.lucia_fov *                state->game.lucia_position.z  / (wall_distance + 0.1f));
-					ending_y         = static_cast<i32>(VIEW_DIM.y / 2.0f + HORT_TO_VERT_K / state->game.lucia_fov * (WALL_HEIGHT - state->game.lucia_position.z) / (wall_distance + 0.1f));
+					starting_y       = static_cast<i32>(VIEW_RES.y / 2.0f - HORT_TO_VERT_K / state->game.lucia_fov *                state->game.lucia_position.z  / (wall_distance + 0.1f));
+					ending_y         = static_cast<i32>(VIEW_RES.y / 2.0f + HORT_TO_VERT_K / state->game.lucia_fov * (WALL_HEIGHT - state->game.lucia_position.z) / (wall_distance + 0.1f));
 					pixel_starting_y = MAXIMUM(0, starting_y);
-					pixel_ending_y   = MINIMUM(ending_y, VIEW_DIM.y);
+					pixel_ending_y   = MINIMUM(ending_y, VIEW_RES.y);
 				}
 
-				FOR_RANGE(y, 0, VIEW_DIM.y)
+				FOR_RANGE(y, 0, VIEW_RES.y)
 				{
-					vf3 ray          = normalize({ ray_horizontal.x, ray_horizontal.y, (y - VIEW_DIM.y / 2.0f) * state->game.lucia_fov / HORT_TO_VERT_K });
+					vf3 ray          = normalize({ ray_horizontal.x, ray_horizontal.y, (y - VIEW_RES.y / 2.0f) * state->game.lucia_fov / HORT_TO_VERT_K });
 					f32 flashlight_k = powf(CLAMP(dot(ray, state->game.flashlight_ray), 0.0f, 1.0f), FLASHLIGHT_POW);
 
 					if (IN_RANGE(y, pixel_starting_y, pixel_ending_y))
@@ -1140,7 +1110,7 @@ extern "C" PROTOTYPE_RENDER(render)
 
 						write_pixel
 						(
-							&state->game.frame_buffer[x][y],
+							&state->game.view_framebuffer[x][y],
 							{
 								*(state->game.wall.rgb + static_cast<i32>(wall_portion * (state->game.wall.dim.x - 1.0f)) * state->game.wall.dim.y + static_cast<i32>(static_cast<f32>(y - starting_y) / (ending_y - starting_y) * state->game.wall.dim.y))
 									* CLAMP(k, 0.0f, 1.0f),
@@ -1150,7 +1120,7 @@ extern "C" PROTOTYPE_RENDER(render)
 					}
 					else
 					{
-						f32 zk       = ((y < VIEW_DIM.y / 2 ? 0 : WALL_HEIGHT) - state->game.lucia_position.z) / ray.z;
+						f32 zk       = ((y < VIEW_RES.y / 2 ? 0 : WALL_HEIGHT) - state->game.lucia_position.z) / ray.z;
 						vf2 portions = (state->game.lucia_position.xy + zk * ray.xy) / 4.0f;
 						portions.x   = mod(portions.x, 1.0f);
 						portions.y   = mod(portions.y, 1.0f);
@@ -1162,10 +1132,10 @@ extern "C" PROTOTYPE_RENDER(render)
 							+ fabsf(ray.z)
 								* square(CLAMP(1.0f - distance / AMBIENT_LIGHT_RADIUS, 0.0f, 1.0f));
 
-						ImgRGB* img = y < VIEW_DIM.y / 2 ? &state->game.floor : &state->game.ceiling;
+						ImgRGB* img = y < VIEW_RES.y / 2 ? &state->game.floor : &state->game.ceiling;
 						write_pixel
 						(
-							&state->game.frame_buffer[x][y],
+							&state->game.view_framebuffer[x][y],
 							{
 								*(img->rgb + static_cast<i32>(portions.x * (img->dim.x - 1.0f)) * img->dim.y + static_cast<i32>(portions.y * img->dim.y))
 									* CLAMP(k, 0.0f, 1.0f),
@@ -1174,8 +1144,6 @@ extern "C" PROTOTYPE_RENDER(render)
 						);
 					}
 				}
-
-				state->transient_arena.used = 0;
 
 				struct ThingNode
 				{
@@ -1187,54 +1155,50 @@ extern "C" PROTOTYPE_RENDER(render)
 
 				ThingNode* intersected_thing_node = 0;
 
+				MemoryArena arena = memory_arena_checkpoint(&state->transient_arena);
+
+				FOR_ELEMS(thing, state->game.things_buffer, sizeof(state->game.unique) / sizeof(Thing) + state->game.items_count)
 				{
-					// @TODO@ New arena.
-					memsize old_transient_arena_used = state->transient_arena.used;
-					DEFER { state->transient_arena.used = old_transient_arena_used; };
-
-					FOR_ELEMS(thing, state->game.things_buffer, sizeof(state->game.unique) / sizeof(Thing) + state->game.items_count)
+					FOR_RANGE(i, 9)
 					{
-						FOR_RANGE(i, 9)
-						{
-							f32 distance;
-							f32 portion;
-							if
+						f32 distance;
+						f32 portion;
+						if
+						(
+							ray_cast_line
 							(
-								ray_cast_line
-								(
-									&distance,
-									&portion,
-									state->game.lucia_position.xy,
-									ray_horizontal,
-									vi2 { i % 3 - 1, i / 3 - 1 } * MAP_DIM * WALL_SPACING + thing->position.xy - rotate90(thing->normal) / 2.0f,
-									vi2 { i % 3 - 1, i / 3 - 1 } * MAP_DIM * WALL_SPACING + thing->position.xy + rotate90(thing->normal) / 2.0f
-								)
-								&& IN_RANGE(portion, 0.0f, 1.0f)
+								&distance,
+								&portion,
+								state->game.lucia_position.xy,
+								ray_horizontal,
+								vi2 { i % 3 - 1, i / 3 - 1 } * MAP_DIM * WALL_SPACING + thing->position.xy - rotate90(thing->normal) / 2.0f,
+								vi2 { i % 3 - 1, i / 3 - 1 } * MAP_DIM * WALL_SPACING + thing->position.xy + rotate90(thing->normal) / 2.0f
 							)
+							&& IN_RANGE(portion, 0.0f, 1.0f)
+						)
+						{
+							ThingNode** post_node = &intersected_thing_node;
+							while (*post_node && (*post_node)->distance > distance)
 							{
-								ThingNode** post_node = &intersected_thing_node;
-								while (*post_node && (*post_node)->distance > distance)
-								{
-									post_node = &(*post_node)->next_node;
-								}
-
-								ThingNode* new_node = memory_arena_push<ThingNode>(&state->transient_arena);
-								new_node->thing     = thing;
-								new_node->distance  = distance;
-								new_node->portion   = portion;
-								new_node->next_node = *post_node;
-								*post_node = new_node;
+								post_node = &(*post_node)->next_node;
 							}
+
+							ThingNode* new_node = memory_arena_push<ThingNode>(&arena);
+							new_node->thing     = thing;
+							new_node->distance  = distance;
+							new_node->portion   = portion;
+							new_node->next_node = *post_node;
+							*post_node = new_node;
 						}
 					}
 				}
 
 				for (ThingNode* node = intersected_thing_node; node; node = node->next_node)
 				{
-					i32 thing_starting_y       = static_cast<i32>(VIEW_DIM.y / 2.0f + HORT_TO_VERT_K / state->game.lucia_fov * (node->thing->position.z - norm(node->thing->normal) / 2.0f - state->game.lucia_position.z) / (node->distance + 0.1f));
-					i32 thing_ending_y         = static_cast<i32>(VIEW_DIM.y / 2.0f + HORT_TO_VERT_K / state->game.lucia_fov * (node->thing->position.z + norm(node->thing->normal) / 2.0f - state->game.lucia_position.z) / (node->distance + 0.1f));
+					i32 thing_starting_y       = static_cast<i32>(VIEW_RES.y / 2.0f + HORT_TO_VERT_K / state->game.lucia_fov * (node->thing->position.z - norm(node->thing->normal) / 2.0f - state->game.lucia_position.z) / (node->distance + 0.1f));
+					i32 thing_ending_y         = static_cast<i32>(VIEW_RES.y / 2.0f + HORT_TO_VERT_K / state->game.lucia_fov * (node->thing->position.z + norm(node->thing->normal) / 2.0f - state->game.lucia_position.z) / (node->distance + 0.1f));
 					i32 thing_pixel_starting_y = MAXIMUM(0, thing_starting_y);
-					i32 thing_pixel_ending_y   = MINIMUM(thing_ending_y, VIEW_DIM.y);
+					i32 thing_pixel_ending_y   = MINIMUM(thing_ending_y, VIEW_RES.y);
 
 					FOR_RANGE(y, thing_pixel_starting_y, thing_pixel_ending_y)
 					{
@@ -1245,7 +1209,7 @@ extern "C" PROTOTYPE_RENDER(render)
 
 						if (thing_pixel->w)
 						{
-							vf3 ray          = normalize({ ray_horizontal.x, ray_horizontal.y, (y - VIEW_DIM.y / 2.0f) * state->game.lucia_fov / HORT_TO_VERT_K });
+							vf3 ray          = normalize({ ray_horizontal.x, ray_horizontal.y, (y - VIEW_RES.y / 2.0f) * state->game.lucia_fov / HORT_TO_VERT_K });
 							f32 flashlight_k = powf(CLAMP(dot(ray, state->game.flashlight_ray), 0.0f, 1.0f), FLASHLIGHT_POW);
 							f32 k =
 								flashlight_k
@@ -1255,11 +1219,11 @@ extern "C" PROTOTYPE_RENDER(render)
 
 							write_pixel
 							(
-								&state->game.frame_buffer[x][y],
+								&state->game.view_framebuffer[x][y],
 								{
 									lerp
 									(
-										state->game.frame_buffer[x][y].color,
+										state->game.view_framebuffer[x][y].color,
 										thing_pixel->xyz * CLAMP(k, 0.0f, 1.0f),
 										thing_pixel->w
 									),
@@ -1271,47 +1235,40 @@ extern "C" PROTOTYPE_RENDER(render)
 				}
 			}
 
-			FOR_RANGE(y, VIEW_DIM.y)
-			{
-				FOR_RANGE(x, VIEW_DIM.x)
-				{
-					*(reinterpret_cast<u32*>(state->game.view->pixels) + (VIEW_DIM.y - 1 - y) * state->game.view->w + x) =
-						to_pixel(state->game.view, state->game.frame_buffer[x][y].color);
-				}
-			}
-
-			fill(state->game.hud, { 0.0f, 0.0f }, vxx(vi2 { HUD_DIM.y, HUD_DIM.y }), { 0.15f, 0.15f, 0.15f });
+			set_color(platform->renderer, { 0.15f, 0.15f, 0.15f });
+			fill_rect(platform->renderer, vxx(vi2 { PADDING, VIEW_RES.y + PADDING * 2 }), vxx(HUD_RES));
 
 			if (state->game.inventory_count)
 			{
 				ASSERT(IN_RANGE(state->game.inventory_index, 0, state->game.inventory_count));
 
-				FOR_RANGE(x, HUD_DIM.y)
+				constexpr i32 INVENTORY_DIM = HUD_RES.y;
+				FOR_RANGE(iy, INVENTORY_DIM)
 				{
-					FOR_RANGE(y, HUD_DIM.y)
+					FOR_RANGE(ix, INVENTORY_DIM)
 					{
-						u32*     pixel = reinterpret_cast<u32*>(state->game.hud->pixels) + y * state->game.hud->w + x;
 						ImgRGBA* img   = &state->game.thing_imgs[+state->game.inventory_buffer[state->game.inventory_index]];
 						vf4*     rgba  =
 							img->rgba
-								+ static_cast<i32>(static_cast<f32>(x) / HUD_DIM.y * img->dim.x) * img->dim.y
-								+ static_cast<i32>((1.0f - (1.0f + y) / HUD_DIM.y) * img->dim.y);
+								+ static_cast<i32>(static_cast<f32>(ix) / INVENTORY_DIM * img->dim.x) * img->dim.y
+								+ static_cast<i32>(static_cast<f32>(iy) / INVENTORY_DIM * img->dim.y);
 
-						*pixel =
-							to_pixel
-							(
-								state->game.hud,
-								lerp(to_color(state->game.hud, *pixel), rgba->xyz, rgba->w)
-							);
+						set_color(platform->renderer, lerp({ 0.35f, 0.35f, 0.35f }, rgba->xyz, rgba->w));
+						SDL_RenderDrawPoint(platform->renderer, PADDING + ix, WIN_RES.y - 1 - PADDING - iy);
 					}
 				}
 			}
 
-			SDL_Rect dst = { VIEW_PADDING, VIEW_PADDING, WIN_DIM.x - VIEW_PADDING * 2, (WIN_DIM.x - VIEW_PADDING * 2) * VIEW_DIM.y / VIEW_DIM.x };
-			SDL_BlitScaled(state->game.view, 0, platform->surface, &dst);
-
-			dst = { dst.x, dst.y + dst.h + VIEW_PADDING, dst.w, WIN_DIM.y - dst.y - dst.h - VIEW_PADDING * 2 };
-			SDL_BlitScaled(state->game.hud, 0, platform->surface, &dst);
+			FOR_RANGE(x, VIEW_RES.x)
+			{
+				FOR_RANGE(y, VIEW_RES.y)
+				{
+					set_color(platform->renderer, state->game.view_framebuffer[x][VIEW_RES.y - 1 - y].color);
+					SDL_RenderDrawPoint(platform->renderer, PADDING + x, PADDING + y);
+				}
+			}
 		} break;
 	}
+
+	SDL_RenderPresent(platform->renderer);
 }

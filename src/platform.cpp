@@ -84,10 +84,17 @@ int main(int, char**)
 		exit(-1);
 	}
 
-	SDL_Surface* surface = SDL_GetWindowSurface(window);
+	SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
+	DEFER { SDL_DestroyRenderer(renderer); };
+	if (!renderer)
+	{
+		DEBUG_printf("SDL_Error: '%s'\n", SDL_GetError());
+		ASSERT(false);
+		exit(-1);
+	}
 
 	Platform platform        = {};
-	platform.surface         = surface;
+	platform.renderer        = renderer;
 	platform.memory_capacity = MEBIBYTES_OF(1);
 	platform.memory          = reinterpret_cast<byte*>(malloc(platform.memory_capacity));
 	DEFER { free(platform.memory); };
@@ -96,7 +103,7 @@ int main(int, char**)
 		i32 cursor_x;
 		i32 cursor_y;
 		SDL_GetMouseState(&cursor_x, &cursor_y);
-		platform.cursor = { cursor_x - platform.cursor.x, platform.surface->h - 1.0f - cursor_y - platform.cursor.y };
+		platform.cursor = { cursor_x - platform.cursor.x, WIN_DIM.y - 1.0f - cursor_y - platform.cursor.y };
 	}
 
 	reload_dll();
@@ -213,7 +220,7 @@ int main(int, char**)
 				i32 cursor_x;
 				i32 cursor_y;
 				SDL_GetMouseState(&cursor_x, &cursor_y);
-				platform.cursor = { static_cast<f32>(cursor_x), platform.surface->h - 1.0f - cursor_y };
+				platform.cursor = { static_cast<f32>(cursor_x), WIN_DIM.y - 1.0f - cursor_y };
 
 				if (update(&platform) == UpdateCode::terminate)
 				{
@@ -249,8 +256,6 @@ int main(int, char**)
 				it->prev = it->curr % 2;
 				it->curr = 0;
 			}
-
-			SDL_UpdateWindowSurface(window);
 
 			platform.scroll = 0.0f;
 		}

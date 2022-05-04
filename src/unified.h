@@ -142,6 +142,11 @@ internal TYPE* memory_arena_push(MemoryArena* arena, i32 count = 1)
 	return reinterpret_cast<TYPE*>(allocation);
 }
 
+internal MemoryArena memory_arena_checkpoint(MemoryArena* arena)
+{
+	return { arena->size - arena->used, arena->base + arena->used, 0 };
+}
+
 //
 // Math.
 //

@@ -302,34 +302,22 @@ internal vf3 to_color(SDL_Surface* surface, u32 pixel)
 	return { r / 255.0f, g / 255.0f, b / 255.0f };
 }
 
-internal void fill(SDL_Surface* surface, vf2 position, vf2 dimensions, vf3 color)
+internal void set_color(SDL_Renderer* renderer, vf3 color)
+{
+	SDL_SetRenderDrawColor
+	(
+		renderer,
+		static_cast<u8>(color.x * 255.0f),
+		static_cast<u8>(color.y * 255.0f),
+		static_cast<u8>(color.z * 255.0f),
+		255
+	);
+}
+
+internal void fill_rect(SDL_Renderer* renderer, vf2 position, vf2 dimensions)
 {
 	SDL_Rect rect = { static_cast<i32>(position.x), static_cast<i32>(position.y), static_cast<i32>(dimensions.x), static_cast<i32>(dimensions.y) };
-	SDL_FillRect(surface, &rect, to_pixel(surface, color));
-}
-
-internal void fill(SDL_Surface* surface, vf3 color)
-{
-	SDL_Rect rect = { 0, 0, surface->w, surface->h };
-	SDL_FillRect(surface, &rect, to_pixel(surface, color));
-}
-
-internal void draw_line(SDL_Surface* surface, vf2 start, vf2 end, vf3 color)
-{
-	u32 pixel  = to_pixel(surface, color);
-	vf2 p      = end - start;
-	f32 length = norm(p);
-	vf2 np     = p / length;
-	p = start;
-
-	FOR_RANGE(length)
-	{
-		if (IN_RANGE(p.x, 0.0f, surface->w) && IN_RANGE(p.y, 0.0f, surface->h))
-		{
-			*(reinterpret_cast<u32*>(surface->pixels) + static_cast<i32>(p.y) * surface->w + static_cast<i32>(p.x)) = pixel;
-		}
-		p += np;
-	}
+	SDL_RenderFillRect(renderer, &rect);
 }
 
 internal ImgRGB init_img_rgb(strlit filepath)
