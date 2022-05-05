@@ -114,10 +114,10 @@ enum struct TitleMenuContext : u32
 
 struct State
 {
-	MemoryArena long_term_arena;
-	MemoryArena transient_arena;
+	MemoryArena  long_term_arena;
+	MemoryArena  transient_arena;
 
-	FC_Font*    main_font;
+	FC_Font*     main_font;
 
 	u32          seed;
 	f32          time;
@@ -150,6 +150,7 @@ struct State
 		ImgRGB               ceiling;
 		ImgRGBA              hand_img;
 		ImgRGBA              thing_imgs[ThingType::CAPACITY];
+		SDL_Texture*         inventory_border;
 
 		Pixel                view_framebuffer[VIEW_RES.x][VIEW_RES.y];
 		PathCoordinatesNode* available_path_coordinates_node;
@@ -406,7 +407,7 @@ internal vf2 rng_open_position(State* state)
 	}
 }
 
-internal void boot_up_state(State* state)
+internal void boot_up_state(SDL_Renderer* renderer, State* state)
 {
 	switch (state->context)
 	{
@@ -425,6 +426,8 @@ internal void boot_up_state(State* state)
 			{
 				state->game.thing_imgs[it_index] = init_img_rgba(*it);
 			}
+
+			state->game.inventory_border = IMG_LoadTexture(renderer, DATA_DIR "inventory_border.png");
 		} break;
 	}
 }
@@ -447,6 +450,8 @@ internal void boot_down_state(State* state)
 			{
 				deinit_img_rgba(it);
 			}
+
+			SDL_DestroyTexture(state->game.inventory_border);
 		} break;
 	}
 }
@@ -466,6 +471,9 @@ extern "C" PROTOTYPE_INITIALIZE(initialize)
 	state->transient_arena.base = platform->memory          + sizeof(State) + state->long_term_arena.size;
 	state->transient_arena.used = 0;
 
+	state->master_volume = 0.5f;
+	state->brightness    = 0.75f;
+
 	SDL_SetRelativeMouseMode(SDL_TRUE);
 	SDL_RenderSetLogicalSize(platform->renderer, WIN_RES.x, WIN_RES.y);
 }
@@ -478,7 +486,7 @@ extern "C" PROTOTYPE_BOOT_UP(boot_up)
 	state->main_font = FC_CreateFont();
 	FC_LoadFont(state->main_font, platform->renderer, DATA_DIR "Consolas.ttf", 32, FC_MakeColor(255, 255, 255, 255), TTF_STYLE_NORMAL);
 
-	boot_up_state(state);
+	boot_up_state(platform->renderer, state);
 }
 
 extern "C" PROTOTYPE_BOOT_DOWN(boot_down)
@@ -521,7 +529,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 								boot_down_state(state);
 								state->context = StateContext::game;
 								state->game    = {};
-								boot_up_state(state);
+								boot_up_state(platform->renderer, state);
 
 								FOR_RANGE(start_walk_y, MAP_DIM)
 								{
@@ -724,7 +732,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 				boot_down_state(state);
 				state->context    = StateContext::title_menu;
 				state->title_menu = {};
-				boot_up_state(state);
+				boot_up_state(platform->renderer, state);
 
 				return UpdateCode::resume;
 			}
@@ -1242,14 +1250,14 @@ extern "C" PROTOTYPE_RENDER(render)
 							{
 								set_color(platform->renderer, { 1.0f, 1.0f, 1.0f });
 								draw_line(platform->renderer, { WIN_RES.x * 0.5f, WIN_RES.y * (0.37f + it_index * OPTION_SPACING) }, { WIN_RES.x * 0.9f, WIN_RES.y * (0.37f + it_index * OPTION_SPACING) });
-								draw_circle(platform->renderer, { WIN_RES.x * lerp(0.5f, 0.9f, state->master_volume), WIN_RES.y * (0.37f + it_index * OPTION_SPACING) }, 5);
+								draw_filled_circle(platform->renderer, { WIN_RES.x * lerp(0.5f, 0.9f, state->master_volume), WIN_RES.y * (0.37f + it_index * OPTION_SPACING) }, 5);
 							} break;
 
 							case SettingOption::brightness:
 							{
 								set_color(platform->renderer, { 1.0f, 1.0f, 1.0f });
 								draw_line(platform->renderer, { WIN_RES.x * 0.5f, WIN_RES.y * (0.37f + it_index * OPTION_SPACING) }, { WIN_RES.x * 0.9f, WIN_RES.y * (0.37f + it_index * OPTION_SPACING) });
-								draw_circle(platform->renderer, { WIN_RES.x * lerp(0.5f, 0.9f, state->brightness), WIN_RES.y * (0.37f + it_index * OPTION_SPACING) }, 5);
+								draw_filled_circle(platform->renderer, { WIN_RES.x * lerp(0.5f, 0.9f, state->brightness), WIN_RES.y * (0.37f + it_index * OPTION_SPACING) }, 5);
 							} break;
 						}
 					}
@@ -1428,7 +1436,7 @@ extern "C" PROTOTYPE_RENDER(render)
 							}
 						);
 					}
-					else if (fabs(ray.z) > 0.1f)
+					else if (fabs(ray.z) > 0.001f)
 					{
 						f32 zk       = ((y < VIEW_RES.y / 2 ? 0 : WALL_HEIGHT) - state->game.lucia_position.z) / ray.z;
 						vf2 portions = (state->game.lucia_position.xy + zk * ray.xy) / 4.0f;
@@ -1545,30 +1553,6 @@ extern "C" PROTOTYPE_RENDER(render)
 				}
 			}
 
-			set_color(platform->renderer, { 0.15f, 0.15f, 0.15f });
-			draw_rect(platform->renderer, vxx(vi2 { PADDING, VIEW_RES.y + PADDING * 2 }), vxx(HUD_RES));
-
-			if (state->game.inventory_count)
-			{
-				ASSERT(IN_RANGE(state->game.inventory_index, 0, state->game.inventory_count));
-
-				constexpr i32 INVENTORY_DIM = HUD_RES.y;
-				FOR_RANGE(iy, INVENTORY_DIM)
-				{
-					FOR_RANGE(ix, INVENTORY_DIM)
-					{
-						ImgRGBA* img   = &state->game.thing_imgs[+state->game.inventory_buffer[state->game.inventory_index]];
-						vf4*     rgba  =
-							img->rgba
-								+ static_cast<i32>(static_cast<f32>(ix) / INVENTORY_DIM * img->dim.x) * img->dim.y
-								+ static_cast<i32>(static_cast<f32>(iy) / INVENTORY_DIM * img->dim.y);
-
-						set_color(platform->renderer, lerp({ 0.35f, 0.35f, 0.35f }, rgba->xyz, rgba->w));
-						SDL_RenderDrawPoint(platform->renderer, PADDING + ix, WIN_RES.y - 1 - PADDING - iy);
-					}
-				}
-			}
-
 			FOR_RANGE(x, VIEW_RES.x)
 			{
 				FOR_RANGE(y, VIEW_RES.y)
@@ -1577,6 +1561,34 @@ extern "C" PROTOTYPE_RENDER(render)
 					SDL_RenderDrawPoint(platform->renderer, PADDING + x, PADDING + y);
 				}
 			}
+
+			set_color(platform->renderer, { 0.15f, 0.15f, 0.15f });
+			draw_rect(platform->renderer, vxx(vi2 { PADDING, VIEW_RES.y + PADDING * 2 }), vxx(HUD_RES));
+
+			constexpr i32 INVENTORY_DIM = HUD_RES.y;
+			if (state->game.inventory_count)
+			{
+				ASSERT(IN_RANGE(state->game.inventory_index, 0, state->game.inventory_count));
+
+				constexpr f32 SCALAR = 0.5f;
+				FOR_RANGE(iy, static_cast<i32>(INVENTORY_DIM * SCALAR))
+				{
+					FOR_RANGE(ix, static_cast<i32>(INVENTORY_DIM * SCALAR))
+					{
+						ImgRGBA* item_img  = &state->game.thing_imgs[+state->game.inventory_buffer[state->game.inventory_index]];
+						vf4*     item_rgba =
+							item_img->rgba
+								+ static_cast<i32>(static_cast<f32>(ix) / (INVENTORY_DIM * SCALAR) * item_img->dim.x) * item_img->dim.y
+								+ static_cast<i32>(static_cast<f32>(iy) / (INVENTORY_DIM * SCALAR) * item_img->dim.y);
+
+						set_color(platform->renderer, lerp({ 0.15f, 0.15f, 0.15f }, item_rgba->xyz, item_rgba->w));
+						SDL_RenderDrawPoint(platform->renderer, static_cast<i32>(PADDING + ix + INVENTORY_DIM * (1.0f - SCALAR) / 2.0f), static_cast<i32>(WIN_RES.y - 1 - PADDING - iy - INVENTORY_DIM * (1.0f - SCALAR) / 2.0f));
+					}
+				}
+			}
+
+			SDL_Rect dst = { PADDING, WIN_RES.y - 1 - PADDING - INVENTORY_DIM, INVENTORY_DIM, INVENTORY_DIM };
+			SDL_RenderCopy(platform->renderer, state->game.inventory_border, 0, &dst);
 		} break;
 	}
 

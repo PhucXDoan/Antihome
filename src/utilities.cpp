@@ -361,6 +361,37 @@ internal void draw_circle(SDL_Renderer* renderer, vf2 center, f32 radius)
 	}
 }
 
+internal void draw_filled_circle(SDL_Renderer* renderer, vf2 center, f32 radius)
+{
+	ASSERT(radius < 256.0f);
+
+	vf2 p     = { radius - 1.0f, 0.0f };
+	vi2 t     = { 1, 1 };
+	f32 error = t.x - 2.0f * radius;
+
+	while (p.x >= p.y)
+	{
+		SDL_RenderDrawLine(renderer, static_cast<i32>(center.x - p.x), static_cast<i32>(center.y - p.y), static_cast<i32>(center.x + p.x), static_cast<i32>(center.y - p.y));
+		SDL_RenderDrawLine(renderer, static_cast<i32>(center.x - p.y), static_cast<i32>(center.y - p.x), static_cast<i32>(center.x + p.y), static_cast<i32>(center.y - p.x));
+		SDL_RenderDrawLine(renderer, static_cast<i32>(center.x - p.x), static_cast<i32>(center.y + p.y), static_cast<i32>(center.x + p.x), static_cast<i32>(center.y + p.y));
+		SDL_RenderDrawLine(renderer, static_cast<i32>(center.x - p.y), static_cast<i32>(center.y + p.x), static_cast<i32>(center.x + p.y), static_cast<i32>(center.y + p.x));
+
+		if (error <= 0.0f)
+		{
+			p.y   += 1.0f;
+			error += t.y;
+			t.y   += 2;
+		}
+
+		if (error > 0.0f)
+		{
+			p.x   -= 1.0f;
+			t.x   += 2;
+			error += t.x - 2.0f * radius;
+		}
+	}
+}
+
 template <typename... ARGUMENTS>
 internal void draw_text(SDL_Renderer* renderer, FC_Font* font, vf2 coordinates, FC_AlignEnum alignment, f32 scalar, vf4 rgba, strlit fstr, ARGUMENTS... arguments)
 {

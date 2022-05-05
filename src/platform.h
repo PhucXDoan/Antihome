@@ -3,6 +3,7 @@
 #include <SDL_ttf.h>
 #include <SDL_FontCache.h>
 #include <SDL_Mixer.h>
+#include <SDL_image.h>
 
 global constexpr vi2 WIN_DIM            = { 800, 600 };
 global constexpr f32 SECONDS_PER_UPDATE = 1.0f / 24.0f;

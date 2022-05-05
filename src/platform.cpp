@@ -93,6 +93,12 @@ int main(int, char**)
 		exit(-1);
 	}
 
+	{
+		SDL_Surface* icon = SDL_LoadBMP(DATA_DIR "icon.bmp");
+		SDL_SetWindowIcon(window, icon);
+		SDL_FreeSurface(icon);
+	}
+
 	Platform platform        = {};
 	platform.renderer        = renderer;
 	platform.memory_capacity = MEBIBYTES_OF(1);
