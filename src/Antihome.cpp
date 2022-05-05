@@ -9,7 +9,7 @@
 #include "platform.h"
 #include "utilities.cpp"
 
-global constexpr vi2 WIN_RES        = WIN_DIM / 3;
+global constexpr vi2 WIN_RES        = WIN_DIM / 3; // @TODO@ This affects text.
 global constexpr i32 PADDING        = 5;
 global constexpr vi2 VIEW_RES       = vxx(vf2 { 1.0f, 0.5f } * (WIN_RES.x - PADDING * 2.0f));
 global constexpr vi2 HUD_RES        = { WIN_RES.x - PADDING * 2, WIN_RES.y - VIEW_RES.y - PADDING * 3 };
@@ -68,7 +68,7 @@ global constexpr strlit THING_IMG_PATHS[ThingType::CAPACITY] =
 		DATA_DIR "hand.png",
 		DATA_DIR "battery.png",
 		DATA_DIR "paper.png",
-		DATA_DIR "flashlight.png"
+		DATA_DIR "flashlight_off.png"
 	};
 
 struct Thing
@@ -89,7 +89,10 @@ flag_struct (WallVoxel, u8)
 
 struct Pixel
 {
-	vf3 color;
+	u8  r;
+	u8  g;
+	u8  b;
+	u8  PADDING_;
 	f32 inv_depth;
 };
 
@@ -151,11 +154,18 @@ struct State
 		ImgRGBA              hand_img;
 		ImgRGBA              thing_imgs[ThingType::CAPACITY];
 		SDL_Texture*         inventory_border;
+		SDL_Texture*         lucia_haunted;
+		SDL_Texture*         lucia_healed;
+		SDL_Texture*         lucia_hit;
+		SDL_Texture*         lucia_normal;
+		SDL_Texture*         lucia_wounded;
 
 		Pixel                view_framebuffer[VIEW_RES.x][VIEW_RES.y];
 		PathCoordinatesNode* available_path_coordinates_node;
 
 		WallVoxel            wall_voxels[MAP_DIM][MAP_DIM];
+		f32                  flashlight_power;
+		f32                  flashlight_activation;
 		vf3                  flashlight_ray;
 		f32                  flashlight_keytime;
 		i32                  inventory_index;
@@ -366,11 +376,14 @@ internal vf2 ray_to_closest(vf2 position, vf2 target)
 	return best_ray;
 }
 
-internal void write_pixel(Pixel* pixel, Pixel new_pixel)
+internal void write_pixel(Pixel* pixel, vf3 color, f32 inv_depth)
 {
-	if (pixel->inv_depth <= new_pixel.inv_depth)
+	if (pixel->inv_depth <= inv_depth)
 	{
-		*pixel = new_pixel;
+		pixel->r         = static_cast<u8>(color.x * 255.0f);
+		pixel->g         = static_cast<u8>(color.y * 255.0f);
+		pixel->b         = static_cast<u8>(color.z * 255.0f);
+		pixel->inv_depth = inv_depth;
 	}
 }
 
@@ -428,6 +441,11 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 			}
 
 			state->game.inventory_border = IMG_LoadTexture(renderer, DATA_DIR "inventory_border.png");
+			state->game.lucia_haunted    = IMG_LoadTexture(renderer, DATA_DIR "lucia_haunted.png");
+			state->game.lucia_healed     = IMG_LoadTexture(renderer, DATA_DIR "lucia_healed.png");
+			state->game.lucia_hit        = IMG_LoadTexture(renderer, DATA_DIR "lucia_hit.png");
+			state->game.lucia_normal     = IMG_LoadTexture(renderer, DATA_DIR "lucia_normal.png");
+			state->game.lucia_wounded    = IMG_LoadTexture(renderer, DATA_DIR "lucia_wounded.png");
 		} break;
 	}
 }
@@ -452,6 +470,11 @@ internal void boot_down_state(State* state)
 			}
 
 			SDL_DestroyTexture(state->game.inventory_border);
+			SDL_DestroyTexture(state->game.lucia_haunted);
+			SDL_DestroyTexture(state->game.lucia_healed);
+			SDL_DestroyTexture(state->game.lucia_hit);
+			SDL_DestroyTexture(state->game.lucia_normal);
+			SDL_DestroyTexture(state->game.lucia_wounded);
 		} break;
 	}
 }
@@ -1114,8 +1137,9 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 				if (PRESSED(Input::space) && state->game.inventory_count < ARRAY_CAPACITY(state->game.inventory_buffer))
 				{
-					state->game.inventory_buffer[state->game.inventory_count] = state->game.hand_hovered_item->type;
-					state->game.inventory_count += 1;
+					state->game.inventory_index                                = state->game.inventory_count;
+					state->game.inventory_buffer[state->game.inventory_count]  = state->game.hand_hovered_item->type;
+					state->game.inventory_count                               += 1;
 
 					deallocate_item(state, state->game.hand_hovered_item);
 					state->game.hand_hovered_item = 0;
@@ -1134,17 +1158,22 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 			if (state->game.inventory_count)
 			{
-				i32 delta_index = 0;
 				if (PRESSED(Input::q))
 				{
-					delta_index -= 1;
+					state->game.inventory_index = (state->game.inventory_index + 1) % state->game.inventory_count;
 				}
-				if (PRESSED(Input::e))
-				{
-					delta_index += 1;
-				}
-				state->game.inventory_index = mod(state->game.inventory_index + delta_index, state->game.inventory_count);
 			}
+
+			if (HOLDING(Input::down))
+			{
+				state->game.flashlight_activation -= 0.5f * SECONDS_PER_UPDATE;
+			}
+			if (HOLDING(Input::up))
+			{
+				state->game.flashlight_activation += 0.5f * SECONDS_PER_UPDATE;
+			}
+			state->game.flashlight_activation = CLAMP(state->game.flashlight_activation, 0.0f, 1.0f);
+			DEBUG_printf("%f\n", state->game.flashlight_activation);
 		} break;
 	}
 
@@ -1244,21 +1273,20 @@ extern "C" PROTOTYPE_RENDER(render)
 							*it
 						);
 
+						f32* slider_value = 0;
+
 						switch (it_index)
 						{
-							case SettingOption::master_volume:
-							{
-								set_color(platform->renderer, { 1.0f, 1.0f, 1.0f });
-								draw_line(platform->renderer, { WIN_RES.x * 0.5f, WIN_RES.y * (0.37f + it_index * OPTION_SPACING) }, { WIN_RES.x * 0.9f, WIN_RES.y * (0.37f + it_index * OPTION_SPACING) });
-								draw_filled_circle(platform->renderer, { WIN_RES.x * lerp(0.5f, 0.9f, state->master_volume), WIN_RES.y * (0.37f + it_index * OPTION_SPACING) }, 5);
-							} break;
+							case SettingOption::master_volume : slider_value = &state->master_volume; break;
+							case SettingOption::brightness    : slider_value = &state->brightness;    break;
+						}
 
-							case SettingOption::brightness:
-							{
-								set_color(platform->renderer, { 1.0f, 1.0f, 1.0f });
-								draw_line(platform->renderer, { WIN_RES.x * 0.5f, WIN_RES.y * (0.37f + it_index * OPTION_SPACING) }, { WIN_RES.x * 0.9f, WIN_RES.y * (0.37f + it_index * OPTION_SPACING) });
-								draw_filled_circle(platform->renderer, { WIN_RES.x * lerp(0.5f, 0.9f, state->brightness), WIN_RES.y * (0.37f + it_index * OPTION_SPACING) }, 5);
-							} break;
+						if (slider_value)
+						{
+							f32 baseline = FC_GetBaseline(state->main_font) * OPTION_SCALAR;
+							set_color(platform->renderer, { 1.0f, 1.0f, 1.0f });
+							draw_line(platform->renderer, { WIN_RES.x * 0.5f, WIN_RES.y * (0.37f + it_index * OPTION_SPACING) + baseline / 2.0f }, { WIN_RES.x * 0.9f, WIN_RES.y * (0.37f + it_index * OPTION_SPACING) + baseline / 2.0f });
+							draw_filled_circle(platform->renderer, { WIN_RES.x * lerp(0.5f, 0.9f, *slider_value), WIN_RES.y * (0.37f + it_index * OPTION_SPACING) + baseline / 2.0f }, 5);
 						}
 					}
 
@@ -1303,8 +1331,9 @@ extern "C" PROTOTYPE_RENDER(render)
 		{
 			memset(state->game.view_framebuffer, 0, sizeof(state->game.view_framebuffer));
 
-			constexpr f32 AMBIENT_LIGHT_RADIUS = 4.0f;
-			constexpr f32 FLASHLIGHT_POW       = 8.0f;
+			constexpr f32 FLASHLIGHT_POW       = 32.0f;
+			constexpr f32 AMBIENT_LIGHT_POW    = 4.0f;
+			constexpr f32 AMBIENT_LIGHT_RADIUS = 8.0f;
 
 			#if 0
 			persist u64 DEBUG_total;
@@ -1416,49 +1445,44 @@ extern "C" PROTOTYPE_RENDER(render)
 				FOR_RANGE(y, 0, VIEW_RES.y)
 				{
 					vf3 ray          = normalize({ ray_horizontal.x, ray_horizontal.y, (y - VIEW_RES.y / 2.0f) * state->game.lucia_fov / HORT_TO_VERT_K });
-					f32 flashlight_k = powf(CLAMP(dot(ray, state->game.flashlight_ray), 0.0f, 1.0f), FLASHLIGHT_POW);
+					f32 flashlight_k = powf(CLAMP(dot(ray, state->game.flashlight_ray), 0.0f, 1.0f), FLASHLIGHT_POW) * state->game.flashlight_activation;
 
 					if (IN_RANGE(y, pixel_starting_y, pixel_ending_y))
 					{
 						f32 k =
 							flashlight_k
 								* square(CLAMP(1.0f - wall_distance / 32.0f, 0.0f, 1.0f))
-							+ fabsf(dot(ray.xy, wall_normal))
-								* square(CLAMP(1.0f - wall_distance / AMBIENT_LIGHT_RADIUS, 0.0f, 1.0f));
+							+ powf(CLAMP(1.0f - wall_distance / AMBIENT_LIGHT_RADIUS, 0.0f, 1.0f), AMBIENT_LIGHT_POW);
 
 						write_pixel
 						(
 							&state->game.view_framebuffer[x][y],
-							{
-								*(state->game.wall.rgb + static_cast<i32>(wall_portion * (state->game.wall.dim.x - 1.0f)) * state->game.wall.dim.y + static_cast<i32>(static_cast<f32>(y - starting_y) / (ending_y - starting_y) * state->game.wall.dim.y))
-									* CLAMP(k, 0.0f, 1.0f),
-								1.0f / wall_distance
-							}
+							*(state->game.wall.rgb + static_cast<i32>(wall_portion * (state->game.wall.dim.x - 1.0f)) * state->game.wall.dim.y + static_cast<i32>(static_cast<f32>(y - starting_y) / (ending_y - starting_y) * state->game.wall.dim.y))
+								* CLAMP(k, 0.0f, 1.0f),
+							1.0f / wall_distance
 						);
 					}
 					else if (fabs(ray.z) > 0.001f)
 					{
 						f32 zk       = ((y < VIEW_RES.y / 2 ? 0 : WALL_HEIGHT) - state->game.lucia_position.z) / ray.z;
-						vf2 portions = (state->game.lucia_position.xy + zk * ray.xy) / 4.0f;
-						portions.x   = mod(portions.x, 1.0f);
-						portions.y   = mod(portions.y, 1.0f);
+						vf2 portions = (state->game.lucia_position.xy + zk * ray.xy);
+						f32 distance = norm(portions - state->game.lucia_position.xy); // Accurate distance: sqrtf(square(zk) * 2.0f - square(state->game.lucia_position.z));
 
-						f32 distance = sqrtf(square(zk) * 2.0f - square(state->game.lucia_position.z));
+						portions.x   = mod(portions.x / 4.0f, 1.0f);
+						portions.y   = mod(portions.y / 4.0f, 1.0f);
+
 						f32 k        =
 							flashlight_k
 								* square(CLAMP(1.0f - distance / 32.0f, 0.0f, 1.0f))
-							+ fabsf(ray.z)
-								* square(CLAMP(1.0f - distance / AMBIENT_LIGHT_RADIUS, 0.0f, 1.0f));
+							+ powf(CLAMP(1.0f - distance / AMBIENT_LIGHT_RADIUS, 0.0f, 1.0f), AMBIENT_LIGHT_POW);
 
 						ImgRGB* img = y < VIEW_RES.y / 2 ? &state->game.floor : &state->game.ceiling;
 						write_pixel
 						(
 							&state->game.view_framebuffer[x][y],
-							{
-								*(img->rgb + static_cast<i32>(portions.x * (img->dim.x - 1.0f)) * img->dim.y + static_cast<i32>(portions.y * img->dim.y))
-									* CLAMP(k, 0.0f, 1.0f),
-								1.0f / distance
-							}
+							*(img->rgb + static_cast<i32>(portions.x * (img->dim.x - 1.0f)) * img->dim.y + static_cast<i32>(portions.y * img->dim.y))
+								* CLAMP(k, 0.0f, 1.0f),
+							1.0f / distance
 						);
 					}
 				}
@@ -1477,7 +1501,7 @@ extern "C" PROTOTYPE_RENDER(render)
 
 				FOR_ELEMS(thing, state->game.things_buffer, sizeof(state->game.unique) / sizeof(Thing) + state->game.items_count)
 				{
-					FOR_RANGE(i, 9)
+					FOR_RANGE(i, 9) // @TODO@ Optimize
 					{
 						f32 distance;
 						f32 portion;
@@ -1527,27 +1551,32 @@ extern "C" PROTOTYPE_RENDER(render)
 
 						if (thing_pixel->w)
 						{
-							vf3 ray          = normalize({ ray_horizontal.x, ray_horizontal.y, (y - VIEW_RES.y / 2.0f) * state->game.lucia_fov / HORT_TO_VERT_K });
-							f32 flashlight_k = powf(CLAMP(dot(ray, state->game.flashlight_ray), 0.0f, 1.0f), FLASHLIGHT_POW);
-							f32 k =
-								flashlight_k
-									* square(CLAMP(1.0f - node->distance / 32.0f, 0.0f, 1.0f))
-								+ fabsf(dot(ray, { node->thing->normal.x, node->thing->normal.y, 0.0f }))
-									* square(CLAMP(1.0f - node->distance / AMBIENT_LIGHT_RADIUS, 0.0f, 1.0f));
+							vf3 ray = normalize({ ray_horizontal.x, ray_horizontal.y, (y - VIEW_RES.y / 2.0f) * state->game.lucia_fov / HORT_TO_VERT_K });
 
-							write_pixel
-							(
-								&state->game.view_framebuffer[x][y],
-								{
+							if (IN_RANGE(state->game.lucia_position.z + ray.z * node->distance, 0.0f, WALL_HEIGHT))
+							{
+								f32 k =
+									powf(CLAMP(dot(ray, state->game.flashlight_ray), 0.0f, 1.0f), FLASHLIGHT_POW)
+										* state->game.flashlight_activation
+										* square(CLAMP(1.0f - node->distance / 32.0f, 0.0f, 1.0f))
+									+ powf(CLAMP(1.0f - node->distance / AMBIENT_LIGHT_RADIUS, 0.0f, 1.0f), AMBIENT_LIGHT_POW);
+
+								write_pixel
+								(
+									&state->game.view_framebuffer[x][y],
 									lerp
 									(
-										state->game.view_framebuffer[x][y].color,
+										{
+											state->game.view_framebuffer[x][y].r / 255.0f,
+											state->game.view_framebuffer[x][y].g / 255.0f,
+											state->game.view_framebuffer[x][y].b / 255.0f
+										},
 										thing_pixel->xyz * CLAMP(k, 0.0f, 1.0f),
 										thing_pixel->w
 									),
 									1.0f / node->distance
-								}
-							);
+								);
+							}
 						}
 					}
 				}
@@ -1557,7 +1586,8 @@ extern "C" PROTOTYPE_RENDER(render)
 			{
 				FOR_RANGE(y, VIEW_RES.y)
 				{
-					set_color(platform->renderer, state->game.view_framebuffer[x][VIEW_RES.y - 1 - y].color);
+					refering pixel = state->game.view_framebuffer[x][VIEW_RES.y - 1 - y];
+					SDL_SetRenderDrawColor(platform->renderer, pixel.r, pixel.g, pixel.b, 255);
 					SDL_RenderDrawPoint(platform->renderer, PADDING + x, PADDING + y);
 				}
 			}
@@ -1565,30 +1595,31 @@ extern "C" PROTOTYPE_RENDER(render)
 			set_color(platform->renderer, { 0.15f, 0.15f, 0.15f });
 			draw_rect(platform->renderer, vxx(vi2 { PADDING, VIEW_RES.y + PADDING * 2 }), vxx(HUD_RES));
 
-			constexpr i32 INVENTORY_DIM = HUD_RES.y;
 			if (state->game.inventory_count)
 			{
 				ASSERT(IN_RANGE(state->game.inventory_index, 0, state->game.inventory_count));
 
 				constexpr f32 SCALAR = 0.5f;
-				FOR_RANGE(iy, static_cast<i32>(INVENTORY_DIM * SCALAR))
+				FOR_RANGE(iy, static_cast<i32>(HUD_RES.y * SCALAR))
 				{
-					FOR_RANGE(ix, static_cast<i32>(INVENTORY_DIM * SCALAR))
+					FOR_RANGE(ix, static_cast<i32>(HUD_RES.y * SCALAR))
 					{
 						ImgRGBA* item_img  = &state->game.thing_imgs[+state->game.inventory_buffer[state->game.inventory_index]];
 						vf4*     item_rgba =
 							item_img->rgba
-								+ static_cast<i32>(static_cast<f32>(ix) / (INVENTORY_DIM * SCALAR) * item_img->dim.x) * item_img->dim.y
-								+ static_cast<i32>(static_cast<f32>(iy) / (INVENTORY_DIM * SCALAR) * item_img->dim.y);
+								+ static_cast<i32>(static_cast<f32>(ix) / (HUD_RES.y * SCALAR) * item_img->dim.x) * item_img->dim.y
+								+ static_cast<i32>(static_cast<f32>(iy) / (HUD_RES.y * SCALAR) * item_img->dim.y);
 
 						set_color(platform->renderer, lerp({ 0.15f, 0.15f, 0.15f }, item_rgba->xyz, item_rgba->w));
-						SDL_RenderDrawPoint(platform->renderer, static_cast<i32>(PADDING + ix + INVENTORY_DIM * (1.0f - SCALAR) / 2.0f), static_cast<i32>(WIN_RES.y - 1 - PADDING - iy - INVENTORY_DIM * (1.0f - SCALAR) / 2.0f));
+						SDL_RenderDrawPoint(platform->renderer, static_cast<i32>(PADDING + ix + HUD_RES.y * (1.0f - SCALAR) / 2.0f), static_cast<i32>(WIN_RES.y - 1 - PADDING - iy - HUD_RES.y * (1.0f - SCALAR) / 2.0f));
 					}
 				}
 			}
 
-			SDL_Rect dst = { PADDING, WIN_RES.y - 1 - PADDING - INVENTORY_DIM, INVENTORY_DIM, INVENTORY_DIM };
-			SDL_RenderCopy(platform->renderer, state->game.inventory_border, 0, &dst);
+			blit_texture(platform->renderer, state->game.inventory_border, { static_cast<f32>(PADDING), WIN_RES.y - 1.0f - PADDING - HUD_RES.y }, vxx(vi2 { HUD_RES.y, HUD_RES.y }));
+
+			constexpr f32 LUCIA_HUD_SCALAR = 0.8f;
+			blit_texture(platform->renderer, state->game.lucia_normal, { (WIN_RES.x - HUD_RES.y * LUCIA_HUD_SCALAR) / 2.0f, WIN_RES.y - 1.0f - PADDING - HUD_RES.y + HUD_RES.y * LUCIA_HUD_SCALAR * (1.0f - LUCIA_HUD_SCALAR) - 3.0f }, vi2 { HUD_RES.y, HUD_RES.y } * LUCIA_HUD_SCALAR);
 		} break;
 	}
 

@@ -418,6 +418,12 @@ internal void draw_text(SDL_Renderer* renderer, FC_Font* font, vf2 coordinates, 
 	);
 }
 
+internal void blit_texture(SDL_Renderer* renderer, SDL_Texture* texture, vf2 position, vf2 dimensions)
+{
+	SDL_Rect dst = { static_cast<i32>(position.x), static_cast<i32>(position.y), static_cast<i32>(dimensions.x), static_cast<i32>(dimensions.y) };
+	SDL_RenderCopy(renderer, texture, 0, &dst);
+}
+
 internal ImgRGB init_img_rgb(strlit filepath)
 {
 	ImgRGB img;
