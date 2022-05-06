@@ -101,12 +101,6 @@ flag_struct (WallVoxel, u8)
 	forward_slash = 1 << 3
 };
 
-struct Pixel
-{
-	RGB rgb;
-	f32 inv_depth;
-};
-
 struct PathCoordinatesNode
 {
 	vi2                  coordinates;
@@ -172,7 +166,7 @@ struct State
 		SDL_Texture*         lucia_wounded;
 		SDL_Texture*         view_texture;
 
-		Pixel                view_framebuffer[VIEW_RES.x][VIEW_RES.y];
+		f32                  view_inv_depth_buffer[VIEW_RES.x][VIEW_RES.y];
 		PathCoordinatesNode* available_path_coordinates_node;
 
 		WallVoxel            wall_voxels[MAP_DIM][MAP_DIM];
@@ -222,6 +216,24 @@ global constexpr struct { WallVoxel voxel; vf2 start; vf2 end; vf2 normal; } WAL
 		{ WallVoxel::back_slash   , { 1.0f, 0.0f }, { 0.0f, 1.0f }, { -INVSQRT2, -INVSQRT2 } },
 		{ WallVoxel::forward_slash, { 0.0f, 0.0f }, { 1.0f, 1.0f }, { -INVSQRT2,  INVSQRT2 } }
 	};
+
+internal u32 to_pixel(vf3 color)
+{
+	return
+		(static_cast<u8>(color.x * 255.0f) << 24) |
+		(static_cast<u8>(color.y * 255.0f) << 16) |
+		(static_cast<u8>(color.z * 255.0f) <<  8);
+}
+
+internal vf3 to_color(u32 pixel)
+{
+	return
+	{
+		static_cast<f32>((pixel >> 24) & 0xFF) / 255.0f,
+		static_cast<f32>((pixel >> 16) & 0xFF) / 255.0f,
+		static_cast<f32>((pixel >>  8) & 0xFF) / 255.0f
+	};
+}
 
 internal Mipmap init_mipmap(strlit file_path)
 {
@@ -459,17 +471,6 @@ internal vf2 ray_to_closest(vf2 position, vf2 target)
 	}
 
 	return best_ray;
-}
-
-internal void write_pixel(Pixel* pixel, vf3 color, f32 inv_depth)
-{
-	if (pixel->inv_depth <= inv_depth)
-	{
-		pixel->rgb.r     = static_cast<u8>(color.x * 255.0f);
-		pixel->rgb.g     = static_cast<u8>(color.y * 255.0f);
-		pixel->rgb.b     = static_cast<u8>(color.z * 255.0f);
-		pixel->inv_depth = inv_depth;
-	}
 }
 
 internal Thing* allocate_item(State* state)
@@ -837,18 +838,6 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 		case StateContext::game:
 		{
-			//constexpr i32           DEBUG_SCANS = 30;
-			//persist   LARGE_INTEGER DEBUG_PERFORMANCE_FREQ;
-
-			//DEBUG_once
-			//{
-			//	QueryPerformanceFrequency(&DEBUG_PERFORMANCE_FREQ);
-			//}
-			//persist u64 DEBUG_UPDATE_total; // @TEMP@
-			//persist u64 DEBUG_UPDATE_counter;
-			//LARGE_INTEGER DEBUG_UPDATE_li0;
-			//QueryPerformanceCounter(&DEBUG_UPDATE_li0);
-
 			if (PRESSED(Input::escape))
 			{
 				boot_down_state(state);
@@ -1272,17 +1261,6 @@ extern "C" PROTOTYPE_UPDATE(update)
 				state->game.flashlight_activation += 0.5f * SECONDS_PER_UPDATE;
 			}
 			state->game.flashlight_activation = CLAMP(state->game.flashlight_activation, 0.0f, 1.0f);
-
-			//LARGE_INTEGER DEBUG_UPDATE_li1; // @TEMP@
-			//QueryPerformanceCounter(&DEBUG_UPDATE_li1);
-			//DEBUG_UPDATE_total   += DEBUG_UPDATE_li1.QuadPart - DEBUG_UPDATE_li0.QuadPart;
-			//DEBUG_UPDATE_counter += 1;
-			//if (DEBUG_UPDATE_counter > DEBUG_SCANS)
-			//{
-			//	DEBUG_printf("update : %f\n", static_cast<f64>(DEBUG_UPDATE_total) / DEBUG_PERFORMANCE_FREQ.QuadPart);
-			//	DEBUG_UPDATE_total   = 0;
-			//	DEBUG_UPDATE_counter = 0;
-			//}
 		} break;
 	}
 
@@ -1438,27 +1416,25 @@ extern "C" PROTOTYPE_RENDER(render)
 
 		case StateContext::game:
 		{
-			memset(state->game.view_framebuffer, 0, sizeof(state->game.view_framebuffer));
+			LARGE_INTEGER DEBUG_PERFORMANCE_FREQ;
+			QueryPerformanceFrequency(&DEBUG_PERFORMANCE_FREQ);
+
+			u32* view_pixels;
+			i32  view_pitch_;
+			SDL_LockTexture(state->game.view_texture, 0, reinterpret_cast<void**>(&view_pixels), &view_pitch_);
 
 			constexpr f32 FLASHLIGHT_POW       = 32.0f;
 			constexpr f32 AMBIENT_LIGHT_POW    = 4.0f;//2.0f;
 			constexpr f32 AMBIENT_LIGHT_RADIUS = 6.0f;//64.0f;
 
-			#if 1
 			FOR_RANGE(x, VIEW_RES.x)
 			{
-				constexpr i32           DEBUG_SCANS = 10'000;
-				persist   LARGE_INTEGER DEBUG_PERFORMANCE_FREQ;
+				constexpr i32 DEBUG_SCANS = 10'000;
 
-				DEBUG_once
-				{
-					QueryPerformanceFrequency(&DEBUG_PERFORMANCE_FREQ);
-				}
-
-				persist u64 DEBUG_RAY_CAST_total; // @TEMP@
-				persist u64 DEBUG_RAY_CAST_counter;
-				LARGE_INTEGER DEBUG_RAY_CAST_li0;
-				QueryPerformanceCounter(&DEBUG_RAY_CAST_li0);
+				persist u64 DEBUG_CAST_total; // @TEMP@
+				persist u64 DEBUG_CAST_counter;
+				LARGE_INTEGER DEBUG_CAST_li0;
+				QueryPerformanceCounter(&DEBUG_CAST_li0);
 
 				vf2 ray_horizontal = polar(state->game.lucia_angle + (0.5f - static_cast<f32>(x) / VIEW_RES.x) * state->game.lucia_fov);
 
@@ -1547,15 +1523,15 @@ extern "C" PROTOTYPE_RENDER(render)
 					pixel_ending_y   = MINIMUM(ending_y, VIEW_RES.y);
 				}
 
-				LARGE_INTEGER DEBUG_RAY_CAST_li1; // @TEMP@
-				QueryPerformanceCounter(&DEBUG_RAY_CAST_li1);
-				DEBUG_RAY_CAST_total   += DEBUG_RAY_CAST_li1.QuadPart - DEBUG_RAY_CAST_li0.QuadPart;
-				DEBUG_RAY_CAST_counter += 1;
-				if (DEBUG_RAY_CAST_counter > DEBUG_SCANS)
+				LARGE_INTEGER DEBUG_CAST_li1; // @TEMP@
+				QueryPerformanceCounter(&DEBUG_CAST_li1);
+				DEBUG_CAST_total   += DEBUG_CAST_li1.QuadPart - DEBUG_CAST_li0.QuadPart;
+				DEBUG_CAST_counter += 1;
+				if (DEBUG_CAST_counter > DEBUG_SCANS)
 				{
-					DEBUG_printf("ray_cast : %f\t", static_cast<f64>(DEBUG_RAY_CAST_total) / DEBUG_PERFORMANCE_FREQ.QuadPart);
-					DEBUG_RAY_CAST_total   = 0;
-					DEBUG_RAY_CAST_counter = 0;
+					DEBUG_printf("cast %f\t", static_cast<f64>(DEBUG_CAST_total) / DEBUG_PERFORMANCE_FREQ.QuadPart);
+					DEBUG_CAST_total   = 0;
+					DEBUG_CAST_counter = 0;
 				}
 
 				persist u64 DEBUG_WALL_FLOOR_CEILING_total; // @TEMP@
@@ -1563,6 +1539,7 @@ extern "C" PROTOTYPE_RENDER(render)
 				LARGE_INTEGER DEBUG_WALL_FLOOR_CEILING_li0;
 				QueryPerformanceCounter(&DEBUG_WALL_FLOOR_CEILING_li0);
 
+				#if 1
 				FOR_RANGE(y, 0, VIEW_RES.y)
 				{
 					vf3 ray          = normalize({ ray_horizontal.x, ray_horizontal.y, (y - VIEW_RES.y / 2.0f) * state->game.lucia_fov / HORT_TO_VERT_K });
@@ -1574,13 +1551,17 @@ extern "C" PROTOTYPE_RENDER(render)
 							flashlight_k * square(CLAMP(1.0f - wall_distance / 32.0f, 0.0f, 1.0f))
 								+ powf(CLAMP(1.0f - wall_distance / AMBIENT_LIGHT_RADIUS, 0.0f, 1.0f), AMBIENT_LIGHT_POW);
 
-						write_pixel
-						(
-							&state->game.view_framebuffer[x][y],
-							mipmap_color_at(&state->game.wall, wall_distance / 4.0f + MIPMAP_LEVELS * square(1.0f - fabsf(dot(ray.xy, wall_normal))), { wall_portion, static_cast<f32>(y - starting_y) / (ending_y - starting_y) })
-								* CLAMP(k, 0.0f, 1.0f),
-							1.0f / wall_distance
-						);
+						view_pixels[(VIEW_RES.y - 1 - y) * VIEW_RES.x + x] =
+							to_pixel
+							(
+								mipmap_color_at
+								(
+									&state->game.wall, wall_distance / 4.0f + MIPMAP_LEVELS * square(1.0f - fabsf(dot(ray.xy, wall_normal))),
+									{ wall_portion, static_cast<f32>(y - starting_y) / (ending_y - starting_y) }
+								)
+									* CLAMP(k, 0.0f, 1.0f)
+							);
+						state->game.view_inv_depth_buffer[x][y] = 1.0f / wall_distance;
 					}
 					else if (fabs(ray.z) > 0.001f)
 					{
@@ -1595,15 +1576,20 @@ extern "C" PROTOTYPE_RENDER(render)
 							flashlight_k * square(CLAMP(1.0f - distance / 32.0f, 0.0f, 1.0f))
 								+ powf(CLAMP(1.0f - distance / AMBIENT_LIGHT_RADIUS, 0.0f, 1.0f), AMBIENT_LIGHT_POW);
 
-						write_pixel
-						(
-							&state->game.view_framebuffer[x][y],
-							mipmap_color_at(&(y < VIEW_RES.y / 2 ? state->game.floor : state->game.ceiling), (y < VIEW_RES.y / 2 ? distance / 16.0f + MIPMAP_LEVELS * square(1.0f - fabsf(ray.z)) : 0), portions)
-								* CLAMP(k, 0.0f, 1.0f),
-							1.0f / distance
-						);
+						view_pixels[(VIEW_RES.y - 1 - y) * VIEW_RES.x + x] =
+							to_pixel
+							(
+								mipmap_color_at
+								(
+									&(y < VIEW_RES.y / 2 ? state->game.floor : state->game.ceiling),
+									(y < VIEW_RES.y / 2 ? distance / 16.0f + MIPMAP_LEVELS * square(1.0f - fabsf(ray.z)) : 0), portions
+								)
+									* CLAMP(k, 0.0f, 1.0f)
+							);
+						state->game.view_inv_depth_buffer[x][y] = 1.0f / distance;
 					}
 				}
+				#endif
 
 				LARGE_INTEGER DEBUG_WALL_FLOOR_CEILING_li1; // @TEMP@
 				QueryPerformanceCounter(&DEBUG_WALL_FLOOR_CEILING_li1);
@@ -1611,7 +1597,7 @@ extern "C" PROTOTYPE_RENDER(render)
 				DEBUG_WALL_FLOOR_CEILING_counter += 1;
 				if (DEBUG_WALL_FLOOR_CEILING_counter > DEBUG_SCANS)
 				{
-					DEBUG_printf("wall floor ceiling : %f\t", static_cast<f64>(DEBUG_WALL_FLOOR_CEILING_total) / DEBUG_PERFORMANCE_FREQ.QuadPart);
+					DEBUG_printf("wall floor ceiling %f\t", static_cast<f64>(DEBUG_WALL_FLOOR_CEILING_total) / DEBUG_PERFORMANCE_FREQ.QuadPart);
 					DEBUG_WALL_FLOOR_CEILING_total   = 0;
 					DEBUG_WALL_FLOOR_CEILING_counter = 0;
 				}
@@ -1708,21 +1694,20 @@ extern "C" PROTOTYPE_RENDER(render)
 										+ powf(CLAMP(1.0f - node->distance / AMBIENT_LIGHT_RADIUS, 0.0f, 1.0f), AMBIENT_LIGHT_POW);
 								}
 
-								write_pixel
-								(
-									&state->game.view_framebuffer[x][y],
-									lerp
-									(
-										{
-											state->game.view_framebuffer[x][y].rgb.r / 255.0f,
-											state->game.view_framebuffer[x][y].rgb.g / 255.0f,
-											state->game.view_framebuffer[x][y].rgb.b / 255.0f
-										},
-										thing_pixel->xyz * CLAMP(k, 0.0f, 1.0f),
-										thing_pixel->w
-									),
-									1.0f / node->distance
-								);
+								if (state->game.view_inv_depth_buffer[x][y] < 1.0f / node->distance)
+								{
+									state->game.view_inv_depth_buffer[x][y] = 1.0f / node->distance;
+									view_pixels[(VIEW_RES.y - 1 - y) * VIEW_RES.x + x] =
+										to_pixel
+										(
+											lerp
+											(
+												to_color(view_pixels[y * VIEW_RES.x + x]),
+												thing_pixel->xyz * CLAMP(k, 0.0f, 1.0f),
+												thing_pixel->w
+											)
+										);
+								}
 							}
 						}
 					}
@@ -1734,75 +1719,16 @@ extern "C" PROTOTYPE_RENDER(render)
 				DEBUG_THING_counter += 1;
 				if (DEBUG_THING_counter > DEBUG_SCANS)
 				{
-					DEBUG_printf("thing : %f\n", static_cast<f64>(DEBUG_THING_total) / DEBUG_PERFORMANCE_FREQ.QuadPart);
+					DEBUG_printf("thing %f\n", static_cast<f64>(DEBUG_THING_total) / DEBUG_PERFORMANCE_FREQ.QuadPart);
 					DEBUG_THING_total   = 0;
 					DEBUG_THING_counter = 0;
 				}
-			}
-			#endif
 
-			constexpr i32           DEBUG_SCANS = 30;
-			persist   LARGE_INTEGER DEBUG_PERFORMANCE_FREQ;
-
-			DEBUG_once
-			{
-				QueryPerformanceFrequency(&DEBUG_PERFORMANCE_FREQ);
-			}
-
-			persist u64 DEBUG_VIEW_total; // @TEMP@
-			persist u64 DEBUG_VIEW_counter;
-			LARGE_INTEGER DEBUG_VIEW_li0;
-			QueryPerformanceCounter(&DEBUG_VIEW_li0);
-
-			#if 0
-			FOR_RANGE(x, VIEW_RES.x)
-			{
-				FOR_RANGE(y, VIEW_RES.y)
-				{
-					SDL_SetRenderDrawColor
-					(
-						platform->renderer,
-						state->game.view_framebuffer[x][VIEW_RES.y - 1 - y].rgb.r,
-						state->game.view_framebuffer[x][VIEW_RES.y - 1 - y].rgb.g,
-						state->game.view_framebuffer[x][VIEW_RES.y - 1 - y].rgb.b,
-						255
-					);
-					SDL_RenderDrawPoint(platform->renderer, PADDING + x, PADDING + y);
-				}
-			}
-			#else
-			u32* pixels;
-			i32  pitch_;
-			SDL_LockTexture(state->game.view_texture, 0, (void**) &pixels, &pitch_);
-
-			FOR_RANGE(y, VIEW_RES.y)
-			{
-				FOR_RANGE(x, VIEW_RES.x)
-				{
-					*(pixels + y * VIEW_RES.x + x) =
-						(state->game.view_framebuffer[x][VIEW_RES.y - 1 - y].rgb.r << 24) |
-						(state->game.view_framebuffer[x][VIEW_RES.y - 1 - y].rgb.g << 16) |
-						(state->game.view_framebuffer[x][VIEW_RES.y - 1 - y].rgb.b <<  8);
-				}
 			}
 
 			SDL_UnlockTexture(state->game.view_texture);
-
 			blit_texture(platform->renderer, state->game.view_texture, vxx(vi2 { PADDING, PADDING }), vxx(VIEW_RES));
-			#endif
 
-			LARGE_INTEGER DEBUG_VIEW_li1; // @TEMP@
-			QueryPerformanceCounter(&DEBUG_VIEW_li1);
-			DEBUG_VIEW_total   += DEBUG_VIEW_li1.QuadPart - DEBUG_VIEW_li0.QuadPart;
-			DEBUG_VIEW_counter += 1;
-			if (DEBUG_VIEW_counter > DEBUG_SCANS)
-			{
-				DEBUG_printf("view : %f\n", static_cast<f64>(DEBUG_VIEW_total) / DEBUG_PERFORMANCE_FREQ.QuadPart);
-				DEBUG_VIEW_total   = 0;
-				DEBUG_VIEW_counter = 0;
-			}
-
-			#if 0
 			set_color(platform->renderer, { 0.15f, 0.15f, 0.15f });
 			draw_rect(platform->renderer, vxx(vi2 { PADDING, VIEW_RES.y + PADDING * 2 }), vxx(HUD_RES));
 
@@ -1837,7 +1763,6 @@ extern "C" PROTOTYPE_RENDER(render)
 				{ (WIN_RES.x - HUD_RES.y * LUCIA_HUD_SCALAR) / 2.0f, WIN_RES.y - 1.0f - PADDING - HUD_RES.y + HUD_RES.y * LUCIA_HUD_SCALAR * (1.0f - LUCIA_HUD_SCALAR) - 3.0f },
 				vi2 { HUD_RES.y, HUD_RES.y } * LUCIA_HUD_SCALAR
 			);
-			#endif
 		} break;
 	}
 
