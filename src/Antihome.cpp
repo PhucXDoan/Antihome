@@ -170,6 +170,7 @@ struct State
 		SDL_Texture*         lucia_hit;
 		SDL_Texture*         lucia_normal;
 		SDL_Texture*         lucia_wounded;
+		SDL_Texture*         view_texture;
 
 		Pixel                view_framebuffer[VIEW_RES.x][VIEW_RES.y];
 		PathCoordinatesNode* available_path_coordinates_node;
@@ -530,6 +531,7 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 			state->game.lucia_hit        = IMG_LoadTexture(renderer, DATA_DIR "lucia_hit.png");
 			state->game.lucia_normal     = IMG_LoadTexture(renderer, DATA_DIR "lucia_normal.png");
 			state->game.lucia_wounded    = IMG_LoadTexture(renderer, DATA_DIR "lucia_wounded.png");
+			state->game.view_texture     = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_STREAMING, VIEW_RES.x, VIEW_RES.y);
 		} break;
 	}
 }
@@ -559,6 +561,7 @@ internal void boot_down_state(State* state)
 			SDL_DestroyTexture(state->game.lucia_hit);
 			SDL_DestroyTexture(state->game.lucia_normal);
 			SDL_DestroyTexture(state->game.lucia_wounded);
+			SDL_DestroyTexture(state->game.view_texture);
 		} break;
 	}
 }
@@ -834,6 +837,18 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 		case StateContext::game:
 		{
+			//constexpr i32           DEBUG_SCANS = 30;
+			//persist   LARGE_INTEGER DEBUG_PERFORMANCE_FREQ;
+
+			//DEBUG_once
+			//{
+			//	QueryPerformanceFrequency(&DEBUG_PERFORMANCE_FREQ);
+			//}
+			//persist u64 DEBUG_UPDATE_total; // @TEMP@
+			//persist u64 DEBUG_UPDATE_counter;
+			//LARGE_INTEGER DEBUG_UPDATE_li0;
+			//QueryPerformanceCounter(&DEBUG_UPDATE_li0);
+
 			if (PRESSED(Input::escape))
 			{
 				boot_down_state(state);
@@ -1257,6 +1272,17 @@ extern "C" PROTOTYPE_UPDATE(update)
 				state->game.flashlight_activation += 0.5f * SECONDS_PER_UPDATE;
 			}
 			state->game.flashlight_activation = CLAMP(state->game.flashlight_activation, 0.0f, 1.0f);
+
+			//LARGE_INTEGER DEBUG_UPDATE_li1; // @TEMP@
+			//QueryPerformanceCounter(&DEBUG_UPDATE_li1);
+			//DEBUG_UPDATE_total   += DEBUG_UPDATE_li1.QuadPart - DEBUG_UPDATE_li0.QuadPart;
+			//DEBUG_UPDATE_counter += 1;
+			//if (DEBUG_UPDATE_counter > DEBUG_SCANS)
+			//{
+			//	DEBUG_printf("update : %f\n", static_cast<f64>(DEBUG_UPDATE_total) / DEBUG_PERFORMANCE_FREQ.QuadPart);
+			//	DEBUG_UPDATE_total   = 0;
+			//	DEBUG_UPDATE_counter = 0;
+			//}
 		} break;
 	}
 
@@ -1418,6 +1444,7 @@ extern "C" PROTOTYPE_RENDER(render)
 			constexpr f32 AMBIENT_LIGHT_POW    = 4.0f;//2.0f;
 			constexpr f32 AMBIENT_LIGHT_RADIUS = 6.0f;//64.0f;
 
+			#if 1
 			FOR_RANGE(x, VIEW_RES.x)
 			{
 				constexpr i32           DEBUG_SCANS = 10'000;
@@ -1427,7 +1454,6 @@ extern "C" PROTOTYPE_RENDER(render)
 				{
 					QueryPerformanceFrequency(&DEBUG_PERFORMANCE_FREQ);
 				}
-
 
 				persist u64 DEBUG_RAY_CAST_total; // @TEMP@
 				persist u64 DEBUG_RAY_CAST_counter;
@@ -1545,9 +1571,8 @@ extern "C" PROTOTYPE_RENDER(render)
 					if (IN_RANGE(y, pixel_starting_y, pixel_ending_y))
 					{
 						f32 k =
-							flashlight_k
-								* square(CLAMP(1.0f - wall_distance / 32.0f, 0.0f, 1.0f))
-							+ powf(CLAMP(1.0f - wall_distance / AMBIENT_LIGHT_RADIUS, 0.0f, 1.0f), AMBIENT_LIGHT_POW);
+							flashlight_k * square(CLAMP(1.0f - wall_distance / 32.0f, 0.0f, 1.0f))
+								+ powf(CLAMP(1.0f - wall_distance / AMBIENT_LIGHT_RADIUS, 0.0f, 1.0f), AMBIENT_LIGHT_POW);
 
 						write_pixel
 						(
@@ -1560,16 +1585,15 @@ extern "C" PROTOTYPE_RENDER(render)
 					else if (fabs(ray.z) > 0.001f)
 					{
 						f32 zk       = ((y < VIEW_RES.y / 2 ? 0 : WALL_HEIGHT) - state->game.lucia_position.z) / ray.z;
-						vf2 portions = (state->game.lucia_position.xy + zk * ray.xy);
+						vf2 portions = state->game.lucia_position.xy + zk * ray.xy;
 						f32 distance = norm(portions - state->game.lucia_position.xy); // Accurate distance: sqrtf(square(zk) * 2.0f - square(state->game.lucia_position.z));
 
 						portions.x   = mod(portions.x / 4.0f, 1.0f);
 						portions.y   = mod(portions.y / 4.0f, 1.0f);
 
-						f32 k        =
-							flashlight_k
-								* square(CLAMP(1.0f - distance / 32.0f, 0.0f, 1.0f))
-							+ powf(CLAMP(1.0f - distance / AMBIENT_LIGHT_RADIUS, 0.0f, 1.0f), AMBIENT_LIGHT_POW);
+						f32 k =
+							flashlight_k * square(CLAMP(1.0f - distance / 32.0f, 0.0f, 1.0f))
+								+ powf(CLAMP(1.0f - distance / AMBIENT_LIGHT_RADIUS, 0.0f, 1.0f), AMBIENT_LIGHT_POW);
 
 						write_pixel
 						(
@@ -1715,17 +1739,70 @@ extern "C" PROTOTYPE_RENDER(render)
 					DEBUG_THING_counter = 0;
 				}
 			}
+			#endif
 
+			constexpr i32           DEBUG_SCANS = 30;
+			persist   LARGE_INTEGER DEBUG_PERFORMANCE_FREQ;
+
+			DEBUG_once
+			{
+				QueryPerformanceFrequency(&DEBUG_PERFORMANCE_FREQ);
+			}
+
+			persist u64 DEBUG_VIEW_total; // @TEMP@
+			persist u64 DEBUG_VIEW_counter;
+			LARGE_INTEGER DEBUG_VIEW_li0;
+			QueryPerformanceCounter(&DEBUG_VIEW_li0);
+
+			#if 0
 			FOR_RANGE(x, VIEW_RES.x)
 			{
 				FOR_RANGE(y, VIEW_RES.y)
 				{
-					refering pixel = state->game.view_framebuffer[x][VIEW_RES.y - 1 - y];
-					SDL_SetRenderDrawColor(platform->renderer, pixel.rgb.r, pixel.rgb.g, pixel.rgb.b, 255);
+					SDL_SetRenderDrawColor
+					(
+						platform->renderer,
+						state->game.view_framebuffer[x][VIEW_RES.y - 1 - y].rgb.r,
+						state->game.view_framebuffer[x][VIEW_RES.y - 1 - y].rgb.g,
+						state->game.view_framebuffer[x][VIEW_RES.y - 1 - y].rgb.b,
+						255
+					);
 					SDL_RenderDrawPoint(platform->renderer, PADDING + x, PADDING + y);
 				}
 			}
+			#else
+			u32* pixels;
+			i32  pitch_;
+			SDL_LockTexture(state->game.view_texture, 0, (void**) &pixels, &pitch_);
 
+			FOR_RANGE(y, VIEW_RES.y)
+			{
+				FOR_RANGE(x, VIEW_RES.x)
+				{
+					*(pixels + y * VIEW_RES.x + x) =
+						(state->game.view_framebuffer[x][VIEW_RES.y - 1 - y].rgb.r << 24) |
+						(state->game.view_framebuffer[x][VIEW_RES.y - 1 - y].rgb.g << 16) |
+						(state->game.view_framebuffer[x][VIEW_RES.y - 1 - y].rgb.b <<  8);
+				}
+			}
+
+			SDL_UnlockTexture(state->game.view_texture);
+
+			blit_texture(platform->renderer, state->game.view_texture, vxx(vi2 { PADDING, PADDING }), vxx(VIEW_RES));
+			#endif
+
+			LARGE_INTEGER DEBUG_VIEW_li1; // @TEMP@
+			QueryPerformanceCounter(&DEBUG_VIEW_li1);
+			DEBUG_VIEW_total   += DEBUG_VIEW_li1.QuadPart - DEBUG_VIEW_li0.QuadPart;
+			DEBUG_VIEW_counter += 1;
+			if (DEBUG_VIEW_counter > DEBUG_SCANS)
+			{
+				DEBUG_printf("view : %f\n", static_cast<f64>(DEBUG_VIEW_total) / DEBUG_PERFORMANCE_FREQ.QuadPart);
+				DEBUG_VIEW_total   = 0;
+				DEBUG_VIEW_counter = 0;
+			}
+
+			#if 0
 			set_color(platform->renderer, { 0.15f, 0.15f, 0.15f });
 			draw_rect(platform->renderer, vxx(vi2 { PADDING, VIEW_RES.y + PADDING * 2 }), vxx(HUD_RES));
 
@@ -1753,7 +1830,14 @@ extern "C" PROTOTYPE_RENDER(render)
 			blit_texture(platform->renderer, state->game.inventory_border, { static_cast<f32>(PADDING), WIN_RES.y - 1.0f - PADDING - HUD_RES.y }, vxx(vi2 { HUD_RES.y, HUD_RES.y }));
 
 			constexpr f32 LUCIA_HUD_SCALAR = 0.8f;
-			blit_texture(platform->renderer, state->game.lucia_normal, { (WIN_RES.x - HUD_RES.y * LUCIA_HUD_SCALAR) / 2.0f, WIN_RES.y - 1.0f - PADDING - HUD_RES.y + HUD_RES.y * LUCIA_HUD_SCALAR * (1.0f - LUCIA_HUD_SCALAR) - 3.0f }, vi2 { HUD_RES.y, HUD_RES.y } * LUCIA_HUD_SCALAR);
+			blit_texture
+			(
+				platform->renderer,
+				state->game.lucia_normal,
+				{ (WIN_RES.x - HUD_RES.y * LUCIA_HUD_SCALAR) / 2.0f, WIN_RES.y - 1.0f - PADDING - HUD_RES.y + HUD_RES.y * LUCIA_HUD_SCALAR * (1.0f - LUCIA_HUD_SCALAR) - 3.0f },
+				vi2 { HUD_RES.y, HUD_RES.y } * LUCIA_HUD_SCALAR
+			);
+			#endif
 		} break;
 	}
 
