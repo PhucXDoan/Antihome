@@ -71,10 +71,18 @@ global constexpr strlit THING_IMG_PATHS[ThingType::CAPACITY] =
 		DATA_DIR "flashlight_off.png"
 	};
 
+struct RGB
+{
+	u8 r;
+	u8 g;
+	u8 b;
+	u8 PADDING_;
+};
+
 struct Mipmap
 {
 	vi2  base_dim;
-	vf3* data;
+	RGB* data;
 };
 
 struct Thing
@@ -95,10 +103,7 @@ flag_struct (WallVoxel, u8)
 
 struct Pixel
 {
-	u8  r;
-	u8  g;
-	u8  b;
-	u8  PADDING_;
+	RGB rgb;
 	f32 inv_depth;
 };
 
@@ -227,10 +232,10 @@ internal Mipmap init_mipmap(strlit file_path)
 	ASSERT(stbimg);
 
 	mipmap.base_dim = { absolute_dim.x * 2 / 3, absolute_dim.y };
-	mipmap.data     = reinterpret_cast<vf3*>(malloc((mipmap.base_dim.x * mipmap.base_dim.y * 2 - mipmap.base_dim.x * mipmap.base_dim.y * 2 / (1 << MIPMAP_LEVELS)) * sizeof(vf3)));
+	mipmap.data     = reinterpret_cast<RGB*>(malloc((mipmap.base_dim.x * mipmap.base_dim.y * 2 - mipmap.base_dim.x * mipmap.base_dim.y * 2 / (1 << MIPMAP_LEVELS)) * sizeof(RGB)));
 
 	vi2  stbimg_coordinates = { 0, 0 };
-	vf3* mipmap_pixel = mipmap.data;
+	RGB* mipmap_pixel = mipmap.data;
 	FOR_RANGE(i, MIPMAP_LEVELS)
 	{
 		FOR_RANGE(ix, mipmap.base_dim.x / (1 << i))
@@ -240,9 +245,9 @@ internal Mipmap init_mipmap(strlit file_path)
 				u32 stbimg_pixel = *(stbimg + (stbimg_coordinates.y + iy) * absolute_dim.x + stbimg_coordinates.x + ix);
 				*mipmap_pixel++ =
 					{
-						static_cast<f32>(stbimg_pixel >>  0 & 0xFF) / 0xFF,
-						static_cast<f32>(stbimg_pixel >>  8 & 0xFF) / 0xFF,
-						static_cast<f32>(stbimg_pixel >> 16 & 0xFF) / 0xFF
+						static_cast<u8>(stbimg_pixel >>  0 & 0xFF),
+						static_cast<u8>(stbimg_pixel >>  8 & 0xFF),
+						static_cast<u8>(stbimg_pixel >> 16 & 0xFF)
 					};
 			}
 		}
@@ -263,37 +268,30 @@ internal vf3 mipmap_color_at(Mipmap* mipmap, f32 level, vf2 uv)
 	ASSERT(0.0f <= uv.x && uv.x <= 1.0f);
 	ASSERT(0.0f <= uv.y && uv.y <= 1.0f);
 
+	i32 l = static_cast<i32>(CLAMP(level, 0.0f, MIPMAP_LEVELS - 1.0f));
+	RGB p =
+		*(
+			mipmap->data
+				+ mipmap->base_dim.x * mipmap->base_dim.y * 4 / 3 - mipmap->base_dim.x * mipmap->base_dim.y * 4 / 3 / (1 << (l * 2))
+				+ static_cast<i32>(uv.x * (mipmap->base_dim.x / (1 << l) - 1.0f)) * (mipmap->base_dim.y / (1 << l))
+				+ static_cast<i32>((1.0f - uv.y) * (mipmap->base_dim.y / (1 << l) - 1.0f))
+		);
+
 	if (IN_RANGE(level, 0.0f, MIPMAP_LEVELS - 1.0f))
 	{
-		i32 l = static_cast<i32>(level);
-		return
-			lerp
-			(
-				*(
-					mipmap->data
-						+ mipmap->base_dim.x * mipmap->base_dim.y * 4 / 3 - mipmap->base_dim.x * mipmap->base_dim.y * 4 / 3 / (1 << (l * 2))
-						+ static_cast<i32>(uv.x * (mipmap->base_dim.x / (1 << l) - 1.0f)) * (mipmap->base_dim.y / (1 << l))
-						+ static_cast<i32>((1.0f - uv.y) * (mipmap->base_dim.y / (1 << l) - 1.0f))
-				),
-				*(
-					mipmap->data
-						+ mipmap->base_dim.x * mipmap->base_dim.y * 4 / 3 - mipmap->base_dim.x * mipmap->base_dim.y * 4 / 3 / (1 << ((l + 1) * 2))
-						+ static_cast<i32>(uv.x * (mipmap->base_dim.x / (1 << (l + 1)) - 1.0f)) * (mipmap->base_dim.y / (1 << (l + 1)))
-						+ static_cast<i32>((1.0f - uv.y) * (mipmap->base_dim.y / (1 << (l + 1)) - 1.0f))
-				),
-				level - l
+		RGB q =
+			*(
+				mipmap->data
+					+ mipmap->base_dim.x * mipmap->base_dim.y * 4 / 3 - mipmap->base_dim.x * mipmap->base_dim.y * 4 / 3 / (1 << ((l + 1) * 2))
+					+ static_cast<i32>(uv.x * (mipmap->base_dim.x / (1 << (l + 1)) - 1.0f)) * (mipmap->base_dim.y / (1 << (l + 1)))
+					+ static_cast<i32>((1.0f - uv.y) * (mipmap->base_dim.y / (1 << (l + 1)) - 1.0f))
 			);
+
+		return vf3 { lerp(p.r, q.r, level - l), lerp(p.g, q.g, level - l), lerp(p.b, q.b, level - l) } / 255.0f;
 	}
 	else
 	{
-		i32 l = static_cast<i32>(CLAMP(level, 0.0f, MIPMAP_LEVELS - 1.0f));
-		return
-			*(
-				mipmap->data
-					+ mipmap->base_dim.x * mipmap->base_dim.y * 4 / 3 - mipmap->base_dim.x * mipmap->base_dim.y * 4 / 3 / (1 << (l * 2))
-					+ static_cast<i32>(uv.x * (mipmap->base_dim.x / (1 << l) - 1.0f)) * (mipmap->base_dim.y / (1 << l))
-					+ static_cast<i32>((1.0f - uv.y) * (mipmap->base_dim.y / (1 << l) - 1.0f))
-			);
+		return vf3 { p.r / 255.0f, p.g / 255.0f, p.b / 255.0f };
 	}
 }
 
@@ -466,9 +464,9 @@ internal void write_pixel(Pixel* pixel, vf3 color, f32 inv_depth)
 {
 	if (pixel->inv_depth <= inv_depth)
 	{
-		pixel->r         = static_cast<u8>(color.x * 255.0f);
-		pixel->g         = static_cast<u8>(color.y * 255.0f);
-		pixel->b         = static_cast<u8>(color.z * 255.0f);
+		pixel->rgb.r     = static_cast<u8>(color.x * 255.0f);
+		pixel->rgb.g     = static_cast<u8>(color.y * 255.0f);
+		pixel->rgb.b     = static_cast<u8>(color.z * 255.0f);
 		pixel->inv_depth = inv_depth;
 	}
 }
@@ -1420,26 +1418,22 @@ extern "C" PROTOTYPE_RENDER(render)
 			constexpr f32 AMBIENT_LIGHT_POW    = 4.0f;//2.0f;
 			constexpr f32 AMBIENT_LIGHT_RADIUS = 6.0f;//64.0f;
 
-			#if 0
-			persist u64 DEBUG_total;
-			persist u64 DEBUG_counter;
-			LARGE_INTEGER DEBUG_li0;
-			QueryPerformanceCounter(&DEBUG_li0);
-
-			LARGE_INTEGER DEBUG_li1;
-			QueryPerformanceCounter(&DEBUG_li1);
-			DEBUG_total   += DEBUG_li1.QuadPart - DEBUG_li0.QuadPart;
-			DEBUG_counter += 1;
-			if (DEBUG_counter > 8'000)
-			{
-				DEBUG_printf("%f\n", static_cast<f64>(DEBUG_total) / DEBUG_counter);
-				DEBUG_total   = 0;
-				DEBUG_counter = 0;
-			}
-			#endif
-
 			FOR_RANGE(x, VIEW_RES.x)
 			{
+				constexpr i32           DEBUG_SCANS = 10'000;
+				persist   LARGE_INTEGER DEBUG_PERFORMANCE_FREQ;
+
+				DEBUG_once
+				{
+					QueryPerformanceFrequency(&DEBUG_PERFORMANCE_FREQ);
+				}
+
+
+				persist u64 DEBUG_RAY_CAST_total; // @TEMP@
+				persist u64 DEBUG_RAY_CAST_counter;
+				LARGE_INTEGER DEBUG_RAY_CAST_li0;
+				QueryPerformanceCounter(&DEBUG_RAY_CAST_li0);
+
 				vf2 ray_horizontal = polar(state->game.lucia_angle + (0.5f - static_cast<f32>(x) / VIEW_RES.x) * state->game.lucia_fov);
 
 				bool32 wall_exists   = false;
@@ -1527,6 +1521,22 @@ extern "C" PROTOTYPE_RENDER(render)
 					pixel_ending_y   = MINIMUM(ending_y, VIEW_RES.y);
 				}
 
+				LARGE_INTEGER DEBUG_RAY_CAST_li1; // @TEMP@
+				QueryPerformanceCounter(&DEBUG_RAY_CAST_li1);
+				DEBUG_RAY_CAST_total   += DEBUG_RAY_CAST_li1.QuadPart - DEBUG_RAY_CAST_li0.QuadPart;
+				DEBUG_RAY_CAST_counter += 1;
+				if (DEBUG_RAY_CAST_counter > DEBUG_SCANS)
+				{
+					DEBUG_printf("ray_cast : %f\t", static_cast<f64>(DEBUG_RAY_CAST_total) / DEBUG_PERFORMANCE_FREQ.QuadPart);
+					DEBUG_RAY_CAST_total   = 0;
+					DEBUG_RAY_CAST_counter = 0;
+				}
+
+				persist u64 DEBUG_WALL_FLOOR_CEILING_total; // @TEMP@
+				persist u64 DEBUG_WALL_FLOOR_CEILING_counter;
+				LARGE_INTEGER DEBUG_WALL_FLOOR_CEILING_li0;
+				QueryPerformanceCounter(&DEBUG_WALL_FLOOR_CEILING_li0);
+
 				FOR_RANGE(y, 0, VIEW_RES.y)
 				{
 					vf3 ray          = normalize({ ray_horizontal.x, ray_horizontal.y, (y - VIEW_RES.y / 2.0f) * state->game.lucia_fov / HORT_TO_VERT_K });
@@ -1570,6 +1580,22 @@ extern "C" PROTOTYPE_RENDER(render)
 						);
 					}
 				}
+
+				LARGE_INTEGER DEBUG_WALL_FLOOR_CEILING_li1; // @TEMP@
+				QueryPerformanceCounter(&DEBUG_WALL_FLOOR_CEILING_li1);
+				DEBUG_WALL_FLOOR_CEILING_total   += DEBUG_WALL_FLOOR_CEILING_li1.QuadPart - DEBUG_WALL_FLOOR_CEILING_li0.QuadPart;
+				DEBUG_WALL_FLOOR_CEILING_counter += 1;
+				if (DEBUG_WALL_FLOOR_CEILING_counter > DEBUG_SCANS)
+				{
+					DEBUG_printf("wall floor ceiling : %f\t", static_cast<f64>(DEBUG_WALL_FLOOR_CEILING_total) / DEBUG_PERFORMANCE_FREQ.QuadPart);
+					DEBUG_WALL_FLOOR_CEILING_total   = 0;
+					DEBUG_WALL_FLOOR_CEILING_counter = 0;
+				}
+
+				persist u64 DEBUG_THING_total; // @TEMP@
+				persist u64 DEBUG_THING_counter;
+				LARGE_INTEGER DEBUG_THING_li0;
+				QueryPerformanceCounter(&DEBUG_THING_li0);
 
 				struct ThingNode
 				{
@@ -1664,9 +1690,9 @@ extern "C" PROTOTYPE_RENDER(render)
 									lerp
 									(
 										{
-											state->game.view_framebuffer[x][y].r / 255.0f,
-											state->game.view_framebuffer[x][y].g / 255.0f,
-											state->game.view_framebuffer[x][y].b / 255.0f
+											state->game.view_framebuffer[x][y].rgb.r / 255.0f,
+											state->game.view_framebuffer[x][y].rgb.g / 255.0f,
+											state->game.view_framebuffer[x][y].rgb.b / 255.0f
 										},
 										thing_pixel->xyz * CLAMP(k, 0.0f, 1.0f),
 										thing_pixel->w
@@ -1677,6 +1703,17 @@ extern "C" PROTOTYPE_RENDER(render)
 						}
 					}
 				}
+
+				LARGE_INTEGER DEBUG_THING_li1; // @TEMP@
+				QueryPerformanceCounter(&DEBUG_THING_li1);
+				DEBUG_THING_total   += DEBUG_THING_li1.QuadPart - DEBUG_THING_li0.QuadPart;
+				DEBUG_THING_counter += 1;
+				if (DEBUG_THING_counter > DEBUG_SCANS)
+				{
+					DEBUG_printf("thing : %f\n", static_cast<f64>(DEBUG_THING_total) / DEBUG_PERFORMANCE_FREQ.QuadPart);
+					DEBUG_THING_total   = 0;
+					DEBUG_THING_counter = 0;
+				}
 			}
 
 			FOR_RANGE(x, VIEW_RES.x)
@@ -1684,7 +1721,7 @@ extern "C" PROTOTYPE_RENDER(render)
 				FOR_RANGE(y, VIEW_RES.y)
 				{
 					refering pixel = state->game.view_framebuffer[x][VIEW_RES.y - 1 - y];
-					SDL_SetRenderDrawColor(platform->renderer, pixel.r, pixel.g, pixel.b, 255);
+					SDL_SetRenderDrawColor(platform->renderer, pixel.rgb.r, pixel.rgb.g, pixel.rgb.b, 255);
 					SDL_RenderDrawPoint(platform->renderer, PADDING + x, PADDING + y);
 				}
 			}
