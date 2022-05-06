@@ -267,6 +267,7 @@ internal constexpr vi2&   operator/=(vi2& v, i32 k) { return v = v / k; }
 internal constexpr vi3&   operator/=(vi3& v, i32 k) { return v = v / k; }
 internal constexpr vi4&   operator/=(vi4& v, i32 k) { return v = v / k; }
 
+internal constexpr vf3    vxx(vf2 v, f32 a) { return { v.x, v.y, a      }; }
 internal constexpr vf4    vxx(vf3 v, f32 a) { return { v.x, v.y, v.z, a }; }
 
 internal constexpr vf2    vxx(vi2 v) { return { static_cast<f32>(v.x), static_cast<f32>(v.y)                                               }; }

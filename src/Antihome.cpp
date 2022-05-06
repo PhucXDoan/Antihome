@@ -1254,11 +1254,11 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 			if (HOLDING(Input::down))
 			{
-				state->game.flashlight_activation -= 0.5f * SECONDS_PER_UPDATE;
+				state->game.flashlight_activation -= 1.5f * SECONDS_PER_UPDATE;
 			}
 			if (HOLDING(Input::up))
 			{
-				state->game.flashlight_activation += 0.5f * SECONDS_PER_UPDATE;
+				state->game.flashlight_activation += 1.5f * SECONDS_PER_UPDATE;
 			}
 			state->game.flashlight_activation = CLAMP(state->game.flashlight_activation, 0.0f, 1.0f);
 		} break;
@@ -1425,7 +1425,7 @@ extern "C" PROTOTYPE_RENDER(render)
 
 			constexpr f32 FLASHLIGHT_POW       = 32.0f;
 			constexpr f32 AMBIENT_LIGHT_POW    = 4.0f;//2.0f;
-			constexpr f32 AMBIENT_LIGHT_RADIUS = 6.0f;//64.0f;
+			constexpr f32 AMBIENT_LIGHT_RADIUS = 8.0f;//64.0f;
 
 			FOR_RANGE(x, VIEW_RES.x)
 			{
@@ -1545,49 +1545,51 @@ extern "C" PROTOTYPE_RENDER(render)
 					vf3 ray          = normalize({ ray_horizontal.x, ray_horizontal.y, (y - VIEW_RES.y / 2.0f) * state->game.lucia_fov / HORT_TO_VERT_K });
 					f32 flashlight_k = powf(CLAMP(dot(ray, state->game.flashlight_ray), 0.0f, 1.0f), FLASHLIGHT_POW) * state->game.flashlight_activation;
 
+					f32     d;
+					vf2     uv;
+					vf3     n;
+					Mipmap* mm;
+
 					if (IN_RANGE(y, pixel_starting_y, pixel_ending_y))
 					{
-						f32 k =
-							flashlight_k * square(CLAMP(1.0f - wall_distance / 32.0f, 0.0f, 1.0f))
-								+ powf(CLAMP(1.0f - wall_distance / AMBIENT_LIGHT_RADIUS, 0.0f, 1.0f), AMBIENT_LIGHT_POW);
-
-						view_pixels[(VIEW_RES.y - 1 - y) * VIEW_RES.x + x] =
-							to_pixel
-							(
-								mipmap_color_at
-								(
-									&state->game.wall, wall_distance / 4.0f + MIPMAP_LEVELS * square(1.0f - fabsf(dot(ray.xy, wall_normal))),
-									{ wall_portion, static_cast<f32>(y - starting_y) / (ending_y - starting_y) }
-								)
-									* CLAMP(k, 0.0f, 1.0f)
-							);
-						state->game.view_inv_depth_buffer[x][y] = 1.0f / wall_distance;
+						uv = { wall_portion, static_cast<f32>(y - starting_y) / (ending_y - starting_y) };
+						d  = sqrtf(square(wall_distance) + square(uv.y * WALL_HEIGHT - state->game.lucia_position.z));
+						n  = vxx(wall_normal, 0.0f);
+						mm = &state->game.wall;
 					}
-					else if (fabs(ray.z) > 0.001f)
+					else
 					{
-						f32 zk       = ((y < VIEW_RES.y / 2 ? 0 : WALL_HEIGHT) - state->game.lucia_position.z) / ray.z;
-						vf2 portions = state->game.lucia_position.xy + zk * ray.xy;
-						f32 distance = norm(portions - state->game.lucia_position.xy); // Accurate distance: sqrtf(square(zk) * 2.0f - square(state->game.lucia_position.z));
+						if (y < VIEW_RES.y / 2)
+						{
+							f32 zk = -state->game.lucia_position.z / ray.z;
+							uv   = state->game.lucia_position.xy + zk * ray.xy;
+							d    = sqrtf(square(zk) * 2.0f - square(state->game.lucia_position.z));
+							n    = { 0.0f, 0.0f, 1.0f };
+							mm   = &state->game.floor;
+						}
+						else
+						{
+							f32 zk = (WALL_HEIGHT - state->game.lucia_position.z) / ray.z;
+							uv   = state->game.lucia_position.xy + zk * ray.xy;
+							d    = sqrtf(square(zk) * 2.0f - square(state->game.lucia_position.z));
+							n    = { 0.0f, 0.0f, -1.0f };
+							mm   = &state->game.ceiling;
+						}
 
-						portions.x   = mod(portions.x / 4.0f, 1.0f);
-						portions.y   = mod(portions.y / 4.0f, 1.0f);
 
-						f32 k =
-							flashlight_k * square(CLAMP(1.0f - distance / 32.0f, 0.0f, 1.0f))
-								+ powf(CLAMP(1.0f - distance / AMBIENT_LIGHT_RADIUS, 0.0f, 1.0f), AMBIENT_LIGHT_POW);
-
-						view_pixels[(VIEW_RES.y - 1 - y) * VIEW_RES.x + x] =
-							to_pixel
-							(
-								mipmap_color_at
-								(
-									&(y < VIEW_RES.y / 2 ? state->game.floor : state->game.ceiling),
-									(y < VIEW_RES.y / 2 ? distance / 16.0f + MIPMAP_LEVELS * square(1.0f - fabsf(ray.z)) : 0), portions
-								)
-									* CLAMP(k, 0.0f, 1.0f)
-							);
-						state->game.view_inv_depth_buffer[x][y] = 1.0f / distance;
+						uv.x = mod(uv.x / 4.0f, 1.0f);
+						uv.y = mod(uv.y / 4.0f, 1.0f);
 					}
+
+					f32 k =
+						0.015f
+						- fabsf(dot(ray, n)) * 0.01f
+						+ ((state->game.lucia_position.z + ray.z * d) / WALL_HEIGHT + 0.95f) * 0.7f * (1.0f - state->game.flashlight_activation)
+						+ flashlight_k * square(CLAMP(1.0f - d / 32.0f, 0.0f, 1.0f))
+						+ powf(CLAMP(1.0f - d / AMBIENT_LIGHT_RADIUS, 0.0f, 1.0f), AMBIENT_LIGHT_POW);
+
+					view_pixels[(VIEW_RES.y - 1 - y) * VIEW_RES.x + x] = to_pixel(mipmap_color_at(mm, d / 4.0f + MIPMAP_LEVELS * square(1.0f - fabsf(dot(ray, n))), uv) * CLAMP(k, 0.0f, 1.0f));
+					state->game.view_inv_depth_buffer[x][y] = 1.0f / d;
 				}
 				#endif
 
