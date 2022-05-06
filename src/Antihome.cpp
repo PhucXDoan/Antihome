@@ -71,6 +71,12 @@ global constexpr strlit THING_IMG_PATHS[ThingType::CAPACITY] =
 		DATA_DIR "flashlight_off.png"
 	};
 
+struct Mipmap
+{
+	vi2  base_dim;
+	vf3* data;
+};
+
 struct Thing
 {
 	ThingType type;
@@ -148,9 +154,9 @@ struct State
 
 	struct
 	{
-		ImgRGB               wall;
-		ImgRGB               floor;
-		ImgRGB               ceiling;
+		Mipmap               wall;
+		Mipmap               floor;
+		Mipmap               ceiling;
 		ImgRGBA              hand_img;
 		ImgRGBA              thing_imgs[ThingType::CAPACITY];
 		SDL_Texture*         inventory_border;
@@ -210,6 +216,86 @@ global constexpr struct { WallVoxel voxel; vf2 start; vf2 end; vf2 normal; } WAL
 		{ WallVoxel::back_slash   , { 1.0f, 0.0f }, { 0.0f, 1.0f }, { -INVSQRT2, -INVSQRT2 } },
 		{ WallVoxel::forward_slash, { 0.0f, 0.0f }, { 1.0f, 1.0f }, { -INVSQRT2,  INVSQRT2 } }
 	};
+
+internal Mipmap init_mipmap(strlit file_path)
+{
+	Mipmap mipmap;
+
+	vi2  absolute_dim;
+	u32* stbimg = reinterpret_cast<u32*>(stbi_load(file_path, &absolute_dim.x, &absolute_dim.y, 0, STBI_rgb_alpha));
+	DEFER { stbi_image_free(stbimg); };
+	ASSERT(stbimg);
+
+	mipmap.base_dim = { absolute_dim.x * 2 / 3, absolute_dim.y };
+	mipmap.data     = reinterpret_cast<vf3*>(malloc((mipmap.base_dim.x * mipmap.base_dim.y * 2 - mipmap.base_dim.x * mipmap.base_dim.y * 2 / (1 << MIPMAP_LEVELS)) * sizeof(vf3)));
+
+	vi2  stbimg_coordinates = { 0, 0 };
+	vf3* mipmap_pixel = mipmap.data;
+	FOR_RANGE(i, MIPMAP_LEVELS)
+	{
+		FOR_RANGE(ix, mipmap.base_dim.x / (1 << i))
+		{
+			FOR_RANGE(iy, mipmap.base_dim.y / (1 << i))
+			{
+				u32 stbimg_pixel = *(stbimg + (stbimg_coordinates.y + iy) * absolute_dim.x + stbimg_coordinates.x + ix);
+				*mipmap_pixel++ =
+					{
+						static_cast<f32>(stbimg_pixel >>  0 & 0xFF) / 0xFF,
+						static_cast<f32>(stbimg_pixel >>  8 & 0xFF) / 0xFF,
+						static_cast<f32>(stbimg_pixel >> 16 & 0xFF) / 0xFF
+					};
+			}
+		}
+
+		stbimg_coordinates = { mipmap.base_dim.x, mipmap.base_dim.y - mipmap.base_dim.y / (1 << i) };
+	}
+
+	return mipmap;
+}
+
+internal void deinit_mipmap(Mipmap* mipmap)
+{
+	free(mipmap->data);
+}
+
+internal vf3 mipmap_color_at(Mipmap* mipmap, f32 level, vf2 uv)
+{
+	ASSERT(0.0f <= uv.x && uv.x <= 1.0f);
+	ASSERT(0.0f <= uv.y && uv.y <= 1.0f);
+
+	if (IN_RANGE(level, 0.0f, MIPMAP_LEVELS - 1.0f))
+	{
+		i32 l = static_cast<i32>(level);
+		return
+			lerp
+			(
+				*(
+					mipmap->data
+						+ mipmap->base_dim.x * mipmap->base_dim.y * 4 / 3 - mipmap->base_dim.x * mipmap->base_dim.y * 4 / 3 / (1 << (l * 2))
+						+ static_cast<i32>(uv.x * (mipmap->base_dim.x / (1 << l) - 1.0f)) * (mipmap->base_dim.y / (1 << l))
+						+ static_cast<i32>((1.0f - uv.y) * (mipmap->base_dim.y / (1 << l) - 1.0f))
+				),
+				*(
+					mipmap->data
+						+ mipmap->base_dim.x * mipmap->base_dim.y * 4 / 3 - mipmap->base_dim.x * mipmap->base_dim.y * 4 / 3 / (1 << ((l + 1) * 2))
+						+ static_cast<i32>(uv.x * (mipmap->base_dim.x / (1 << (l + 1)) - 1.0f)) * (mipmap->base_dim.y / (1 << (l + 1)))
+						+ static_cast<i32>((1.0f - uv.y) * (mipmap->base_dim.y / (1 << (l + 1)) - 1.0f))
+				),
+				level - l
+			);
+	}
+	else
+	{
+		i32 l = static_cast<i32>(CLAMP(level, 0.0f, MIPMAP_LEVELS - 1.0f));
+		return
+			*(
+				mipmap->data
+					+ mipmap->base_dim.x * mipmap->base_dim.y * 4 / 3 - mipmap->base_dim.x * mipmap->base_dim.y * 4 / 3 / (1 << (l * 2))
+					+ static_cast<i32>(uv.x * (mipmap->base_dim.x / (1 << l) - 1.0f)) * (mipmap->base_dim.y / (1 << l))
+					+ static_cast<i32>((1.0f - uv.y) * (mipmap->base_dim.y / (1 << l) - 1.0f))
+			);
+	}
+}
 
 internal WallVoxel* get_wall_voxel(State* state, vi2 v)
 {
@@ -431,9 +517,9 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 
 		case StateContext::game:
 		{
-			state->game.wall    = init_img_rgb(DATA_DIR "wall.png");
-			state->game.floor   = init_img_rgb(DATA_DIR "floor.png");
-			state->game.ceiling = init_img_rgb(DATA_DIR "ceiling.png");
+			state->game.wall    = init_mipmap(DATA_DIR "wall.png");
+			state->game.floor   = init_mipmap(DATA_DIR "floor.png");
+			state->game.ceiling = init_mipmap(DATA_DIR "ceiling.png");
 
 			FOR_ELEMS(it, THING_IMG_PATHS)
 			{
@@ -460,9 +546,9 @@ internal void boot_down_state(State* state)
 
 		case StateContext::game:
 		{
-			deinit_img_rgb(&state->game.wall);
-			deinit_img_rgb(&state->game.floor);
-			deinit_img_rgb(&state->game.ceiling);
+			deinit_mipmap(&state->game.wall);
+			deinit_mipmap(&state->game.floor);
+			deinit_mipmap(&state->game.ceiling);
 
 			FOR_ELEMS(it, state->game.thing_imgs)
 			{
@@ -1173,7 +1259,6 @@ extern "C" PROTOTYPE_UPDATE(update)
 				state->game.flashlight_activation += 0.5f * SECONDS_PER_UPDATE;
 			}
 			state->game.flashlight_activation = CLAMP(state->game.flashlight_activation, 0.0f, 1.0f);
-			DEBUG_printf("%f\n", state->game.flashlight_activation);
 		} break;
 	}
 
@@ -1332,8 +1417,8 @@ extern "C" PROTOTYPE_RENDER(render)
 			memset(state->game.view_framebuffer, 0, sizeof(state->game.view_framebuffer));
 
 			constexpr f32 FLASHLIGHT_POW       = 32.0f;
-			constexpr f32 AMBIENT_LIGHT_POW    = 4.0f;
-			constexpr f32 AMBIENT_LIGHT_RADIUS = 8.0f;
+			constexpr f32 AMBIENT_LIGHT_POW    = 4.0f;//2.0f;
+			constexpr f32 AMBIENT_LIGHT_RADIUS = 6.0f;//64.0f;
 
 			#if 0
 			persist u64 DEBUG_total;
@@ -1457,7 +1542,7 @@ extern "C" PROTOTYPE_RENDER(render)
 						write_pixel
 						(
 							&state->game.view_framebuffer[x][y],
-							*(state->game.wall.rgb + static_cast<i32>(wall_portion * (state->game.wall.dim.x - 1.0f)) * state->game.wall.dim.y + static_cast<i32>(static_cast<f32>(y - starting_y) / (ending_y - starting_y) * state->game.wall.dim.y))
+							mipmap_color_at(&state->game.wall, wall_distance / 4.0f + MIPMAP_LEVELS * square(1.0f - fabsf(dot(ray.xy, wall_normal))), { wall_portion, static_cast<f32>(y - starting_y) / (ending_y - starting_y) })
 								* CLAMP(k, 0.0f, 1.0f),
 							1.0f / wall_distance
 						);
@@ -1476,11 +1561,10 @@ extern "C" PROTOTYPE_RENDER(render)
 								* square(CLAMP(1.0f - distance / 32.0f, 0.0f, 1.0f))
 							+ powf(CLAMP(1.0f - distance / AMBIENT_LIGHT_RADIUS, 0.0f, 1.0f), AMBIENT_LIGHT_POW);
 
-						ImgRGB* img = y < VIEW_RES.y / 2 ? &state->game.floor : &state->game.ceiling;
 						write_pixel
 						(
 							&state->game.view_framebuffer[x][y],
-							*(img->rgb + static_cast<i32>(portions.x * (img->dim.x - 1.0f)) * img->dim.y + static_cast<i32>(portions.y * img->dim.y))
+							mipmap_color_at(&(y < VIEW_RES.y / 2 ? state->game.floor : state->game.ceiling), (y < VIEW_RES.y / 2 ? distance / 16.0f + MIPMAP_LEVELS * square(1.0f - fabsf(ray.z)) : 0), portions)
 								* CLAMP(k, 0.0f, 1.0f),
 							1.0f / distance
 						);
@@ -1555,11 +1639,24 @@ extern "C" PROTOTYPE_RENDER(render)
 
 							if (IN_RANGE(state->game.lucia_position.z + ray.z * node->distance, 0.0f, WALL_HEIGHT))
 							{
-								f32 k =
-									powf(CLAMP(dot(ray, state->game.flashlight_ray), 0.0f, 1.0f), FLASHLIGHT_POW)
-										* state->game.flashlight_activation
-										* square(CLAMP(1.0f - node->distance / 32.0f, 0.0f, 1.0f))
-									+ powf(CLAMP(1.0f - node->distance / AMBIENT_LIGHT_RADIUS, 0.0f, 1.0f), AMBIENT_LIGHT_POW);
+								f32 k;
+
+								if (node->thing->type == ThingType::battery || node->thing->type == ThingType::paper || node->thing->type == ThingType::flashlight) // @TODO@ Cleanup
+								{
+									k =
+										powf(CLAMP(dot(ray, state->game.flashlight_ray), 0.0f, 1.0f), FLASHLIGHT_POW)
+											* state->game.flashlight_activation
+											* square(CLAMP(1.0f - node->distance / 32.0f, 0.0f, 1.0f))
+										+ powf(CLAMP(1.0f - node->distance / AMBIENT_LIGHT_RADIUS / 4.0f, 0.0f, 1.0f), AMBIENT_LIGHT_POW);
+								}
+								else
+								{
+									k =
+										powf(CLAMP(dot(ray, state->game.flashlight_ray), 0.0f, 1.0f), FLASHLIGHT_POW)
+											* state->game.flashlight_activation
+											* square(CLAMP(1.0f - node->distance / 32.0f, 0.0f, 1.0f))
+										+ powf(CLAMP(1.0f - node->distance / AMBIENT_LIGHT_RADIUS, 0.0f, 1.0f), AMBIENT_LIGHT_POW);
+								}
 
 								write_pixel
 								(

@@ -2,9 +2,10 @@
 #define HOLDING(INPUT)  (!!platform->inputs[+(INPUT)].curr)
 #define RELEASED(INPUT) (!platform->inputs[+(INPUT)].curr && !!platform->inputs[+(INPUT)].prev)
 
-global constexpr f32 TAU      = 6.28318530717f;
-global constexpr f32 SQRT2    = 1.41421356237f;
-global constexpr f32 INVSQRT2 = 0.70710678118f;
+global constexpr f32 TAU           = 6.28318530717f;
+global constexpr f32 SQRT2         = 1.41421356237f;
+global constexpr f32 INVSQRT2      = 0.70710678118f;
+global constexpr i32 MIPMAP_LEVELS = 4;
 
 // @TODO@ Use an actual RNG lol.
 // @NOTE@ Is in interval [0, 65536).
@@ -57,12 +58,6 @@ struct Intersection
 	vf2                position;
 	vf2                normal;
 	f32                distance;
-};
-
-struct ImgRGB
-{
-	vi2  dim;
-	vf3* rgb;
 };
 
 struct ImgRGBA
@@ -422,41 +417,6 @@ internal void blit_texture(SDL_Renderer* renderer, SDL_Texture* texture, vf2 pos
 {
 	SDL_Rect dst = { static_cast<i32>(position.x), static_cast<i32>(position.y), static_cast<i32>(dimensions.x), static_cast<i32>(dimensions.y) };
 	SDL_RenderCopy(renderer, texture, 0, &dst);
-}
-
-internal ImgRGB init_img_rgb(strlit filepath)
-{
-	ImgRGB img;
-
-	i32  iw;
-	i32  ih;
-	u32* stbimg = reinterpret_cast<u32*>(stbi_load(filepath, &iw, &ih, 0, STBI_rgb_alpha));
-	DEFER { stbi_image_free(stbimg); };
-	ASSERT(stbimg);
-
-	img.dim = { iw, ih };
-	img.rgb = reinterpret_cast<vf3*>(malloc(img.dim.x * img.dim.y * sizeof(vf3)));
-
-	FOR_RANGE(y, img.dim.y)
-	{
-		FOR_RANGE(x, img.dim.x)
-		{
-			u32 pixel = *(stbimg + y * img.dim.x + x);
-			*(img.rgb + x * img.dim.y + (img.dim.y - 1 - y)) =
-				{
-					static_cast<f32>(pixel >>  0 & 0xFF) / 0xFF,
-					static_cast<f32>(pixel >>  8 & 0xFF) / 0xFF,
-					static_cast<f32>(pixel >> 16 & 0xFF) / 0xFF,
-				};
-		}
-	}
-
-	return img;
-}
-
-internal void deinit_img_rgb(ImgRGB* img)
-{
-	free(img->rgb);
 }
 
 internal ImgRGBA init_img_rgba(strlit filepath)
