@@ -71,8 +71,8 @@ enum_loose (ThingType, i32)
 	monster,
 	hand,
 
-	UNIQUE_END,
-	ITEM_START  = UNIQUE_END,
+	SPECIAL_END,
+	ITEM_START  = SPECIAL_END,
 	ITEM_START_ = ITEM_START - 1,
 
 	battery,
@@ -188,15 +188,14 @@ struct State
 
 		f32                  view_inv_depth_buffer[VIEW_RES.x][VIEW_RES.y];
 		PathCoordinatesNode* available_path_coordinates_node;
+		strlit               notification_message;
+		f32                  notification_keytime;
 
 		WallVoxel            wall_voxels[MAP_DIM][MAP_DIM];
 		f32                  flashlight_power;
 		f32                  flashlight_activation;
 		vf3                  flashlight_ray;
 		f32                  flashlight_keytime;
-		i32                  inventory_index;
-		i32                  inventory_count;
-		Thing                inventory_buffer[4];
 
 		vf2                  lucia_velocity;
 		vf3                  lucia_position;
@@ -216,16 +215,20 @@ struct State
 			{
 				Thing monster;
 				Thing hand;
-			} unique;
+			} special;
 
 			struct
 			{
-				Thing uniques[sizeof(unique) / sizeof(Thing)];
+				Thing specials[sizeof(special) / sizeof(Thing)];
 				Thing item_buffer[16];
 			};
 
-			Thing thing_buffer[ARRAY_CAPACITY(uniques) + ARRAY_CAPACITY(item_buffer)];
+			Thing thing_buffer[ARRAY_CAPACITY(specials) + ARRAY_CAPACITY(item_buffer)];
 		};
+
+		i32   inventory_index;
+		i32   inventory_count;
+		Thing inventory_buffer[4];
 	} game;
 };
 
@@ -752,12 +755,12 @@ extern "C" PROTOTYPE_UPDATE(update)
 								state->game.lucia_position.z  = LUCIA_HEIGHT;
 								state->game.lucia_fov         = TAU / 3.0f;
 
-								state->game.unique.monster.type        = ThingType::monster;
-								state->game.unique.monster.img         = &state->game.monster_img;
-								state->game.unique.monster.position.xy = rng_open_position(state);
+								state->game.special.monster.type        = ThingType::monster;
+								state->game.special.monster.img         = &state->game.monster_img;
+								state->game.special.monster.position.xy = rng_open_position(state);
 
-								state->game.unique.hand.type = ThingType::hand;
-								state->game.unique.hand.img  = &state->game.hand_img;
+								state->game.special.hand.type = ThingType::hand;
+								state->game.special.hand.img  = &state->game.hand_img;
 
 								FOR_RANGE(8)
 								{
@@ -987,10 +990,10 @@ extern "C" PROTOTYPE_UPDATE(update)
 			vi2 current_lucia_coordinates = get_closest_open_path_coordinates(state, state->game.lucia_position.xy);
 			if
 			(
-				!state->game.monster_path && norm(ray_to_closest(state->game.unique.monster.position.xy, state->game.lucia_position.xy)) > 2.0f
+				!state->game.monster_path && norm(ray_to_closest(state->game.special.monster.position.xy, state->game.lucia_position.xy)) > 2.0f
 				|| state->game.monster_path && current_lucia_coordinates != state->game.monster_path_goal)
 			{
-				vi2 starting_coordinates = get_closest_open_path_coordinates(state, state->game.unique.monster.position.xy);
+				vi2 starting_coordinates = get_closest_open_path_coordinates(state, state->game.special.monster.position.xy);
 				state->game.monster_path_goal = current_lucia_coordinates;
 
 				struct PathVertex
@@ -1187,26 +1190,26 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 			if (state->game.monster_path)
 			{
-				vf2 ray = ray_to_closest(state->game.unique.monster.position.xy, path_coordinates_to_position(state->game.monster_path->coordinates));
+				vf2 ray = ray_to_closest(state->game.special.monster.position.xy, path_coordinates_to_position(state->game.monster_path->coordinates));
 				if (norm(ray) < WALL_SPACING / 2.0f)
 				{
 					state->game.monster_path = deallocate_path_coordinates_node(state, state->game.monster_path);
 				}
 				else
 				{
-					state->game.unique.monster.monster.velocity = dampen(state->game.unique.monster.monster.velocity, normalize(ray) * 3.0f, 4.0f, SECONDS_PER_UPDATE);
+					state->game.special.monster.monster.velocity = dampen(state->game.special.monster.monster.velocity, normalize(ray) * 3.0f, 4.0f, SECONDS_PER_UPDATE);
 				}
 			}
 			else
 			{
-				vf2 ray = ray_to_closest(state->game.unique.monster.position.xy, state->game.lucia_position.xy);
+				vf2 ray = ray_to_closest(state->game.special.monster.position.xy, state->game.lucia_position.xy);
 				if (norm(ray) > 4.0f)
 				{
-					state->game.unique.monster.monster.velocity = dampen(state->game.unique.monster.monster.velocity, normalize(ray) * 3.0f, 4.0f, SECONDS_PER_UPDATE);
+					state->game.special.monster.monster.velocity = dampen(state->game.special.monster.monster.velocity, normalize(ray) * 3.0f, 4.0f, SECONDS_PER_UPDATE);
 				}
 				else
 				{
-					state->game.unique.monster.monster.velocity = dampen(state->game.unique.monster.monster.velocity, { 0.0f, 0.0f }, 4.0f, SECONDS_PER_UPDATE);
+					state->game.special.monster.monster.velocity = dampen(state->game.special.monster.monster.velocity, { 0.0f, 0.0f }, 4.0f, SECONDS_PER_UPDATE);
 				}
 			}
 
@@ -1220,11 +1223,11 @@ extern "C" PROTOTYPE_UPDATE(update)
 			state->game.flashlight_ray.z   = sinf(state->game.flashlight_keytime * TAU * 36.0f) * 0.05f;
 			state->game.flashlight_ray     = normalize(state->game.flashlight_ray);
 
-			state->game.unique.monster.position.xy += state->game.unique.monster.monster.velocity * SECONDS_PER_UPDATE;
-			state->game.unique.monster.position.x   = mod(state->game.unique.monster.position.x, MAP_DIM * WALL_SPACING);
-			state->game.unique.monster.position.y   = mod(state->game.unique.monster.position.y, MAP_DIM * WALL_SPACING);
-			state->game.unique.monster.position.z   = cosf(state->time * 3.0f) * 0.15f + WALL_HEIGHT / 2.0f;
-			state->game.unique.monster.normal       = normalize(dampen(state->game.unique.monster.normal, normalize(ray_to_closest(state->game.lucia_position.xy, state->game.unique.monster.position.xy)), 1.0f, SECONDS_PER_UPDATE));
+			state->game.special.monster.position.xy += state->game.special.monster.monster.velocity * SECONDS_PER_UPDATE;
+			state->game.special.monster.position.x   = mod(state->game.special.monster.position.x, MAP_DIM * WALL_SPACING);
+			state->game.special.monster.position.y   = mod(state->game.special.monster.position.y, MAP_DIM * WALL_SPACING);
+			state->game.special.monster.position.z   = cosf(state->time * 3.0f) * 0.15f + WALL_HEIGHT / 2.0f;
+			state->game.special.monster.normal       = normalize(dampen(state->game.special.monster.normal, normalize(ray_to_closest(state->game.lucia_position.xy, state->game.special.monster.position.xy)), 1.0f, SECONDS_PER_UPDATE));
 
 			state->game.hand_hovered_item = 0;
 
@@ -1247,9 +1250,9 @@ extern "C" PROTOTYPE_UPDATE(update)
 			{
 				vf2 ray = ray_to_closest(state->game.hand_hovered_item->position.xy, state->game.lucia_position.xy);
 
-				state->game.unique.hand.position.xy = state->game.hand_hovered_item->position.xy + ray / 2.0f;
-				state->game.unique.hand.position.z  = lerp(state->game.hand_hovered_item->position.z, state->game.lucia_position.z, 0.75f);
-				state->game.unique.hand.normal      = normalize(ray) * 0.15f;
+				state->game.special.hand.position.xy = state->game.hand_hovered_item->position.xy + ray / 2.0f;
+				state->game.special.hand.position.z  = lerp(state->game.hand_hovered_item->position.z, state->game.lucia_position.z, 0.75f);
+				state->game.special.hand.normal      = normalize(ray) * 0.15f;
 
 				if (PRESSED(Input::space) && state->game.inventory_count < ARRAY_CAPACITY(state->game.inventory_buffer))
 				{
@@ -1263,7 +1266,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 			}
 			else
 			{
-				state->game.unique.hand.normal = { 0.0f, 0.0f };
+				state->game.special.hand.normal = { 0.0f, 0.0f };
 			}
 
 			FOR_ELEMS(item, state->game.item_buffer, state->game.item_count)
@@ -1289,6 +1292,20 @@ extern "C" PROTOTYPE_UPDATE(update)
 						{
 							item->flashlight.on = !item->flashlight.on;
 						} break;
+
+						case ThingType::battery:
+						{
+							state->game.inventory_count -= 1;
+							*item = state->game.inventory_buffer[state->game.inventory_count];
+
+							if (state->game.inventory_count)
+							{
+								state->game.inventory_index = (state->game.inventory_index + 1) % state->game.inventory_count;
+							}
+
+							state->game.notification_message = "You replaced the batteries in the flashlight.";
+							state->game.notification_keytime = 1.0f;
+						} break;
 					}
 				}
 			}
@@ -1306,6 +1323,8 @@ extern "C" PROTOTYPE_UPDATE(update)
 			}
 
 			state->game.flashlight_activation = dampen(state->game.flashlight_activation, flashlight_goal_activation, 25.0f, SECONDS_PER_UPDATE);
+
+			state->game.notification_keytime = clamp(state->game.notification_keytime - SECONDS_PER_UPDATE / 8.0f, 0.0f, 1.0f);
 		} break;
 	}
 
@@ -1594,65 +1613,67 @@ extern "C" PROTOTYPE_RENDER(render)
 				#if 1
 				FOR_RANGE(y, 0, VIEW_RES.y)
 				{
-					vf3 ray          = normalize({ ray_horizontal.x, ray_horizontal.y, (y - VIEW_RES.y / 2.0f) * state->game.lucia_fov / HORT_TO_VERT_K });
+					vf3 ray = normalize({ ray_horizontal.x, ray_horizontal.y, (y - VIEW_RES.y / 2.0f) * state->game.lucia_fov / HORT_TO_VERT_K });
 
+						f32     d;
+						vf2     uv;
+						vf3     n;
+						Mipmap* mm;
 
-					f32     d;
-					vf2     uv;
-					vf3     n;
-					Mipmap* mm;
-
-					if (IN_RANGE(y, pixel_starting_y, pixel_ending_y))
-					{
-						uv = { wall_portion, static_cast<f32>(y - starting_y) / (ending_y - starting_y) };
-						d  = sqrtf(square(wall_distance) + square(uv.y * WALL_HEIGHT - state->game.lucia_position.z));
-						n  = vxx(wall_normal, 0.0f);
-						mm = &state->game.wall;
-					}
-					else
-					{
-						if (y < VIEW_RES.y / 2)
+						if (IN_RANGE(y, pixel_starting_y, pixel_ending_y))
 						{
-							f32 zk = -state->game.lucia_position.z / ray.z;
-							uv   = state->game.lucia_position.xy + zk * ray.xy;
-							d    = sqrtf(square(zk) * 2.0f - square(state->game.lucia_position.z));
-							n    = { 0.0f, 0.0f, 1.0f };
-							mm   = &state->game.floor;
+							uv = { wall_portion, static_cast<f32>(y - starting_y) / (ending_y - starting_y) };
+							d  = sqrtf(square(wall_distance) + square(uv.y * WALL_HEIGHT - state->game.lucia_position.z));
+							n  = vxx(wall_normal, 0.0f);
+							mm = &state->game.wall;
+						}
+						else if (fabs(ray.z) > 0.0001f)
+						{
+							if (y < VIEW_RES.y / 2)
+							{
+								f32 zk = -state->game.lucia_position.z / ray.z;
+								uv   = state->game.lucia_position.xy + zk * ray.xy;
+								d    = sqrtf(square(zk) * 2.0f - square(state->game.lucia_position.z));
+								n    = { 0.0f, 0.0f, 1.0f };
+								mm   = &state->game.floor;
+							}
+							else
+							{
+								f32 zk = (WALL_HEIGHT - state->game.lucia_position.z) / ray.z;
+								uv   = state->game.lucia_position.xy + zk * ray.xy;
+								d    = sqrtf(square(zk) * 2.0f - square(state->game.lucia_position.z));
+								n    = { 0.0f, 0.0f, -1.0f };
+								mm   = &state->game.ceiling;
+							}
+
+							uv.x = mod(uv.x / 4.0f, 1.0f);
+							uv.y = mod(uv.y / 4.0f, 1.0f);
 						}
 						else
 						{
-							f32 zk = (WALL_HEIGHT - state->game.lucia_position.z) / ray.z;
-							uv   = state->game.lucia_position.xy + zk * ray.xy;
-							d    = sqrtf(square(zk) * 2.0f - square(state->game.lucia_position.z));
-							n    = { 0.0f, 0.0f, -1.0f };
-							mm   = &state->game.ceiling;
+							continue;
 						}
 
-
-						uv.x = mod(uv.x / 4.0f, 1.0f);
-						uv.y = mod(uv.y / 4.0f, 1.0f);
+						view_pixels[(VIEW_RES.y - 1 - y) * VIEW_RES.x + x] =
+							to_pixel
+							(
+								mipmap_color_at(mm, d / 4.0f + MIPMAP_LEVELS * square(1.0f - fabsf(dot(ray, n))), uv)
+									* clamp
+										(
+											0.015f
+												- fabsf(dot(ray, n)) * 0.01f
+												+ ((state->game.lucia_position.z + ray.z * d) / WALL_HEIGHT + 0.95f) * 0.7f * LIGHTS
+												+ clamp((dot(ray, state->game.flashlight_ray) - FLASHLIGHT_OUTER_CUTOFF) / (FLASHLIGHT_INNER_CUTOFF - FLASHLIGHT_OUTER_CUTOFF), 0.0f, 1.0f)
+													/ (square(d) + 0.1f)
+													* FLASHLIGHT_STRENGTH
+													* state->game.flashlight_activation
+												+ powf(clamp(1.0f - d / AMBIENT_LIGHT_RADIUS, 0.0f, 1.0f), AMBIENT_LIGHT_POW),
+											0.0f,
+											1.0f
+										)
+							);
+						state->game.view_inv_depth_buffer[x][y] = 1.0f / d;
 					}
-
-					view_pixels[(VIEW_RES.y - 1 - y) * VIEW_RES.x + x] =
-						to_pixel
-						(
-							mipmap_color_at(mm, d / 4.0f + MIPMAP_LEVELS * square(1.0f - fabsf(dot(ray, n))), uv)
-								* clamp
-									(
-										0.015f
-											- fabsf(dot(ray, n)) * 0.01f
-											+ ((state->game.lucia_position.z + ray.z * d) / WALL_HEIGHT + 0.95f) * 0.7f * LIGHTS
-											+ clamp((dot(ray, state->game.flashlight_ray) - FLASHLIGHT_OUTER_CUTOFF) / (FLASHLIGHT_INNER_CUTOFF - FLASHLIGHT_OUTER_CUTOFF), 0.0f, 1.0f)
-												/ (square(d) + 0.1f)
-												* FLASHLIGHT_STRENGTH
-												* state->game.flashlight_activation
-											+ powf(clamp(1.0f - d / AMBIENT_LIGHT_RADIUS, 0.0f, 1.0f), AMBIENT_LIGHT_POW),
-										0.0f,
-										1.0f
-									)
-						);
-					state->game.view_inv_depth_buffer[x][y] = 1.0f / d;
-				}
 				#endif
 
 				#if PROFILE
@@ -1685,7 +1706,7 @@ extern "C" PROTOTYPE_RENDER(render)
 
 				MemoryArena arena = memory_arena_checkpoint(&state->transient_arena);
 
-				FOR_ELEMS(thing, state->game.thing_buffer, ARRAY_CAPACITY(state->game.uniques) + state->game.item_count)
+				FOR_ELEMS(thing, state->game.thing_buffer, ARRAY_CAPACITY(state->game.specials) + state->game.item_count)
 				{
 					FOR_RANGE(i, 9) // @TODO@ Optimize
 					{
@@ -1789,6 +1810,21 @@ extern "C" PROTOTYPE_RENDER(render)
 
 			SDL_UnlockTexture(state->game.view_texture);
 			blit_texture(platform->renderer, state->game.view_texture, vxx(vi2 { PADDING, PADDING }), vxx(VIEW_RES));
+
+			if (state->game.notification_keytime)
+			{
+				draw_text
+				(
+					platform->renderer,
+					state->main_font,
+					{ WIN_RES.x * 0.5f, PADDING + VIEW_RES.y * 0.8f },
+					FC_ALIGN_CENTER,
+					0.175f,
+					{ 1.0f, 1.0f, 1.0f, sinf(TAU / 4.0f * square(state->game.notification_keytime)) },
+					"%s",
+					state->game.notification_message
+				);
+			}
 
 			set_color(platform->renderer, { 0.15f, 0.15f, 0.15f });
 			draw_rect(platform->renderer, vxx(vi2 { PADDING, VIEW_RES.y + PADDING * 2 }), vxx(HUD_RES));
