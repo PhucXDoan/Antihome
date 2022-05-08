@@ -42,7 +42,6 @@
 #define IN_RANGE(X, MINI, MAXI)     ((MINI) <= (X) && (X) < (MAXI))
 #define MINIMUM(X, Y)               ((X) <= (Y) ? (X) : (Y))
 #define MAXIMUM(X, Y)               ((X) >= (Y) ? (X) : (Y))
-#define CLAMP(X, MINI, MAXI)        ((X) < (MINI) ? (MINI) : (X) > (MAXI) ? (MAXI) : (X))
 #define SWAP(X, Y)                  do { auto TEMP_SWAP_##__LINE__ = X; X = Y; Y = TEMP_SWAP_##__LINE__; } while (false)
 #define KIBIBYTES_OF(N)             (1024LL *             (N))
 #define MEBIBYTES_OF(N)             (1024LL * KIBIBYTES_OF(N))
@@ -150,6 +149,17 @@ internal MemoryArena memory_arena_checkpoint(MemoryArena* arena)
 //
 // Math.
 //
+
+internal u8  clamp(u8  x, u8  a, u8  b) { return x < a ? a : x > b ? b : x; }
+internal u16 clamp(u16 x, u16 a, u16 b) { return x < a ? a : x > b ? b : x; }
+internal u32 clamp(u32 x, u32 a, u32 b) { return x < a ? a : x > b ? b : x; }
+internal u64 clamp(u64 x, u64 a, u64 b) { return x < a ? a : x > b ? b : x; }
+internal i8  clamp(i8  x, i8  a, i8  b) { return x < a ? a : x > b ? b : x; }
+internal i16 clamp(i16 x, i16 a, i16 b) { return x < a ? a : x > b ? b : x; }
+internal i32 clamp(i32 x, i32 a, i32 b) { return x < a ? a : x > b ? b : x; }
+internal i64 clamp(i64 x, i64 a, i64 b) { return x < a ? a : x > b ? b : x; }
+internal f32 clamp(f32 x, f32 a, f32 b) { return x < a ? a : x > b ? b : x; }
+internal f64 clamp(f64 x, f64 a, f64 b) { return x < a ? a : x > b ? b : x; }
 
 struct vf2
 {
