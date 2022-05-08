@@ -144,6 +144,7 @@ int main(int, char**)
 							case SDLK_q         : ++platform.inputs[+Input::q        ].curr; break;
 							case SDLK_s         : ++platform.inputs[+Input::s        ].curr; break;
 							case SDLK_w         : ++platform.inputs[+Input::w        ].curr; break;
+							case SDLK_x         : ++platform.inputs[+Input::x        ].curr; break;
 							case SDLK_0         : ++platform.inputs[+Input::n0       ].curr; break;
 							case SDLK_1         : ++platform.inputs[+Input::n1       ].curr; break;
 							case SDLK_2         : ++platform.inputs[+Input::n2       ].curr; break;

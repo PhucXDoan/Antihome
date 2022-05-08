@@ -16,6 +16,7 @@ enum_loose (Input, u32)
 	q,
 	s,
 	w,
+	x,
 	n0,
 	n1,
 	n2,

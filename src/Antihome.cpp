@@ -1,3 +1,14 @@
+/* @TODO@
+	- Better inventory system
+	- Stamina and battery meter
+	- Varying Anomal types and behaviors
+	- Implemented document reading
+	- Map display
+	- Sound effects
+	- End screen
+	- Fleshed out screens
+*/
+
 // @NOTE@ Credits
 // "A Fast Voxel Traversal Algorithm for Ray Tracing" https://www.flipcode.com/archives/A%20faster%20voxel%20traversal%20algorithm%20for%20ray%20tracing.pdf
 
@@ -1327,107 +1338,135 @@ extern "C" PROTOTYPE_UPDATE(update)
 				ASSERT(IN_RANGE(state->game.combining_item - state->game.inventory_buffer, 0, state->game.inventory_count));
 				ASSERT(state->game.combining_item != &state->game.inventory_buffer[state->game.inventory_index]);
 
-				if (PRESSED(Input::q))
+				if (PRESSED(Input::x))
 				{
-					state->game.inventory_index = (state->game.inventory_index + 1) % state->game.inventory_count;
-
-					if (state->game.combining_item == &state->game.inventory_buffer[state->game.inventory_index])
-					{
-						state->game.inventory_index = (state->game.inventory_index + 1) % state->game.inventory_count;
-					}
-				}
-
-				if (PRESSED(Input::e))
-				{
-					Thing* item = &state->game.inventory_buffer[state->game.inventory_index];
-					switch (state->game.combining_item->type)
-					{
-						case ThingType::battery:
-						{
-							if (item->type == ThingType::flashlight)
-							{
-								item->flashlight.power = 1.0f;
-
-								state->game.inventory_count -= 1;
-								*state->game.combining_item = state->game.inventory_buffer[state->game.inventory_count];
-
-								if (state->game.inventory_index == state->game.inventory_count)
-								{
-									state->game.inventory_index = static_cast<i32>(state->game.combining_item - state->game.inventory_buffer);
-								}
-
-								state->game.notification_message = "(You replaced the batteries in the flashlight.)";
-								state->game.notification_keytime = 1.0f;
-							}
-							else
-							{
-								goto INCOMPATIBLE;
-							}
-						} break;
-
-						default:
-						INCOMPATIBLE:
-						{
-							state->game.notification_message = "\"I don't see how that would fit.\"";
-							state->game.notification_keytime = 1.0f;
-						} break;
-					}
-
 					state->game.combining_item = 0;
 				}
-			}
-			else
-			{
-				if (state->game.inventory_count)
+				else
 				{
 					if (PRESSED(Input::q))
 					{
 						state->game.inventory_index = (state->game.inventory_index + 1) % state->game.inventory_count;
+
+						if (state->game.combining_item == &state->game.inventory_buffer[state->game.inventory_index])
+						{
+							state->game.inventory_index = (state->game.inventory_index + 1) % state->game.inventory_count;
+						}
 					}
 
 					if (PRESSED(Input::e))
 					{
 						Thing* item = &state->game.inventory_buffer[state->game.inventory_index];
-
-						switch (item->type)
+						switch (state->game.combining_item->type)
 						{
-							case ThingType::flashlight:
-							{
-								ASSERT(item == state->game.using_flashlight);
-
-								if (item->flashlight.power)
-								{
-									item->flashlight.on = !item->flashlight.on;
-								}
-								else
-								{
-									ASSERT(!item->flashlight.on);
-									state->game.notification_message = "\"The flashlight is dead.\"";
-									state->game.notification_keytime = 1.0f;
-								}
-							} break;
-
 							case ThingType::battery:
 							{
-								if (state->game.inventory_count >= 2)
+								if (item->type == ThingType::flashlight)
 								{
-									state->game.combining_item = item;
+									item->flashlight.power = 1.0f;
 
-									FOR_ELEMS(it, state->game.inventory_buffer, state->game.inventory_count)
+									state->game.inventory_count -= 1;
+									*state->game.combining_item = state->game.inventory_buffer[state->game.inventory_count];
+
+									if (state->game.inventory_index == state->game.inventory_count)
 									{
-										if (it != item)
-										{
-											state->game.inventory_index = it_index;
-										}
+										state->game.inventory_index = static_cast<i32>(state->game.combining_item - state->game.inventory_buffer);
 									}
+
+									if (state->game.using_flashlight == &state->game.inventory_buffer[state->game.inventory_count])
+									{
+										state->game.using_flashlight = item;
+									}
+
+									state->game.notification_message = "(You replaced the batteries in the flashlight.)";
+									state->game.notification_keytime = 1.0f;
 								}
 								else
 								{
-									state->game.notification_message = "\"There's nothing to put batteries into.\"";
-									state->game.notification_keytime = 1.0f;
+									goto INCOMPATIBLE;
 								}
 							} break;
+
+							default:
+							INCOMPATIBLE:
+							{
+								state->game.notification_message = "\"I don't see how that would fit.\"";
+								state->game.notification_keytime = 1.0f;
+							} break;
 						}
+
+						state->game.combining_item = 0;
+					}
+				}
+			}
+			else if (state->game.inventory_count)
+			{
+				if (PRESSED(Input::q))
+				{
+					state->game.inventory_index = (state->game.inventory_index + 1) % state->game.inventory_count;
+				}
+
+				if (PRESSED(Input::x))
+				{
+					Thing* item = allocate_item(state);
+					*item = state->game.inventory_buffer[state->game.inventory_index];
+					item->position = state->game.lucia_position;
+
+					if (item->type == ThingType::flashlight)
+					{
+						ASSERT(state->game.using_flashlight == &state->game.inventory_buffer[state->game.inventory_index]);
+						state->game.using_flashlight = 0;
+					}
+
+					state->game.inventory_count -= 1;
+					if (state->game.inventory_count)
+					{
+						state->game.inventory_buffer[state->game.inventory_index] = state->game.inventory_buffer[state->game.inventory_count];
+						state->game.inventory_index = (state->game.inventory_index + 1) % state->game.inventory_count;
+					}
+				}
+				else if (PRESSED(Input::e))
+				{
+					Thing* item = &state->game.inventory_buffer[state->game.inventory_index];
+
+					switch (item->type)
+					{
+						case ThingType::flashlight:
+						{
+							ASSERT(item == state->game.using_flashlight);
+
+							if (item->flashlight.power)
+							{
+								item->flashlight.on = !item->flashlight.on;
+							}
+							else
+							{
+								ASSERT(!item->flashlight.on);
+								state->game.notification_message = "\"The flashlight is dead.\"";
+								state->game.notification_keytime = 1.0f;
+							}
+						} break;
+
+						case ThingType::battery:
+						{
+							if (state->game.inventory_count >= 2)
+							{
+								state->game.combining_item = item;
+
+								FOR_ELEMS(it, state->game.inventory_buffer, state->game.inventory_count)
+								{
+									if (it != item)
+									{
+										state->game.inventory_index = it_index;
+									}
+								}
+							}
+							else
+							{
+								state->game.notification_message = "\"There's nothing to put batteries into.\"";
+								state->game.notification_keytime = 1.0f;
+							}
+						} break;
 					}
 				}
 			}
