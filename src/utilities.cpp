@@ -85,6 +85,7 @@ internal constexpr vf2 conjugate(vf2 v) { return {  v.x, -v.y }; }
 internal constexpr vf2 rotate90(vf2 v)  { return { -v.y,  v.x }; }
 
 internal constexpr f32 square(f32 x) { return x * x; }
+internal constexpr f32 cube(f32 x) { return x * x * x; }
 
 internal constexpr vf4 lerp(vf4 a, vf4 b, f32 t) { return a * (1.0f - t) + b * t; }
 internal constexpr vf3 lerp(vf3 a, vf3 b, f32 t) { return a * (1.0f - t) + b * t; }

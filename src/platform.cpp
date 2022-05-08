@@ -164,6 +164,7 @@ int main(int, char**)
 							case SDLK_LSHIFT    : ++platform.inputs[+Input::shift    ].curr; break;
 							case SDLK_ESCAPE    : ++platform.inputs[+Input::escape   ].curr; break;
 							case SDLK_RETURN    : ++platform.inputs[+Input::enter    ].curr; break;
+							case SDLK_TAB       : ++platform.inputs[+Input::tab      ].curr; break;
 						}
 					}
 				} break;

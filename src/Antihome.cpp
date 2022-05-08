@@ -194,6 +194,7 @@ struct State
 		f32                  flashlight_activation;
 		vf3                  flashlight_ray;
 		f32                  flashlight_keytime;
+		f32                  ceiling_lights_keytime;
 
 		vf2                  lucia_velocity;
 		vf3                  lucia_position;
@@ -1371,6 +1372,21 @@ extern "C" PROTOTYPE_UPDATE(update)
 			}
 
 			state->game.notification_keytime = clamp(state->game.notification_keytime - SECONDS_PER_UPDATE / 8.0f, 0.0f, 1.0f);
+
+			persist bool32 CEILING_ACTIVATION = false;
+			if (PRESSED(Input::tab))
+			{
+				CEILING_ACTIVATION = !CEILING_ACTIVATION;
+			}
+
+			if (CEILING_ACTIVATION)
+			{
+				state->game.ceiling_lights_keytime = clamp(state->game.ceiling_lights_keytime + SECONDS_PER_UPDATE / 1.0f, 0.0f, 1.0f);
+			}
+			else
+			{
+				state->game.ceiling_lights_keytime = clamp(state->game.ceiling_lights_keytime - SECONDS_PER_UPDATE / 0.5f, 0.0f, 1.0f);
+			}
 		} break;
 	}
 
@@ -1538,7 +1554,6 @@ extern "C" PROTOTYPE_RENDER(render)
 			constexpr f32 FLASHLIGHT_STRENGTH     = 16.0f;
 			constexpr f32 AMBIENT_LIGHT_POW       = 4.0f;
 			constexpr f32 AMBIENT_LIGHT_RADIUS    = 8.0f;
-			constexpr f32 LIGHTS                  = 0.0f;
 
 			FOR_RANGE(x, VIEW_RES.x)
 			{
@@ -1708,7 +1723,7 @@ extern "C" PROTOTYPE_RENDER(render)
 										(
 											0.015f
 												- fabsf(dot(ray, n)) * 0.01f
-												+ ((state->game.lucia_position.z + ray.z * d) / WALL_HEIGHT + 0.95f) * 0.7f * LIGHTS
+												+ ((state->game.lucia_position.z + ray.z * d) / WALL_HEIGHT + 0.95f) * 0.7f * (0.5f - 4.0f * cube(state->game.ceiling_lights_keytime - 0.5f))
 												+ clamp((dot(ray, state->game.flashlight_ray) - FLASHLIGHT_OUTER_CUTOFF) / (FLASHLIGHT_INNER_CUTOFF - FLASHLIGHT_OUTER_CUTOFF), 0.0f, 1.0f)
 													/ (square(d) + 0.1f)
 													* FLASHLIGHT_STRENGTH
@@ -1822,7 +1837,7 @@ extern "C" PROTOTYPE_RENDER(render)
 														(
 															0.015f
 																- fabsf(dot(ray.xy, node->thing->normal)) * 0.01f
-																+ ((state->game.lucia_position.z + ray.z * node->distance) / WALL_HEIGHT + 0.95f) * 0.7f * LIGHTS
+																+ ((state->game.lucia_position.z + ray.z * node->distance) / WALL_HEIGHT + 0.95f) * 0.7f * (0.5f - 4.0f * cube(state->game.ceiling_lights_keytime - 0.5f))
 																+ clamp((dot(ray, state->game.flashlight_ray) - FLASHLIGHT_OUTER_CUTOFF) / (FLASHLIGHT_INNER_CUTOFF - FLASHLIGHT_OUTER_CUTOFF), 0.0f, 1.0f)
 																	/ (square(node->distance) + 0.1f)
 																	* FLASHLIGHT_STRENGTH
