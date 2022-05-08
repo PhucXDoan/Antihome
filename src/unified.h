@@ -73,6 +73,9 @@ internal constexpr NAME operator<<=(NAME& a, i32  n) { return a = static_cast<NA
 internal constexpr NAME operator>>=(NAME& a, i32  n) { return a = static_cast<NAME>( (+a) >> n  ); }\
 enum struct NAME : TYPE
 
+#define enum_start_region(NAME) NAME##_START, NAME##_START_ = NAME##_START - 1,
+#define enum_end_region(NAME)   NAME##_END, NAME##_COUNT = NAME##_END - NAME##_START, NAME##_END_ = NAME##_END - 2,
+
 #if DEBUG
 #undef MOUSE_MOVED
 #include <windows.h>

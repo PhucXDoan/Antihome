@@ -68,21 +68,19 @@ struct Mipmap
 
 enum_loose (ThingType, i32)
 {
-	monster,
-	hand,
+	enum_start_region(SPECIAL)
+		monster,
+		hand,
+	enum_end_region(SPECIAL)
 
-	SPECIAL_END,
-	ITEM_START  = SPECIAL_END,
-	ITEM_START_ = ITEM_START - 1,
-
-	battery,
-	paper,
-	flashlight,
-
-	ITEM_END
+	enum_start_region(ITEM)
+		battery,
+		paper,
+		flashlight,
+	enum_end_region(ITEM)
 };
 
-global constexpr strlit ITEM_IMG_FILE_PATHS[+ThingType::ITEM_END - +ThingType::ITEM_START] =
+global constexpr strlit ITEM_IMG_FILE_PATHS[ThingType::ITEM_COUNT] =
 	{
 		DATA_DIR "battery.png",
 		DATA_DIR "paper.png",
@@ -177,7 +175,7 @@ struct State
 		ImgRGBA              monster_img;
 		ImgRGBA              hand_img;
 		ImgRGBA              flashlight_on_img;
-		ImgRGBA              item_imgs[+ThingType::ITEM_END - +ThingType::ITEM_START];
+		ImgRGBA              item_imgs[ThingType::ITEM_COUNT];
 		SDL_Texture*         inventory_border;
 		SDL_Texture*         lucia_haunted;
 		SDL_Texture*         lucia_healed;
@@ -1290,39 +1288,87 @@ extern "C" PROTOTYPE_UPDATE(update)
 					{
 						case ThingType::flashlight:
 						{
-							item->flashlight.on = !item->flashlight.on;
+							if (state->game.flashlight_power)
+							{
+								item->flashlight.on = !item->flashlight.on;
+							}
+							else
+							{
+								state->game.notification_message = "\"The flashlight is dead.\"";
+								state->game.notification_keytime = 1.0f;
+							}
 						} break;
 
 						case ThingType::battery:
 						{
-							state->game.inventory_count -= 1;
-							*item = state->game.inventory_buffer[state->game.inventory_count];
+							Thing* flashlight = 0;
 
-							if (state->game.inventory_count)
+							FOR_ELEMS(it, state->game.inventory_buffer, state->game.inventory_count)
 							{
-								state->game.inventory_index = (state->game.inventory_index + 1) % state->game.inventory_count;
+								if (it->type == ThingType::flashlight)
+								{
+									ASSERT(!flashlight);
+									flashlight = it;
+								}
 							}
 
-							state->game.notification_message = "You replaced the batteries in the flashlight.";
-							state->game.notification_keytime = 1.0f;
+							if (flashlight)
+							{
+								state->game.inventory_count -= 1;
+								*item = state->game.inventory_buffer[state->game.inventory_count];
+
+								FOR_ELEMS(it, state->game.inventory_buffer, state->game.inventory_count)
+								{
+									if (it->type == ThingType::flashlight)
+									{
+										state->game.inventory_index = it_index;
+										break;
+									}
+								}
+
+								state->game.flashlight_power = 1.0f;
+
+								state->game.notification_message = "(You replaced the batteries in the flashlight.)";
+								state->game.notification_keytime = 1.0f;
+							}
+							else
+							{
+								state->game.notification_message = "\"There's nothing to put batteries into.\"";
+								state->game.notification_keytime = 1.0f;
+							}
 						} break;
 					}
 				}
 			}
 
-			f32 flashlight_goal_activation = 0.0f;
-			FOR_ELEMS(item, state->game.inventory_buffer, state->game.inventory_count)
+			Thing* flashlight = 0;
+			FOR_ELEMS(it, state->game.inventory_buffer, state->game.inventory_count)
 			{
-				if (item->type == ThingType::flashlight)
+				if (it->type == ThingType::flashlight)
 				{
-					if (item->flashlight.on)
-					{
-						flashlight_goal_activation = 1.0f;
-					}
+					ASSERT(!flashlight);
+					flashlight = it;
 				}
 			}
 
-			state->game.flashlight_activation = dampen(state->game.flashlight_activation, flashlight_goal_activation, 25.0f, SECONDS_PER_UPDATE);
+			if (flashlight && flashlight->flashlight.on)
+			{
+				state->game.flashlight_power = clamp(state->game.flashlight_power - SECONDS_PER_UPDATE / 60.0f, 0.0f, 1.0f);
+
+				if (state->game.flashlight_power == 0.0f)
+				{
+					flashlight->flashlight.on = false;
+
+					state->game.notification_message = "\"The flashlight died.\"";
+					state->game.notification_keytime = 1.0f;
+				}
+
+				state->game.flashlight_activation = dampen(state->game.flashlight_activation, sinf(TAU / 4.0f * (1.0f - powf(1.0f - state->game.flashlight_power, 16.0f))), 25.0f, SECONDS_PER_UPDATE);
+			}
+			else
+			{
+				state->game.flashlight_activation = dampen(state->game.flashlight_activation, 0.0f, 25.0f, SECONDS_PER_UPDATE);
+			}
 
 			state->game.notification_keytime = clamp(state->game.notification_keytime - SECONDS_PER_UPDATE / 8.0f, 0.0f, 1.0f);
 		} break;
@@ -1872,6 +1918,18 @@ extern "C" PROTOTYPE_RENDER(render)
 				state->game.lucia_normal,
 				{ (WIN_RES.x - HUD_RES.y * LUCIA_HUD_SCALAR) / 2.0f, WIN_RES.y - 1.0f - PADDING - HUD_RES.y + HUD_RES.y * LUCIA_HUD_SCALAR * (1.0f - LUCIA_HUD_SCALAR) - 3.0f },
 				vi2 { HUD_RES.y, HUD_RES.y } * LUCIA_HUD_SCALAR
+			);
+
+			draw_text
+			(
+				platform->renderer,
+				state->main_font,
+				{ 0.0f, 0.0f },
+				FC_ALIGN_LEFT,
+				0.25f,
+				{ 1.0f, 1.0f, 1.0f, 1.0f },
+				"Power : %.2f",
+				state->game.flashlight_power
 			);
 		} break;
 	}
