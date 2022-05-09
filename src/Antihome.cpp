@@ -108,9 +108,7 @@ struct Item
 	{
 		struct
 		{
-			bool32 on;
-			f32    power;
-			f32    activation;
+			f32 power;
 		} flashlight;
 	};
 };
@@ -196,6 +194,7 @@ struct State
 
 		WallVoxel            wall_voxels[MAP_DIM][MAP_DIM];
 		f32                  ceiling_lights_keytime;
+		f32                  flashlight_activation;
 		vf3                  flashlight_ray;
 		f32                  flashlight_keytime;
 
@@ -231,6 +230,8 @@ struct State
 			Item             inventory[2][4];
 			Item             flat_inventory[sizeof(inventory) / sizeof(Item)];
 		};
+
+		Item*                using_flashlight;
 	} game;
 };
 
@@ -267,6 +268,18 @@ internal ImgRGBA* get_corresponding_item_img(State* state, Item* item)
 		case ItemType::null:
 		{
 			return 0;
+		} break;
+
+		case ItemType::flashlight:
+		{
+			if (state->game.using_flashlight == item)
+			{
+				return &state->game.flashlight_on_img;
+			}
+			else
+			{
+			return &state->game.default_item_imgs[+item->type - +ItemType::ITEM_START];
+			}
 		} break;
 
 		default:
@@ -346,6 +359,26 @@ internal vf3 mipmap_color_at(Mipmap* mipmap, f32 level, vf2 uv)
 	else
 	{
 		return vf3 { p.r / 255.0f, p.g / 255.0f, p.b / 255.0f };
+	}
+}
+
+internal bool32 check_combine(Item** out_a, ItemType a_type, Item** out_b, ItemType b_type, Item* fst, Item* snd)
+{
+	if (fst->type == a_type && snd->type == b_type)
+	{
+		*out_a = fst;
+		*out_b = snd;
+		return true;
+	}
+	else if (fst->type == b_type && snd->type == a_type)
+	{
+		*out_a = snd;
+		*out_b = fst;
+		return true;
+	}
+	else
+	{
+		return false;
 	}
 }
 
@@ -1297,34 +1330,6 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 				if (PRESSED(Input::space))
 				{
-					#if 0
-					if (state->game.hand_hovered_item->type == ThingType::flashlight && state->game.using_flashlight)
-					{
-						state->game.notification_message = "\"I already have a flashlight...\"";
-						state->game.notification_keytime = 1.0f;
-					}
-					else
-					if (state->game.inventory_count < ARRAY_CAPACITY(state->game.inventory_buffer))
-					{
-						state->game.inventory_index                                = state->game.inventory_count;
-						state->game.inventory_buffer[state->game.inventory_count]  = *state->game.hand_hovered_item;
-						state->game.inventory_count                               += 1;
-
-						if (state->game.hand_hovered_item->type == ThingType::flashlight)
-						{
-							state->game.using_flashlight = &state->game.inventory_buffer[state->game.inventory_count - 1];
-						}
-
-						deallocate_item(state, state->game.hand_hovered_item);
-						state->game.hand_hovered_item = 0;
-					}
-					else
-					{
-						state->game.notification_message = "\"I can't carry anymore.\"";
-						state->game.notification_keytime = 1.0f;
-					}
-					#endif
-
 					Item* open_space = 0;
 					FOR_ELEMS(it, state->game.flat_inventory)
 					{
@@ -1359,168 +1364,26 @@ extern "C" PROTOTYPE_UPDATE(update)
 				item->normal     = polar(state->time * 1.5f);
 			}
 
-			//if (state->game.combining_item)
-			//{
-			//	ASSERT(state->game.inventory_count >= 2);
-			//	ASSERT(IN_RANGE(state->game.combining_item - state->game.inventory_buffer, 0, state->game.inventory_count));
-			//	ASSERT(state->game.combining_item != &state->game.inventory_buffer[state->game.inventory_index]);
+			if (state->game.using_flashlight)
+			{
+				state->game.using_flashlight->flashlight.power = clamp(state->game.using_flashlight->flashlight.power - SECONDS_PER_UPDATE / 60.0f, 0.0f, 1.0f);
+				state->game.flashlight_activation              = dampen(state->game.flashlight_activation, sinf(TAU / 4.0f * (1.0f - powf(1.0f - state->game.using_flashlight->flashlight.power, 16.0f))), 25.0f, SECONDS_PER_UPDATE);
 
-			//	if (PRESSED(Input::x))
-			//	{
-			//		state->game.combining_item = 0;
-			//	}
-			//	else
-			//	{
-			//		if (PRESSED(Input::q))
-			//		{
-			//			state->game.inventory_index = (state->game.inventory_index + 1) % state->game.inventory_count;
+				if (state->game.using_flashlight->flashlight.power == 0.0f)
+				{
+					state->game.using_flashlight = 0;
 
-			//			if (state->game.combining_item == &state->game.inventory_buffer[state->game.inventory_index])
-			//			{
-			//				state->game.inventory_index = (state->game.inventory_index + 1) % state->game.inventory_count;
-			//			}
-			//		}
-
-			//		if (PRESSED(Input::e))
-			//		{
-			//			Thing* item = &state->game.inventory_buffer[state->game.inventory_index];
-			//			switch (state->game.combining_item->type)
-			//			{
-			//				case ThingType::battery:
-			//				{
-			//					if (item->type == ThingType::flashlight)
-			//					{
-			//						item->flashlight.power = 1.0f;
-
-			//						state->game.inventory_count -= 1;
-			//						*state->game.combining_item = state->game.inventory_buffer[state->game.inventory_count];
-
-			//						if (state->game.inventory_index == state->game.inventory_count)
-			//						{
-			//							state->game.inventory_index = static_cast<i32>(state->game.combining_item - state->game.inventory_buffer);
-			//						}
-
-			//						if (state->game.using_flashlight == &state->game.inventory_buffer[state->game.inventory_count])
-			//						{
-			//							state->game.using_flashlight = item;
-			//						}
-
-			//						state->game.notification_message = "(You replaced the batteries in the flashlight.)";
-			//						state->game.notification_keytime = 1.0f;
-			//					}
-			//					else
-			//					{
-			//						goto INCOMPATIBLE;
-			//					}
-			//				} break;
-
-			//				default:
-			//				INCOMPATIBLE:
-			//				{
-			//					state->game.notification_message = "\"I don't see how that would fit.\"";
-			//					state->game.notification_keytime = 1.0f;
-			//				} break;
-			//			}
-
-			//			state->game.combining_item = 0;
-			//		}
-			//	}
-			//}
-			//else if (state->game.inventory_count)
-			//{
-			//	if (PRESSED(Input::q))
-			//	{
-			//		state->game.inventory_index = (state->game.inventory_index + 1) % state->game.inventory_count;
-			//	}
-
-			//	if (PRESSED(Input::x))
-			//	{
-			//		Thing* item = allocate_item(state);
-			//		*item = state->game.inventory_buffer[state->game.inventory_index];
-			//		item->position = state->game.lucia_position;
-
-			//		if (item->type == ThingType::flashlight)
-			//		{
-			//			ASSERT(state->game.using_flashlight == &state->game.inventory_buffer[state->game.inventory_index]);
-			//			state->game.using_flashlight = 0;
-			//		}
-
-			//		state->game.inventory_count -= 1;
-			//		if (state->game.inventory_count)
-			//		{
-			//			state->game.inventory_buffer[state->game.inventory_index] = state->game.inventory_buffer[state->game.inventory_count];
-			//			state->game.inventory_index = (state->game.inventory_index + 1) % state->game.inventory_count;
-			//		}
-			//	}
-			//	else if (PRESSED(Input::e))
-			//	{
-			//		Thing* item = &state->game.inventory_buffer[state->game.inventory_index];
-
-			//		switch (item->type)
-			//		{
-			//			case ThingType::flashlight:
-			//			{
-			//				ASSERT(item == state->game.using_flashlight);
-
-			//				if (item->flashlight.power)
-			//				{
-			//					item->flashlight.on = !item->flashlight.on;
-			//				}
-			//				else
-			//				{
-			//					ASSERT(!item->flashlight.on);
-			//					state->game.notification_message = "\"The flashlight is dead.\"";
-			//					state->game.notification_keytime = 1.0f;
-			//				}
-			//			} break;
-
-			//			case ThingType::battery:
-			//			{
-			//				if (state->game.inventory_count >= 2)
-			//				{
-			//					state->game.combining_item = item;
-
-			//					FOR_ELEMS(it, state->game.inventory_buffer, state->game.inventory_count)
-			//					{
-			//						if (it != item)
-			//						{
-			//							state->game.inventory_index = it_index;
-			//						}
-			//					}
-			//				}
-			//				else
-			//				{
-			//					state->game.notification_message = "\"There's nothing to put batteries into.\"";
-			//					state->game.notification_keytime = 1.0f;
-			//				}
-			//			} break;
-			//		}
-			//	}
-			//}
-
-			//if (state->game.using_flashlight)
-			//{
-			//	if (state->game.using_flashlight->flashlight.on)
-			//	{
-			//		state->game.using_flashlight->flashlight.power      = clamp(state->game.using_flashlight->flashlight.power - SECONDS_PER_UPDATE / 60.0f, 0.0f, 1.0f);
-			//		state->game.using_flashlight->flashlight.activation = dampen(state->game.using_flashlight->flashlight.activation, sinf(TAU / 4.0f * (1.0f - powf(1.0f - state->game.using_flashlight->flashlight.power, 16.0f))), 25.0f, SECONDS_PER_UPDATE);
-
-			//		if (state->game.using_flashlight->flashlight.power == 0.0f)
-			//		{
-			//			state->game.using_flashlight->flashlight.on = false;
-
-			//			if (state->game.using_flashlight == state->game.using_flashlight)
-			//			{
-			//				state->game.notification_message = "\"The flashlight died.\"";
-			//				state->game.notification_keytime = 1.0f;
-			//			}
-			//		}
-			//	}
-			//	else
-			//	{
-			//		state->game.using_flashlight->flashlight.activation = dampen(state->game.using_flashlight->flashlight.activation, 0.0f, 25.0f, SECONDS_PER_UPDATE);
-			//	}
-			//}
+					if (state->game.using_flashlight == state->game.using_flashlight)
+					{
+						state->game.notification_message = "\"The flashlight died.\"";
+						state->game.notification_keytime = 1.0f;
+					}
+				}
+			}
+			else
+			{
+				state->game.flashlight_activation = dampen(state->game.flashlight_activation, 0.0f, 25.0f, SECONDS_PER_UPDATE);
+			}
 
 			state->game.flashlight_keytime += 0.00005f + 0.005f * norm(state->game.lucia_velocity) * SECONDS_PER_UPDATE;
 			if (state->game.flashlight_keytime > 1.0f)
@@ -1605,12 +1468,35 @@ extern "C" PROTOTYPE_UPDATE(update)
 											{
 												if (state->game.inventory[y][x].type == ItemType::null)
 												{
-													state->game.inventory[y][x] = *state->game.inventory_selected;
+													state->game.inventory[y][x]          = *state->game.inventory_selected;
 													state->game.inventory_selected->type = ItemType::null;
+
+													if (state->game.using_flashlight == state->game.inventory_selected)
+													{
+														state->game.using_flashlight = &state->game.inventory[y][x];
+													}
 												}
 												else
 												{
-													DEBUG_printf("Combine\n"); // @TODO@
+													Item* battery;
+													Item* flashlight;
+													if (check_combine(&battery, ItemType::battery, &flashlight, ItemType::flashlight, &state->game.inventory[y][x], state->game.inventory_selected))
+													{
+														state->game.notification_message = "(You replaced the batteries in the flashlight.)";
+														state->game.notification_keytime = 1.0f;
+
+														flashlight->flashlight.power = 1.0f;
+
+														flashlight->type                 = ItemType::null;
+														battery->type                    = ItemType::null;
+														state->game.inventory[y][x]      = *flashlight;
+														state->game.inventory[y][x].type = ItemType::flashlight;
+													}
+													else
+													{
+														state->game.notification_message = "\"I'm not sure how these fit.\"";
+														state->game.notification_keytime = 1.0f;
+													}
 												}
 											}
 
@@ -1626,7 +1512,29 @@ extern "C" PROTOTYPE_UPDATE(update)
 						}
 						else
 						{
-							DEBUG_printf("Use\n"); // @TODO@
+							switch (state->game.inventory_selected->type)
+							{
+								case ItemType::flashlight:
+								{
+									if (state->game.inventory_selected == state->game.using_flashlight)
+									{
+										state->game.using_flashlight = 0;
+									}
+									else
+									{
+										if (state->game.inventory_selected->flashlight.power)
+										{
+											state->game.using_flashlight = 0;
+											state->game.using_flashlight = state->game.inventory_selected;
+										}
+										else
+										{
+											state->game.notification_message = "\"The flashlight is dead.\"";
+											state->game.notification_keytime = 1.0f;
+										}
+									}
+								};
+							}
 						}
 
 						state->game.inventory_selected = 0;
@@ -1985,13 +1893,10 @@ extern "C" PROTOTYPE_RENDER(render)
 										0.015f
 											- fabsf(dot(ray, n)) * 0.01f
 											+ ((state->game.lucia_position.z + ray.z * d) / WALL_HEIGHT + 0.95f) * 0.7f * (0.5f - 4.0f * cube(state->game.ceiling_lights_keytime - 0.5f))
-											//+ (state->game.using_flashlight
-											//	?
-											//		clamp((dot(ray, state->game.flashlight_ray) - FLASHLIGHT_OUTER_CUTOFF) / (FLASHLIGHT_INNER_CUTOFF - FLASHLIGHT_OUTER_CUTOFF), 0.0f, 1.0f)
-											//			/ (square(d) + 0.1f)
-											//			* FLASHLIGHT_STRENGTH
-											//			* state->game.using_flashlight->flashlight.activation
-											//	: 0.0f)
+											+ clamp((dot(ray, state->game.flashlight_ray) - FLASHLIGHT_OUTER_CUTOFF) / (FLASHLIGHT_INNER_CUTOFF - FLASHLIGHT_OUTER_CUTOFF), 0.0f, 1.0f)
+												/ (square(d) + 0.1f)
+												* FLASHLIGHT_STRENGTH
+												* state->game.flashlight_activation
 											+ powf(clamp(1.0f - d / AMBIENT_LIGHT_RADIUS, 0.0f, 1.0f), AMBIENT_LIGHT_POW),
 										0.0f,
 										1.0f
@@ -2067,14 +1972,16 @@ extern "C" PROTOTYPE_RENDER(render)
 						}
 					};
 
-				intersect(&state->game.monster_img, state->game.monster_position, state->game.monster_normal);
-				intersect(&state->game.hand_img, state->game.hand_position, state->game.hand_normal);
-
-				FOR_ELEMS(item, state->game.item_buffer, state->game.item_count)
+				FOR_RANGE(i, 9) // @TODO@ Optimize
 				{
-					FOR_RANGE(i, 9) // @TODO@ Optimize
+					vf3 offset = vi3 { i % 3 - 1, i / 3 - 1, 0 } * MAP_DIM * WALL_SPACING;
+
+					intersect(&state->game.monster_img, offset + state->game.monster_position, state->game.monster_normal);
+					intersect(&state->game.hand_img, offset + state->game.hand_position, state->game.hand_normal);
+
+					FOR_ELEMS(item, state->game.item_buffer, state->game.item_count)
 					{
-						intersect(&state->game.default_item_imgs[+item->type - +ItemType::ITEM_START], vi3 { i % 3 - 1, i / 3 - 1, 0 } * MAP_DIM * WALL_SPACING + item->position, item->normal);
+							intersect(&state->game.default_item_imgs[+item->type - +ItemType::ITEM_START], offset + item->position, item->normal);
 					}
 				}
 
@@ -2113,13 +2020,10 @@ extern "C" PROTOTYPE_RENDER(render)
 															0.015f
 																- fabsf(dot(ray.xy, node->normal)) * 0.01f
 																+ ((state->game.lucia_position.z + ray.z * node->distance) / WALL_HEIGHT + 0.95f) * 0.7f * (0.5f - 4.0f * cube(state->game.ceiling_lights_keytime - 0.5f))
-																//+ (state->game.using_flashlight
-																//	?
-																//		clamp((dot(ray, state->game.flashlight_ray) - FLASHLIGHT_OUTER_CUTOFF) / (FLASHLIGHT_INNER_CUTOFF - FLASHLIGHT_OUTER_CUTOFF), 0.0f, 1.0f)
-																//			/ (square(node->distance) + 0.1f)
-																//			* FLASHLIGHT_STRENGTH
-																//			* state->game.using_flashlight->flashlight.activation
-																//	: 0.0f)
+																+ clamp((dot(ray, state->game.flashlight_ray) - FLASHLIGHT_OUTER_CUTOFF) / (FLASHLIGHT_INNER_CUTOFF - FLASHLIGHT_OUTER_CUTOFF), 0.0f, 1.0f)
+																	/ (square(node->distance) + 0.1f)
+																	* FLASHLIGHT_STRENGTH
+																	* state->game.flashlight_activation
 																+ powf(clamp(1.0f - node->distance / AMBIENT_LIGHT_RADIUS, 0.0f, 1.0f), AMBIENT_LIGHT_POW),
 															0.0f,
 															1.0f
@@ -2202,37 +2106,6 @@ extern "C" PROTOTYPE_RENDER(render)
 			set_color(platform->renderer, { 0.15f, 0.15f, 0.15f });
 			draw_rect(platform->renderer, vxx(vi2 { PADDING, VIEW_RES.y + PADDING * 2 }), vxx(HUD_RES));
 
-			//if (state->game.inventory_count >= 2 && !state->game.combining_item || state->game.inventory_count >= 3 && state->game.combining_item)
-			//{
-			//	Thing* next_item = &state->game.inventory_buffer[(state->game.inventory_index + 1) % state->game.inventory_count];
-
-			//	if (next_item == state->game.combining_item)
-			//	{
-			//		next_item = &state->game.inventory_buffer[(state->game.inventory_index + 2) % state->game.inventory_count];
-			//	}
-
-			//	blit_item_box
-			//	(
-			//		platform->renderer,
-			//		state,
-			//		next_item,
-			//		{ PADDING + HUD_RES.y, WIN_RES.y - HUD_RES.y / 2 - PADDING },
-			//		HUD_RES.y / 2
-			//	);
-			//}
-
-			//if (state->game.combining_item)
-			//{
-			//	blit_item_box
-			//	(
-			//		platform->renderer,
-			//		state,
-			//		state->game.combining_item,
-			//		{ PADDING + HUD_RES.y, WIN_RES.y - HUD_RES.y - PADDING },
-			//		HUD_RES.y / 2
-			//	);
-			//}
-
 			blit_texture
 			(
 				platform->renderer,
@@ -2241,17 +2114,20 @@ extern "C" PROTOTYPE_RENDER(render)
 				{ HUD_RES.y, HUD_RES.y }
 			);
 
-			//draw_text
-			//(
-			//	platform->renderer,
-			//	state->main_font,
-			//	{ 0.0f, 0.0f },
-			//	FC_ALIGN_LEFT,
-			//	0.25f,
-			//	{ 1.0f, 1.0f, 1.0f, 1.0f },
-			//	"Power : %.2f",
-			//	state->game.flashlight_power
-			//);
+			if (state->game.using_flashlight)
+			{
+				draw_text
+				(
+					platform->renderer,
+					state->main_font,
+					{ 0.0f, 0.0f },
+					FC_ALIGN_LEFT,
+					0.25f,
+					{ 1.0f, 1.0f, 1.0f, 1.0f },
+					"Power : %.2f",
+					state->game.using_flashlight->flashlight.power
+				);
+			}
 		} break;
 	}
 
