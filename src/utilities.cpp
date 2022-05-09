@@ -143,6 +143,51 @@ internal bool32 ray_cast_line(f32* scalar, f32* portion, vf2 position, vf2 ray, 
 	}
 }
 
+enum struct Orientation : u8
+{
+	collinear,
+	clockwise,
+	counterclockwise
+};
+
+bool32 is_point_on_line_segment(vf2 p, vf2 q, vf2 r)
+{
+	return q.x <= max(p.x, r.x) && q.x >= min(p.x, r.x) && q.y <= max(p.y, r.y) && q.y >= min(p.y, r.y);
+}
+
+internal Orientation orientation_of(vf2 p, vf2 q, vf2 r)
+{
+	f32 n = (q.y - p.y) * (r.x - q.x) - (q.x - p.x) * (r.y - q.y);
+
+	if (n == 0.0f)
+	{
+		return Orientation::collinear;
+	}
+	else if (n > 0.0f)
+	{
+		return Orientation::clockwise;
+	}
+	else
+	{
+		return Orientation::counterclockwise;
+	}
+}
+
+bool32 is_line_segment_intersecting(vf2 p1, vf2 q1, vf2 p2, vf2 q2)
+{
+	Orientation o1 = orientation_of(p1, q1, p2);
+	Orientation o2 = orientation_of(p1, q1, q2);
+	Orientation o3 = orientation_of(p2, q2, p1);
+	Orientation o4 = orientation_of(p2, q2, q1);
+
+	return
+		o1 != o2 && o3 != o4
+		|| o1 == Orientation::collinear && is_point_on_line_segment(p1, p2, q1)
+		|| o2 == Orientation::collinear && is_point_on_line_segment(p1, q2, q1)
+		|| o3 == Orientation::collinear && is_point_on_line_segment(p2, p1, q2)
+		|| o4 == Orientation::collinear && is_point_on_line_segment(p2, q1, q2);
+}
+
 internal bool32 ray_cast_plane(f32* scalar, vf2* portion, vf3 position, vf3 ray, vf3 plane_origin, vf3 plane_dx, vf3 plane_dy)
 {
 	__m128 mx = _mm_setr_ps(plane_dx.y, plane_dx.z, plane_dx.x, 0.0f);

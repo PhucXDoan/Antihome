@@ -11,6 +11,7 @@
 
 // @NOTE@ Credits
 // "A Fast Voxel Traversal Algorithm for Ray Tracing" https://www.flipcode.com/archives/A%20faster%20voxel%20traversal%20algorithm%20for%20ray%20tracing.pdf
+// "How to check if two given line segments intersect?" https://www.geeksforgeeks.org/check-if-two-given-line-segments-intersect/, http://www.dcs.gla.ac.uk/~pat/52233/slides/Geometry1x1.pdf
 
 // @TODO@ Consider half-precision floats for framebuffer.
 
@@ -102,6 +103,7 @@ struct Item
 	ItemType  type;
 
 	vf3       position;
+	vf2       velocity;
 	vf2       normal;
 
 	union
@@ -621,6 +623,160 @@ internal vf2 rng_open_position(State* state)
 	}
 }
 
+internal vf2 move(State* state, vf2 position, vf2 displacement)
+{
+	Intersection closest_intersection;
+	closest_intersection.status   = IntersectionStatus::none;
+	closest_intersection.position = { NAN, NAN };
+	closest_intersection.normal   = { NAN, NAN };
+	closest_intersection.distance = NAN;
+
+	vf2 current_displacement = displacement;
+	vf2 current_position     = position;
+	FOR_RANGE(4)
+	{
+		vi2 step =
+			{
+				current_displacement.x < 0.0f ? -1 : 1,
+				current_displacement.y < 0.0f ? -1 : 1
+			};
+		vf2 t_max =
+			{
+				((step.x == -1 ? floorf : ceilf)(current_position.x / WALL_SPACING) * WALL_SPACING - current_position.x) / current_displacement.x,
+				((step.y == -1 ? floorf : ceilf)(current_position.y / WALL_SPACING) * WALL_SPACING - current_position.y) / current_displacement.y
+			};
+		vf2 t_delta =
+			{
+				step.x / current_displacement.x * WALL_SPACING,
+				step.y / current_displacement.y * WALL_SPACING
+			};
+		vi2 coordinates =
+			{
+				static_cast<i32>(floorf(current_position.x / WALL_SPACING)),
+				static_cast<i32>(floorf(current_position.y / WALL_SPACING))
+			};
+
+		FOR_RANGE(MAXIMUM(fabsf(current_displacement.x), fabsf(current_displacement.y)) / WALL_SPACING + 1)
+		{
+			FOR_ELEMS(voxel_data, WALL_VOXEL_DATA)
+			{
+				if (+(*get_wall_voxel(state, coordinates) & voxel_data->voxel))
+				{
+					Intersection intersection =
+						intersect_thick_line_segment
+						(
+							current_position,
+							current_displacement,
+							(coordinates + voxel_data->start) * WALL_SPACING,
+							(coordinates + voxel_data->end  ) * WALL_SPACING,
+							WALL_THICKNESS
+						);
+
+					if
+					(
+						closest_intersection.status == IntersectionStatus::none    ||
+						intersection.status         == IntersectionStatus::outside &&  closest_intersection.status == IntersectionStatus::outside && intersection.distance < closest_intersection.distance ||
+						intersection.status         == IntersectionStatus::inside  && (closest_intersection.status == IntersectionStatus::outside || intersection.distance > closest_intersection.distance)
+					)
+					{
+						closest_intersection = intersection;
+					}
+				}
+			}
+
+			if (closest_intersection.status != IntersectionStatus::none)
+			{
+				break;
+			}
+
+			if (t_max.x < t_max.y)
+			{
+				t_max.x       += t_delta.x;
+				coordinates.x += step.x;
+			}
+			else
+			{
+				t_max.y       += t_delta.y;
+				coordinates.y += step.y;
+			}
+		}
+
+		if (closest_intersection.status == IntersectionStatus::none)
+		{
+			break;
+		}
+
+		current_position = closest_intersection.position;
+		current_displacement = dot(current_position + current_displacement - closest_intersection.position, rotate90(closest_intersection.normal)) * rotate90(closest_intersection.normal);
+	}
+
+	return current_position + current_displacement;
+}
+
+internal bool32 exists_clear_way(State* state, vf2 position, vf2 goal)
+{
+	vf2 ray = ray_to_closest(position, goal);
+
+	vi2 step =
+		{
+			ray.x < 0.0f ? -1 : 1,
+			ray.y < 0.0f ? -1 : 1
+		};
+	vf2 t_max =
+		{
+			((step.x == -1 ? floorf : ceilf)(position.x / WALL_SPACING) * WALL_SPACING - position.x) / ray.x,
+			((step.y == -1 ? floorf : ceilf)(position.y / WALL_SPACING) * WALL_SPACING - position.y) / ray.y
+		};
+	vf2 t_delta =
+		{
+			step.x / ray.x * WALL_SPACING,
+			step.y / ray.y * WALL_SPACING
+		};
+	vi2 coordinates =
+		{
+			static_cast<i32>(floorf(position.x / WALL_SPACING)),
+			static_cast<i32>(floorf(position.y / WALL_SPACING))
+		};
+	vi2 goal_coordinates =
+		{
+			static_cast<i32>(floorf(goal.x / WALL_SPACING)),
+			static_cast<i32>(floorf(goal.y / WALL_SPACING))
+		};
+
+	FOR_RANGE(MAXIMUM(fabsf(ray.x), fabsf(ray.y)) / WALL_SPACING + 1)
+	{
+		FOR_ELEMS(voxel_data, WALL_VOXEL_DATA)
+		{
+			if
+			(
+				+(*get_wall_voxel(state, coordinates) & voxel_data->voxel) &&
+				is_line_segment_intersecting((coordinates + voxel_data->start) * WALL_SPACING, (coordinates + voxel_data->end) * WALL_SPACING, position, position + ray)
+			)
+			{
+				return false;
+			}
+		}
+
+		if (coordinates == goal_coordinates)
+		{
+			return true;
+		}
+
+		if (t_max.x < t_max.y)
+		{
+			t_max.x       += t_delta.x;
+			coordinates.x += step.x;
+		}
+		else
+		{
+			t_max.y       += t_delta.y;
+			coordinates.y += step.y;
+		}
+	}
+
+	return false;
+}
+
 internal void boot_up_state(SDL_Renderer* renderer, State* state)
 {
 	switch (state->context)
@@ -981,92 +1137,18 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 			state->game.lucia_velocity *= HOLDING(Input::shift) ? 0.75f : 0.6f;
 
-			vf2 displacement = state->game.lucia_velocity * SECONDS_PER_UPDATE;
-			FOR_RANGE(4)
+			FOR_ELEMS(it, state->game.item_buffer, state->game.item_count)
 			{
-				Intersection closest_intersection;
-				closest_intersection.status   = IntersectionStatus::none;
-				closest_intersection.position = { NAN, NAN };
-				closest_intersection.normal   = { NAN, NAN };
-				closest_intersection.distance = NAN;
-
-				vi2 step =
-					{
-						displacement.x < 0.0f ? -1 : 1,
-						displacement.y < 0.0f ? -1 : 1
-					};
-				vf2 t_max =
-					{
-						((step.x == -1 ? floorf : ceilf)(state->game.lucia_position.x / WALL_SPACING) * WALL_SPACING - state->game.lucia_position.x) / displacement.x,
-						((step.y == -1 ? floorf : ceilf)(state->game.lucia_position.y / WALL_SPACING) * WALL_SPACING - state->game.lucia_position.y) / displacement.y
-					};
-				vf2 t_delta =
-					{
-						step.x / displacement.x * WALL_SPACING,
-						step.y / displacement.y * WALL_SPACING
-					};
-				vi2 coordinates =
-					{
-						static_cast<i32>(floorf(state->game.lucia_position.x / WALL_SPACING)),
-						static_cast<i32>(floorf(state->game.lucia_position.y / WALL_SPACING))
-					};
-				FOR_RANGE(MAXIMUM(fabsf(displacement.x), fabsf(displacement.y)) + 1)
-				{
-					FOR_ELEMS(voxel_data, WALL_VOXEL_DATA)
-					{
-						if (+(*get_wall_voxel(state, coordinates) & voxel_data->voxel))
-						{
-							Intersection intersection =
-								intersect_thick_line_segment
-								(
-									state->game.lucia_position.xy,
-									displacement,
-									(coordinates + voxel_data->start) * WALL_SPACING,
-									(coordinates + voxel_data->end  ) * WALL_SPACING,
-									WALL_THICKNESS
-								);
-
-							if
-							(
-								closest_intersection.status == IntersectionStatus::none    ||
-								intersection.status         == IntersectionStatus::outside &&  closest_intersection.status == IntersectionStatus::outside && intersection.distance < closest_intersection.distance ||
-								intersection.status         == IntersectionStatus::inside  && (closest_intersection.status == IntersectionStatus::outside || intersection.distance > closest_intersection.distance)
-							)
-							{
-								closest_intersection = intersection;
-							}
-						}
-					}
-
-					if (closest_intersection.status != IntersectionStatus::none)
-					{
-						break;
-					}
-
-					if (t_max.x < t_max.y)
-					{
-						t_max.x       += t_delta.x;
-						coordinates.x += step.x;
-					}
-					else
-					{
-						t_max.y       += t_delta.y;
-						coordinates.y += step.y;
-					}
-				}
-
-				if (closest_intersection.status == IntersectionStatus::none)
-				{
-					break;
-				}
-
-				state->game.lucia_position.xy = closest_intersection.position;
-				displacement = dot(state->game.lucia_position.xy + displacement - closest_intersection.position, rotate90(closest_intersection.normal)) * rotate90(closest_intersection.normal);
+				it->velocity    *= 0.9f;
+				it->position.xy  = move(state, it->position.xy, it->velocity * SECONDS_PER_UPDATE);
+				it->position.z   = lerp(0.1f, state->game.lucia_position.z, clamp(1.0f - norm_sq(ray_to_closest(state->game.lucia_position.xy, it->position.xy)) / 36.0f, 0.0f, 1.0f)) + sinf(state->time * 3.0f) * 0.025f;
+				it->normal       = polar(state->time * 0.7f);
 			}
-			state->game.lucia_position.xy += displacement;
-			state->game.lucia_position.x   = mod(state->game.lucia_position.x, MAP_DIM * WALL_SPACING);
-			state->game.lucia_position.y   = mod(state->game.lucia_position.y, MAP_DIM * WALL_SPACING);
-			state->game.lucia_position.z   = LUCIA_HEIGHT + 0.1f * (cosf(state->game.lucia_head_bob_keytime * TAU) - 1.0f);
+
+			state->game.lucia_position.xy = move(state, state->game.lucia_position.xy, state->game.lucia_velocity * SECONDS_PER_UPDATE);
+			state->game.lucia_position.x  = mod(state->game.lucia_position.x, MAP_DIM * WALL_SPACING);
+			state->game.lucia_position.y  = mod(state->game.lucia_position.y, MAP_DIM * WALL_SPACING);
+			state->game.lucia_position.z  = LUCIA_HEIGHT + 0.1f * (cosf(state->game.lucia_head_bob_keytime * TAU) - 1.0f);
 
 			state->game.lucia_head_bob_keytime = mod(state->game.lucia_head_bob_keytime + 0.001f + 0.35f * norm(state->game.lucia_velocity) * SECONDS_PER_UPDATE, 1.0f);
 
@@ -1312,11 +1394,10 @@ extern "C" PROTOTYPE_UPDATE(update)
 			FOR_ELEMS(item, state->game.item_buffer, state->game.item_count)
 			{
 				f32 distance = norm(ray_to_closest(state->game.lucia_position.xy, item->position.xy));
-				if (!state->game.hand_hovered_item && distance < 2.0f || closest_distance > distance)
+				if ((!state->game.hand_hovered_item && distance < 2.0f || closest_distance > distance) && exists_clear_way(state, state->game.lucia_position.xy, item->position.xy))
 				{
 					state->game.hand_hovered_item = item;
-					closest_distance         = distance;
-					break;
+					closest_distance              = distance;
 				}
 			}
 
@@ -1356,12 +1437,6 @@ extern "C" PROTOTYPE_UPDATE(update)
 			else
 			{
 				state->game.hand_normal = { 0.0f, 0.0f };
-			}
-
-			FOR_ELEMS(item, state->game.item_buffer, state->game.item_count)
-			{
-				item->position.z = 1.0f + sinf(state->time * 3.0f) * 0.1f;
-				item->normal     = polar(state->time * 1.5f);
 			}
 
 			if (state->game.using_flashlight)
@@ -1507,7 +1582,12 @@ extern "C" PROTOTYPE_UPDATE(update)
 							}
 							else
 							{
-								DEBUG_printf("Drop\n"); // @TODO@
+								Item* dropped = allocate_item(state);
+								*dropped = *state->game.inventory_selected;
+								dropped->position = state->game.lucia_position;
+								dropped->velocity = polar(state->game.lucia_angle) * rng(&state->seed) * 10.0f;
+
+								state->game.inventory_selected->type = ItemType::null;
 							}
 						}
 						else
@@ -1981,7 +2061,7 @@ extern "C" PROTOTYPE_RENDER(render)
 
 					FOR_ELEMS(item, state->game.item_buffer, state->game.item_count)
 					{
-							intersect(&state->game.default_item_imgs[+item->type - +ItemType::ITEM_START], offset + item->position, item->normal);
+						intersect(&state->game.default_item_imgs[+item->type - +ItemType::ITEM_START], offset + item->position, item->normal / 2.0f);
 					}
 				}
 
