@@ -351,17 +351,16 @@ internal vf3 mipmap_color_at(Mipmap* mipmap, f32 level, vf2 uv)
 
 internal void draw_img(u32* view_pixels, ImgRGBA* img, vi2 position, i32 dimension)
 {
-	FOR_RANGE(ix, dimension)
+	FOR_RANGE(x, clamp(position.x, 0, VIEW_RES.x), clamp(position.x + dimension, 0, VIEW_RES.x))
 	{
-		FOR_RANGE(iy, dimension)
+		FOR_RANGE(y, clamp(position.y, 0, VIEW_RES.y), clamp(position.y + dimension, 0, VIEW_RES.y))
 		{
 			vf4* rgba =
 				img->rgba
-					+ static_cast<i32>(static_cast<f32>(ix) / dimension * img->dim.x) * img->dim.y
-					+ static_cast<i32>((1.0f - static_cast<f32>(iy) / dimension) * (img->dim.y - 1.0f));
+					+ static_cast<i32>(static_cast<f32>(x - position.x) / dimension * img->dim.x) * img->dim.y
+					+ static_cast<i32>((1.0f - static_cast<f32>(y - position.y) / dimension) * (img->dim.y - 1.0f));
 
-			view_pixels[(position.y + iy) * VIEW_RES.x + position.x + ix] =
-				to_pixel(lerp(to_color(view_pixels[(position.y + iy) * VIEW_RES.x + position.x + ix]), rgba->xyz, rgba->w));
+			view_pixels[y * VIEW_RES.x + x] = to_pixel(lerp(to_color(view_pixels[y * VIEW_RES.x + x]), rgba->xyz, rgba->w));
 		}
 	}
 }
@@ -1545,7 +1544,9 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 			if (state->game.inventory_visibility)
 			{
-				state->game.inventory_cursor += conjugate(platform->cursor_delta) * 0.25f;
+				state->game.inventory_cursor   += conjugate(platform->cursor_delta) * 0.25f;
+				state->game.inventory_cursor.x  = clamp(state->game.inventory_cursor.x, 0.0f, static_cast<f32>(VIEW_RES.x));
+				state->game.inventory_cursor.y  = clamp(state->game.inventory_cursor.y, 0.0f, static_cast<f32>(VIEW_RES.y));
 
 				if (PRESSED(Input::left_mouse))
 				{
@@ -1571,46 +1572,71 @@ extern "C" PROTOTYPE_UPDATE(update)
 						}
 					}
 				}
-				else if (HOLDING(Input::left_mouse))
+				else if (state->game.inventory_selected)
 				{
-					if (!state->game.inventory_grabbing && norm_sq(state->game.inventory_cursor - state->game.inventory_click_position) > 25.0f)
+					if (HOLDING(Input::left_mouse))
 					{
-						state->game.inventory_grabbing = true;
+						if (!state->game.inventory_grabbing && norm_sq(state->game.inventory_cursor - state->game.inventory_click_position) > 25.0f)
+						{
+							state->game.inventory_grabbing = true;
+						}
 					}
-				}
-				else if (RELEASED(Input::left_mouse))
-				{
-					FOR_RANGE(y, ARRAY_CAPACITY(state->game.inventory))
+					else if (RELEASED(Input::left_mouse))
 					{
-						FOR_RANGE(x, ARRAY_CAPACITY(state->game.inventory[y]))
+						if (state->game.inventory_grabbing)
 						{
 							if
 							(
-								fabsf(VIEW_RES.x / 2.0f + (x + (1.0f - ARRAY_CAPACITY(state->game.inventory[y])) / 2.0f) * (INVENTORY_DIM + INVENTORY_PADDING) - state->game.inventory_cursor.x) < INVENTORY_DIM / 2.0f &&
-								fabsf(VIEW_RES.y / 2.0f + (y + (1.0f - ARRAY_CAPACITY(state->game.inventory   )) / 2.0f) * (INVENTORY_DIM + INVENTORY_PADDING) - state->game.inventory_cursor.y) < INVENTORY_DIM / 2.0f
+								fabs(state->game.inventory_cursor.x * 2.0f - VIEW_RES.x) < ARRAY_CAPACITY(state->game.inventory[0]) * (INVENTORY_DIM + INVENTORY_PADDING) &&
+								fabs(state->game.inventory_cursor.y * 2.0f - VIEW_RES.y) < ARRAY_CAPACITY(state->game.inventory   ) * (INVENTORY_DIM + INVENTORY_PADDING)
 							)
 							{
-								if (state->game.inventory[y][x].type == ItemType::null)
+								FOR_RANGE(y, ARRAY_CAPACITY(state->game.inventory))
 								{
-									state->game.inventory[y][x] = *state->game.inventory_selected;
-									state->game.inventory_selected->type = ItemType::null;
+									FOR_RANGE(x, ARRAY_CAPACITY(state->game.inventory[y]))
+									{
+										if
+										(
+											fabsf(VIEW_RES.x / 2.0f + (x + (1.0f - ARRAY_CAPACITY(state->game.inventory[y])) / 2.0f) * (INVENTORY_DIM + INVENTORY_PADDING) - state->game.inventory_cursor.x) < INVENTORY_DIM / 2.0f &&
+											fabsf(VIEW_RES.y / 2.0f + (y + (1.0f - ARRAY_CAPACITY(state->game.inventory   )) / 2.0f) * (INVENTORY_DIM + INVENTORY_PADDING) - state->game.inventory_cursor.y) < INVENTORY_DIM / 2.0f
+										)
+										{
+											if (&state->game.inventory[y][x] != state->game.inventory_selected)
+											{
+												if (state->game.inventory[y][x].type == ItemType::null)
+												{
+													state->game.inventory[y][x] = *state->game.inventory_selected;
+													state->game.inventory_selected->type = ItemType::null;
+												}
+												else
+												{
+													DEBUG_printf("Combine\n"); // @TODO@
+												}
+											}
+
+											break;
+										}
+									}
 								}
-								else
-								{
-									DEBUG_printf("Combine\n"); // @TODO@
-								}
-								break;
+							}
+							else
+							{
+								DEBUG_printf("Drop\n"); // @TODO@
 							}
 						}
-					}
+						else
+						{
+							DEBUG_printf("Use\n"); // @TODO@
+						}
 
-					state->game.inventory_selected = 0;
-					state->game.inventory_grabbing = false;
+						state->game.inventory_selected = 0;
+						state->game.inventory_grabbing = false;
+					}
 				}
 			}
 
 			persist bool32 CEILING_ACTIVATION = false; // @TEMP@
-			if (PRESSED(Input::escape))
+			if (PRESSED(Input::left))
 			{
 				CEILING_ACTIVATION = !CEILING_ACTIVATION;
 			}
