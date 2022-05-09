@@ -310,6 +310,24 @@ internal void set_color(SDL_Renderer* renderer, vf3 color)
 	);
 }
 
+internal void set_color(SDL_Renderer* renderer, f32 gray)
+{
+	set_color(renderer, { gray, gray, gray });
+}
+
+internal void draw_filled_rect(SDL_Renderer* renderer, vi2 position, vi2 dimensions)
+{
+	SDL_Rect rect = { position.x, position.y, dimensions.x, dimensions.y };
+	SDL_RenderFillRect(renderer, &rect);
+}
+
+internal void draw_rect(SDL_Renderer* renderer, vi2 position, vi2 dimensions)
+{
+	SDL_Rect rect = { position.x, position.y, dimensions.x, dimensions.y };
+	SDL_RenderDrawRect(renderer, &rect);
+}
+
+// @TODO@ DEPRECATE
 internal void draw_rect(SDL_Renderer* renderer, vf2 position, vf2 dimensions)
 {
 	SDL_Rect rect = { static_cast<i32>(position.x), static_cast<i32>(position.y), static_cast<i32>(dimensions.x), static_cast<i32>(dimensions.y) };
@@ -414,9 +432,9 @@ internal void draw_text(SDL_Renderer* renderer, FC_Font* font, vf2 coordinates, 
 	);
 }
 
-internal void blit_texture(SDL_Renderer* renderer, SDL_Texture* texture, vf2 position, vf2 dimensions)
+internal void blit_texture(SDL_Renderer* renderer, SDL_Texture* texture, vi2 position, vi2 dimensions)
 {
-	SDL_Rect dst = { static_cast<i32>(position.x), static_cast<i32>(position.y), static_cast<i32>(dimensions.x), static_cast<i32>(dimensions.y) };
+	SDL_Rect dst = { position.x, position.y, dimensions.x, dimensions.y };
 	SDL_RenderCopy(renderer, texture, 0, &dst);
 }
 

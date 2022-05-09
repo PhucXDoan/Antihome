@@ -42,7 +42,7 @@
 #define IN_RANGE(X, MINI, MAXI)     ((MINI) <= (X) && (X) < (MAXI))
 #define MINIMUM(X, Y)               ((X) <= (Y) ? (X) : (Y))
 #define MAXIMUM(X, Y)               ((X) >= (Y) ? (X) : (Y))
-#define SWAP(X, Y)                  do { auto TEMP_SWAP_##__LINE__ = X; X = Y; Y = TEMP_SWAP_##__LINE__; } while (false)
+#define SWAP(X, Y)                  do { auto MACRO_CONCAT_(TEMP_SWAP_, __LINE__) = X; X = Y; Y = MACRO_CONCAT_(TEMP_SWAP_, __LINE__); } while (false)
 #define KIBIBYTES_OF(N)             (1024LL *             (N))
 #define MEBIBYTES_OF(N)             (1024LL * KIBIBYTES_OF(N))
 #define GIBIBYTES_OF(N)             (1024LL * MEBIBYTES_OF(N))
@@ -74,7 +74,7 @@ internal constexpr NAME operator>>=(NAME& a, i32  n) { return a = static_cast<NA
 enum struct NAME : TYPE
 
 #define enum_start_region(NAME) NAME##_START, NAME##_START_ = NAME##_START - 1,
-#define enum_end_region(NAME)   NAME##_END, NAME##_COUNT = NAME##_END - NAME##_START, NAME##_END_ = NAME##_END - 2,
+#define enum_end_region(NAME)   NAME##_END, NAME##_COUNT = NAME##_END - NAME##_START, NAME##_END_ = NAME##_END - 1,
 
 #if DEBUG
 #undef MOUSE_MOVED
@@ -128,6 +128,8 @@ typedef double      f64;
 // Memory.
 //
 
+#define memory_arena_checkpoint(ARENA) memsize MACRO_CONCAT_(MEMORY_ARENA_CHECKPOINT, __LINE__) = (ARENA)->used; DEFER { (ARENA)->used = MACRO_CONCAT_(MEMORY_ARENA_CHECKPOINT, __LINE__); }
+
 struct MemoryArena
 {
 	memsize size;
@@ -142,11 +144,6 @@ internal TYPE* memory_arena_push(MemoryArena* arena, i32 count = 1)
 	byte* allocation = arena->base + arena->used;
 	arena->used += sizeof(TYPE) * count;
 	return reinterpret_cast<TYPE*>(allocation);
-}
-
-internal MemoryArena memory_arena_checkpoint(MemoryArena* arena)
-{
-	return { arena->size - arena->used, arena->base + arena->used, 0 };
 }
 
 //

@@ -77,12 +77,9 @@ struct Mipmap
 	RGB* data;
 };
 
-enum_loose (ThingType, i32)
+enum_loose (ItemType, i32)
 {
-	enum_start_region(SPECIAL)
-		monster,
-		hand,
-	enum_end_region(SPECIAL)
+	null,
 
 	enum_start_region(ITEM)
 		battery,
@@ -91,28 +88,22 @@ enum_loose (ThingType, i32)
 	enum_end_region(ITEM)
 };
 
-global constexpr strlit ITEM_IMG_FILE_PATHS[ThingType::ITEM_COUNT] =
+global constexpr strlit DEFAULT_ITEM_IMG_FILE_PATHS[ItemType::ITEM_COUNT] =
 	{
 		DATA_DIR "battery.png",
 		DATA_DIR "paper.png",
 		DATA_DIR "flashlight_off.png"
 	};
 
-struct Thing
+struct Item
 {
-	ThingType type;
+	ItemType  type;
 
-	ImgRGBA*  img;
 	vf3       position;
 	vf2       normal;
 
 	union
 	{
-		struct
-		{
-			vf2 velocity;
-		} monster;
-
 		struct
 		{
 			bool32 on;
@@ -188,8 +179,7 @@ struct State
 		ImgRGBA              monster_img;
 		ImgRGBA              hand_img;
 		ImgRGBA              flashlight_on_img;
-		ImgRGBA              item_imgs[ThingType::ITEM_COUNT];
-		SDL_Texture*         inventory_border;
+		ImgRGBA              default_item_imgs[ItemType::ITEM_COUNT];
 		SDL_Texture*         lucia_haunted;
 		SDL_Texture*         lucia_healed;
 		SDL_Texture*         lucia_hit;
@@ -216,31 +206,26 @@ struct State
 
 		PathCoordinatesNode* monster_path;
 		vi2                  monster_path_goal;
-		Thing*               hand_hovered_item;
+		Item*                hand_hovered_item;
 
-		i32 item_count;
+		vf3                  monster_position;
+		vf2                  monster_velocity;
+		vf2                  monster_normal;
+
+		vf3                  hand_position;
+		vf2                  hand_velocity;
+		vf2                  hand_normal;
+
+		i32                  item_count;
+		Item                 item_buffer[16];
+
+		bool32               inventory_visibility;
+		vf2                  inventory_cursor;
 		union
 		{
-			struct
-			{
-				Thing monster;
-				Thing hand;
-			} special;
-
-			struct
-			{
-				Thing specials[sizeof(special) / sizeof(Thing)];
-				Thing item_buffer[16];
-			};
-
-			Thing thing_buffer[ARRAY_CAPACITY(specials) + ARRAY_CAPACITY(item_buffer)];
+			Item             inventory[2][4];
+			Item             flat_inventory[sizeof(inventory) / sizeof(Item)];
 		};
-
-		i32    inventory_index;
-		i32    inventory_count;
-		Thing  inventory_buffer[4];
-		Thing* using_flashlight;
-		Thing* combining_item;
 	} game;
 };
 
@@ -252,7 +237,7 @@ global constexpr struct { WallVoxel voxel; vf2 start; vf2 end; vf2 normal; } WAL
 		{ WallVoxel::forward_slash, { 0.0f, 0.0f }, { 1.0f, 1.0f }, { -INVSQRT2,  INVSQRT2 } }
 	};
 
-internal u32 to_pixel(vf3 color)
+internal constexpr u32 to_pixel(vf3 color)
 {
 	return
 		(static_cast<u8>(color.x * 255.0f) << 24) |
@@ -260,7 +245,7 @@ internal u32 to_pixel(vf3 color)
 		(static_cast<u8>(color.z * 255.0f) <<  8);
 }
 
-internal vf3 to_color(u32 pixel)
+internal constexpr vf3 to_color(u32 pixel)
 {
 	return
 	{
@@ -268,6 +253,22 @@ internal vf3 to_color(u32 pixel)
 		static_cast<f32>((pixel >> 16) & 0xFF) / 255.0f,
 		static_cast<f32>((pixel >>  8) & 0xFF) / 255.0f
 	};
+}
+
+internal ImgRGBA* get_corresponding_item_img(State* state, Item* item)
+{
+	switch (item->type)
+	{
+		case ItemType::null:
+		{
+			return 0;
+		} break;
+
+		default:
+		{
+			return &state->game.default_item_imgs[+item->type - +ItemType::ITEM_START];
+		} break;
+	}
 }
 
 internal Mipmap init_mipmap(strlit file_path)
@@ -343,43 +344,48 @@ internal vf3 mipmap_color_at(Mipmap* mipmap, f32 level, vf2 uv)
 	}
 }
 
-internal void blit_item_box(SDL_Renderer* renderer, State* state, Thing* item, vi2 position, i32 dimension)
+internal void draw_img(u32* view_pixels, ImgRGBA* img, vi2 position, i32 dimension)
 {
-	constexpr vf3 BG_COLOR = { 0.1f, 0.1f, 0.1f };
-
-	set_color(renderer, BG_COLOR);
-	draw_rect(renderer, vxx(position), vxx(vi2 { dimension, dimension }));
-
-	if (item)
+	FOR_RANGE(ix, dimension)
 	{
-		ImgRGBA* img;
-
-		if (item->type == ThingType::flashlight && item->flashlight.on)
+		FOR_RANGE(iy, dimension)
 		{
-			img = &state->game.flashlight_on_img;
+			vf4* rgba =
+				img->rgba
+					+ static_cast<i32>(static_cast<f32>(ix) / dimension * img->dim.x) * img->dim.y
+					+ static_cast<i32>((1.0f - static_cast<f32>(iy) / dimension) * (img->dim.y - 1.0f));
+
+			view_pixels[(position.y + iy) * VIEW_RES.x + position.x + ix] =
+				to_pixel(lerp(to_color(view_pixels[(position.y + iy) * VIEW_RES.x + position.x + ix]), rgba->xyz, rgba->w));
 		}
-		else
-		{
-			img = &state->game.item_imgs[+item->type - +ThingType::ITEM_START];
-		}
+	}
+}
 
-		constexpr f32 SCALAR = 0.5f;
-		FOR_RANGE(iy, static_cast<i32>(dimension * SCALAR))
-		{
-			FOR_RANGE(ix, static_cast<i32>(dimension * SCALAR))
-			{
-				vf4* item_rgba =
-					img->rgba
-						+ static_cast<i32>(static_cast<f32>(ix) / (dimension * SCALAR) * img->dim.x) * img->dim.y
-						+ static_cast<i32>(static_cast<f32>(iy) / (dimension * SCALAR) * img->dim.y);
+internal void draw_img_box(u32* view_pixels, ImgRGBA* img, vi2 position, i32 dimension)
+{
+	constexpr u32 BORDER = to_pixel({ 0.5f, 0.5f, 0.5f });
+	constexpr u32 BG     = to_pixel({ 0.2f, 0.2f, 0.2f });
 
-				set_color(renderer, lerp(BG_COLOR, item_rgba->xyz, item_rgba->w));
-				SDL_RenderDrawPoint(renderer, static_cast<i32>(position.x + dimension / 2.0f * (1.0f - SCALAR) + ix), static_cast<i32>(position.y - 1.0f + dimension / 2.0f * (1.0f + SCALAR) - iy));
-			}
+	FOR_RANGE(i, dimension)
+	{
+		view_pixels[position.y * VIEW_RES.x + position.x + i]                   = BORDER;
+		view_pixels[(position.y + dimension - 1) * VIEW_RES.x + position.x + i] = BORDER;
+		view_pixels[(position.y + i) * VIEW_RES.x + position.x]                 = BORDER;
+		view_pixels[(position.y + i) * VIEW_RES.x + position.x + dimension - 1] = BORDER;
+	}
+
+	FOR_RANGE(iy, dimension - 2)
+	{
+		FOR_RANGE(ix, dimension - 2)
+		{
+			view_pixels[(position.y + 1 + iy) * VIEW_RES.x + position.x + 1 + ix] = BG;
 		}
 	}
 
-	blit_texture(renderer, state->game.inventory_border, vxx(position), vxx(vi2 { dimension, dimension }));
+	if (img)
+	{
+		draw_img(view_pixels, img, position + vi2 { 1, 1 }, dimension - 2);
+	}
 }
 
 internal WallVoxel* get_wall_voxel(State* state, vi2 v)
@@ -547,16 +553,15 @@ internal vf2 ray_to_closest(vf2 position, vf2 target)
 	return best_ray;
 }
 
-internal Thing* allocate_item(State* state)
+internal Item* allocate_item(State* state)
 {
 	ASSERT(IN_RANGE(state->game.item_count, 0, ARRAY_CAPACITY(state->game.item_buffer)));
 	return &state->game.item_buffer[state->game.item_count++];
 }
 
-internal void deallocate_item(State* state, Thing* item)
+internal void deallocate_item(State* state, Item* item)
 {
 	ASSERT(IN_RANGE(item, state->game.item_buffer, state->game.item_buffer + state->game.item_count));
-
 	*item = state->game.item_buffer[state->game.item_count - 1];
 	state->game.item_count -= 1;
 }
@@ -597,12 +602,11 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 			state->game.hand_img          = init_img_rgba(DATA_DIR "hand.png");
 			state->game.flashlight_on_img = init_img_rgba(DATA_DIR "flashlight_on.png");
 
-			FOR_ELEMS(it, ITEM_IMG_FILE_PATHS)
+			FOR_ELEMS(it, DEFAULT_ITEM_IMG_FILE_PATHS)
 			{
-				state->game.item_imgs[it_index] = init_img_rgba(*it);
+				state->game.default_item_imgs[it_index] = init_img_rgba(*it);
 			}
 
-			state->game.inventory_border = IMG_LoadTexture(renderer, DATA_DIR "inventory_border.png");
 			state->game.lucia_haunted    = IMG_LoadTexture(renderer, DATA_DIR "lucia_haunted.png");
 			state->game.lucia_healed     = IMG_LoadTexture(renderer, DATA_DIR "lucia_healed.png");
 			state->game.lucia_hit        = IMG_LoadTexture(renderer, DATA_DIR "lucia_hit.png");
@@ -630,12 +634,11 @@ internal void boot_down_state(State* state)
 			deinit_img_rgba(&state->game.hand_img);
 			deinit_img_rgba(&state->game.flashlight_on_img);
 
-			FOR_ELEMS(it, state->game.item_imgs)
+			FOR_ELEMS(it, state->game.default_item_imgs)
 			{
 				deinit_img_rgba(it);
 			}
 
-			SDL_DestroyTexture(state->game.inventory_border);
 			SDL_DestroyTexture(state->game.lucia_haunted);
 			SDL_DestroyTexture(state->game.lucia_healed);
 			SDL_DestroyTexture(state->game.lucia_hit);
@@ -806,19 +809,13 @@ extern "C" PROTOTYPE_UPDATE(update)
 								state->game.lucia_position.z  = LUCIA_HEIGHT;
 								state->game.lucia_fov         = TAU / 3.0f;
 
-								state->game.special.monster.type        = ThingType::monster;
-								state->game.special.monster.img         = &state->game.monster_img;
-								state->game.special.monster.position.xy = rng_open_position(state);
+								state->game.monster_position.xy = rng_open_position(state);
 
-								state->game.special.hand.type = ThingType::hand;
-								state->game.special.hand.img  = &state->game.hand_img;
-
-								FOR_RANGE(8)
+								FOR_RANGE(12)
 								{
-									Thing* item = allocate_item(state);
+									Item* item = allocate_item(state);
 									*item             = {};
-									item->type        = static_cast<ThingType>(rng(&state->seed, +ThingType::ITEM_START, +ThingType::ITEM_END));
-									item->img         = &state->game.item_imgs[+item->type - +ThingType::ITEM_START];
+									item->type        = static_cast<ItemType>(rng(&state->seed, +ItemType::ITEM_START, +ItemType::ITEM_END));
 									item->position.xy = rng_open_position(state);
 									item->position.z  = 1.0f + sinf(state->time * 3.0f) * 0.1f;
 									item->normal      = polar(state->time * 1.5f);
@@ -928,9 +925,12 @@ extern "C" PROTOTYPE_UPDATE(update)
 				return UpdateCode::resume;
 			}
 
-			state->game.lucia_angle_velocity -= platform->cursor_delta.x * 0.01f / SECONDS_PER_UPDATE;
-			state->game.lucia_angle_velocity *= 0.4f;
-			state->game.lucia_angle           = mod(state->game.lucia_angle + state->game.lucia_angle_velocity * SECONDS_PER_UPDATE, TAU);
+			if (!state->game.inventory_visibility)
+			{
+				state->game.lucia_angle_velocity -= platform->cursor_delta.x * 0.01f / SECONDS_PER_UPDATE;
+				state->game.lucia_angle_velocity *= 0.4f;
+				state->game.lucia_angle           = mod(state->game.lucia_angle + state->game.lucia_angle_velocity * SECONDS_PER_UPDATE, TAU);
+			}
 
 			vf2 wasd = { 0.0f, 0.0f };
 			if (HOLDING(Input::s)) { wasd.x -= 1.0f; }
@@ -1039,10 +1039,11 @@ extern "C" PROTOTYPE_UPDATE(update)
 			vi2 current_lucia_coordinates = get_closest_open_path_coordinates(state, state->game.lucia_position.xy);
 			if
 			(
-				!state->game.monster_path && norm(ray_to_closest(state->game.special.monster.position.xy, state->game.lucia_position.xy)) > 2.0f
-				|| state->game.monster_path && current_lucia_coordinates != state->game.monster_path_goal)
+				!state->game.monster_path && norm(ray_to_closest(state->game.monster_position.xy, state->game.lucia_position.xy)) > 2.0f
+				|| state->game.monster_path && current_lucia_coordinates != state->game.monster_path_goal
+			)
 			{
-				vi2 starting_coordinates = get_closest_open_path_coordinates(state, state->game.special.monster.position.xy);
+				vi2 starting_coordinates = get_closest_open_path_coordinates(state, state->game.monster_position.xy);
 				state->game.monster_path_goal = current_lucia_coordinates;
 
 				struct PathVertex
@@ -1239,49 +1240,46 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 			if (state->game.monster_path)
 			{
-				vf2 ray = ray_to_closest(state->game.special.monster.position.xy, path_coordinates_to_position(state->game.monster_path->coordinates));
+				vf2 ray = ray_to_closest(state->game.monster_position.xy, path_coordinates_to_position(state->game.monster_path->coordinates));
 				if (norm(ray) < WALL_SPACING / 2.0f)
 				{
 					state->game.monster_path = deallocate_path_coordinates_node(state, state->game.monster_path);
 				}
 				else
 				{
-					state->game.special.monster.monster.velocity = dampen(state->game.special.monster.monster.velocity, normalize(ray) * 3.0f, 4.0f, SECONDS_PER_UPDATE);
+					state->game.monster_velocity = dampen(state->game.monster_velocity, normalize(ray) * 3.0f, 4.0f, SECONDS_PER_UPDATE);
 				}
 			}
 			else
 			{
-				vf2 ray = ray_to_closest(state->game.special.monster.position.xy, state->game.lucia_position.xy);
+				vf2 ray = ray_to_closest(state->game.monster_position.xy, state->game.lucia_position.xy);
 				if (norm(ray) > 4.0f)
 				{
-					state->game.special.monster.monster.velocity = dampen(state->game.special.monster.monster.velocity, normalize(ray) * 3.0f, 4.0f, SECONDS_PER_UPDATE);
+					state->game.monster_velocity = dampen(state->game.monster_velocity, normalize(ray) * 3.0f, 4.0f, SECONDS_PER_UPDATE);
 				}
 				else
 				{
-					state->game.special.monster.monster.velocity = dampen(state->game.special.monster.monster.velocity, { 0.0f, 0.0f }, 4.0f, SECONDS_PER_UPDATE);
+					state->game.monster_velocity = dampen(state->game.monster_velocity, { 0.0f, 0.0f }, 4.0f, SECONDS_PER_UPDATE);
 				}
 			}
 
-			state->game.special.monster.position.xy += state->game.special.monster.monster.velocity * SECONDS_PER_UPDATE;
-			state->game.special.monster.position.x   = mod(state->game.special.monster.position.x, MAP_DIM * WALL_SPACING);
-			state->game.special.monster.position.y   = mod(state->game.special.monster.position.y, MAP_DIM * WALL_SPACING);
-			state->game.special.monster.position.z   = cosf(state->time * 3.0f) * 0.15f + WALL_HEIGHT / 2.0f;
-			state->game.special.monster.normal       = normalize(dampen(state->game.special.monster.normal, normalize(ray_to_closest(state->game.lucia_position.xy, state->game.special.monster.position.xy)), 1.0f, SECONDS_PER_UPDATE));
+			state->game.monster_position.xy += state->game.monster_velocity * SECONDS_PER_UPDATE;
+			state->game.monster_position.x   = mod(state->game.monster_position.x, MAP_DIM * WALL_SPACING);
+			state->game.monster_position.y   = mod(state->game.monster_position.y, MAP_DIM * WALL_SPACING);
+			state->game.monster_position.z   = cosf(state->time * 3.0f) * 0.15f + WALL_HEIGHT / 2.0f;
+			state->game.monster_normal       = normalize(dampen(state->game.monster_normal, normalize(ray_to_closest(state->game.lucia_position.xy, state->game.monster_position.xy)), 1.0f, SECONDS_PER_UPDATE));
 
 			state->game.hand_hovered_item = 0;
 
 			f32 closest_distance = NAN;
 			FOR_ELEMS(item, state->game.item_buffer, state->game.item_count)
 			{
-				if (IN_RANGE(+item->type, +ThingType::ITEM_START, +ThingType::ITEM_END))
+				f32 distance = norm(ray_to_closest(state->game.lucia_position.xy, item->position.xy));
+				if (!state->game.hand_hovered_item && distance < 2.0f || closest_distance > distance)
 				{
-					f32 distance = norm(ray_to_closest(state->game.lucia_position.xy, item->position.xy));
-					if (!state->game.hand_hovered_item && distance < 2.0f || closest_distance > distance)
-					{
-						state->game.hand_hovered_item = item;
-						closest_distance         = distance;
-						break;
-					}
+					state->game.hand_hovered_item = item;
+					closest_distance         = distance;
+					break;
 				}
 			}
 
@@ -1289,18 +1287,20 @@ extern "C" PROTOTYPE_UPDATE(update)
 			{
 				vf2 ray = ray_to_closest(state->game.hand_hovered_item->position.xy, state->game.lucia_position.xy);
 
-				state->game.special.hand.position.xy = state->game.hand_hovered_item->position.xy + ray / 2.0f;
-				state->game.special.hand.position.z  = lerp(state->game.hand_hovered_item->position.z, state->game.lucia_position.z, 0.75f);
-				state->game.special.hand.normal      = normalize(ray) * 0.15f;
+				state->game.hand_position.xy = state->game.hand_hovered_item->position.xy + ray / 2.0f;
+				state->game.hand_position.z  = lerp(state->game.hand_hovered_item->position.z, state->game.lucia_position.z, 0.75f);
+				state->game.hand_normal      = normalize(ray) * 0.15f;
 
 				if (PRESSED(Input::space))
 				{
+					#if 0
 					if (state->game.hand_hovered_item->type == ThingType::flashlight && state->game.using_flashlight)
 					{
 						state->game.notification_message = "\"I already have a flashlight...\"";
 						state->game.notification_keytime = 1.0f;
 					}
-					else if (state->game.inventory_count < ARRAY_CAPACITY(state->game.inventory_buffer))
+					else
+					if (state->game.inventory_count < ARRAY_CAPACITY(state->game.inventory_buffer))
 					{
 						state->game.inventory_index                                = state->game.inventory_count;
 						state->game.inventory_buffer[state->game.inventory_count]  = *state->game.hand_hovered_item;
@@ -1319,11 +1319,34 @@ extern "C" PROTOTYPE_UPDATE(update)
 						state->game.notification_message = "\"I can't carry anymore.\"";
 						state->game.notification_keytime = 1.0f;
 					}
+					#endif
+
+					Item* open_space = 0;
+					FOR_ELEMS(it, state->game.flat_inventory)
+					{
+						if (it->type == ItemType::null)
+						{
+							open_space = it;
+							break;
+						}
+					}
+
+					if (open_space)
+					{
+						*open_space = *state->game.hand_hovered_item;
+						deallocate_item(state, state->game.hand_hovered_item);
+						state->game.hand_hovered_item = 0;
+					}
+					else
+					{
+						state->game.notification_message = "\"I can't carry anymore.\"";
+						state->game.notification_keytime = 1.0f;
+					}
 				}
 			}
 			else
 			{
-				state->game.special.hand.normal = { 0.0f, 0.0f };
+				state->game.hand_normal = { 0.0f, 0.0f };
 			}
 
 			FOR_ELEMS(item, state->game.item_buffer, state->game.item_count)
@@ -1332,168 +1355,168 @@ extern "C" PROTOTYPE_UPDATE(update)
 				item->normal     = polar(state->time * 1.5f);
 			}
 
-			if (state->game.combining_item)
-			{
-				ASSERT(state->game.inventory_count >= 2);
-				ASSERT(IN_RANGE(state->game.combining_item - state->game.inventory_buffer, 0, state->game.inventory_count));
-				ASSERT(state->game.combining_item != &state->game.inventory_buffer[state->game.inventory_index]);
+			//if (state->game.combining_item)
+			//{
+			//	ASSERT(state->game.inventory_count >= 2);
+			//	ASSERT(IN_RANGE(state->game.combining_item - state->game.inventory_buffer, 0, state->game.inventory_count));
+			//	ASSERT(state->game.combining_item != &state->game.inventory_buffer[state->game.inventory_index]);
 
-				if (PRESSED(Input::x))
-				{
-					state->game.combining_item = 0;
-				}
-				else
-				{
-					if (PRESSED(Input::q))
-					{
-						state->game.inventory_index = (state->game.inventory_index + 1) % state->game.inventory_count;
+			//	if (PRESSED(Input::x))
+			//	{
+			//		state->game.combining_item = 0;
+			//	}
+			//	else
+			//	{
+			//		if (PRESSED(Input::q))
+			//		{
+			//			state->game.inventory_index = (state->game.inventory_index + 1) % state->game.inventory_count;
 
-						if (state->game.combining_item == &state->game.inventory_buffer[state->game.inventory_index])
-						{
-							state->game.inventory_index = (state->game.inventory_index + 1) % state->game.inventory_count;
-						}
-					}
+			//			if (state->game.combining_item == &state->game.inventory_buffer[state->game.inventory_index])
+			//			{
+			//				state->game.inventory_index = (state->game.inventory_index + 1) % state->game.inventory_count;
+			//			}
+			//		}
 
-					if (PRESSED(Input::e))
-					{
-						Thing* item = &state->game.inventory_buffer[state->game.inventory_index];
-						switch (state->game.combining_item->type)
-						{
-							case ThingType::battery:
-							{
-								if (item->type == ThingType::flashlight)
-								{
-									item->flashlight.power = 1.0f;
+			//		if (PRESSED(Input::e))
+			//		{
+			//			Thing* item = &state->game.inventory_buffer[state->game.inventory_index];
+			//			switch (state->game.combining_item->type)
+			//			{
+			//				case ThingType::battery:
+			//				{
+			//					if (item->type == ThingType::flashlight)
+			//					{
+			//						item->flashlight.power = 1.0f;
 
-									state->game.inventory_count -= 1;
-									*state->game.combining_item = state->game.inventory_buffer[state->game.inventory_count];
+			//						state->game.inventory_count -= 1;
+			//						*state->game.combining_item = state->game.inventory_buffer[state->game.inventory_count];
 
-									if (state->game.inventory_index == state->game.inventory_count)
-									{
-										state->game.inventory_index = static_cast<i32>(state->game.combining_item - state->game.inventory_buffer);
-									}
+			//						if (state->game.inventory_index == state->game.inventory_count)
+			//						{
+			//							state->game.inventory_index = static_cast<i32>(state->game.combining_item - state->game.inventory_buffer);
+			//						}
 
-									if (state->game.using_flashlight == &state->game.inventory_buffer[state->game.inventory_count])
-									{
-										state->game.using_flashlight = item;
-									}
+			//						if (state->game.using_flashlight == &state->game.inventory_buffer[state->game.inventory_count])
+			//						{
+			//							state->game.using_flashlight = item;
+			//						}
 
-									state->game.notification_message = "(You replaced the batteries in the flashlight.)";
-									state->game.notification_keytime = 1.0f;
-								}
-								else
-								{
-									goto INCOMPATIBLE;
-								}
-							} break;
+			//						state->game.notification_message = "(You replaced the batteries in the flashlight.)";
+			//						state->game.notification_keytime = 1.0f;
+			//					}
+			//					else
+			//					{
+			//						goto INCOMPATIBLE;
+			//					}
+			//				} break;
 
-							default:
-							INCOMPATIBLE:
-							{
-								state->game.notification_message = "\"I don't see how that would fit.\"";
-								state->game.notification_keytime = 1.0f;
-							} break;
-						}
+			//				default:
+			//				INCOMPATIBLE:
+			//				{
+			//					state->game.notification_message = "\"I don't see how that would fit.\"";
+			//					state->game.notification_keytime = 1.0f;
+			//				} break;
+			//			}
 
-						state->game.combining_item = 0;
-					}
-				}
-			}
-			else if (state->game.inventory_count)
-			{
-				if (PRESSED(Input::q))
-				{
-					state->game.inventory_index = (state->game.inventory_index + 1) % state->game.inventory_count;
-				}
+			//			state->game.combining_item = 0;
+			//		}
+			//	}
+			//}
+			//else if (state->game.inventory_count)
+			//{
+			//	if (PRESSED(Input::q))
+			//	{
+			//		state->game.inventory_index = (state->game.inventory_index + 1) % state->game.inventory_count;
+			//	}
 
-				if (PRESSED(Input::x))
-				{
-					Thing* item = allocate_item(state);
-					*item = state->game.inventory_buffer[state->game.inventory_index];
-					item->position = state->game.lucia_position;
+			//	if (PRESSED(Input::x))
+			//	{
+			//		Thing* item = allocate_item(state);
+			//		*item = state->game.inventory_buffer[state->game.inventory_index];
+			//		item->position = state->game.lucia_position;
 
-					if (item->type == ThingType::flashlight)
-					{
-						ASSERT(state->game.using_flashlight == &state->game.inventory_buffer[state->game.inventory_index]);
-						state->game.using_flashlight = 0;
-					}
+			//		if (item->type == ThingType::flashlight)
+			//		{
+			//			ASSERT(state->game.using_flashlight == &state->game.inventory_buffer[state->game.inventory_index]);
+			//			state->game.using_flashlight = 0;
+			//		}
 
-					state->game.inventory_count -= 1;
-					if (state->game.inventory_count)
-					{
-						state->game.inventory_buffer[state->game.inventory_index] = state->game.inventory_buffer[state->game.inventory_count];
-						state->game.inventory_index = (state->game.inventory_index + 1) % state->game.inventory_count;
-					}
-				}
-				else if (PRESSED(Input::e))
-				{
-					Thing* item = &state->game.inventory_buffer[state->game.inventory_index];
+			//		state->game.inventory_count -= 1;
+			//		if (state->game.inventory_count)
+			//		{
+			//			state->game.inventory_buffer[state->game.inventory_index] = state->game.inventory_buffer[state->game.inventory_count];
+			//			state->game.inventory_index = (state->game.inventory_index + 1) % state->game.inventory_count;
+			//		}
+			//	}
+			//	else if (PRESSED(Input::e))
+			//	{
+			//		Thing* item = &state->game.inventory_buffer[state->game.inventory_index];
 
-					switch (item->type)
-					{
-						case ThingType::flashlight:
-						{
-							ASSERT(item == state->game.using_flashlight);
+			//		switch (item->type)
+			//		{
+			//			case ThingType::flashlight:
+			//			{
+			//				ASSERT(item == state->game.using_flashlight);
 
-							if (item->flashlight.power)
-							{
-								item->flashlight.on = !item->flashlight.on;
-							}
-							else
-							{
-								ASSERT(!item->flashlight.on);
-								state->game.notification_message = "\"The flashlight is dead.\"";
-								state->game.notification_keytime = 1.0f;
-							}
-						} break;
+			//				if (item->flashlight.power)
+			//				{
+			//					item->flashlight.on = !item->flashlight.on;
+			//				}
+			//				else
+			//				{
+			//					ASSERT(!item->flashlight.on);
+			//					state->game.notification_message = "\"The flashlight is dead.\"";
+			//					state->game.notification_keytime = 1.0f;
+			//				}
+			//			} break;
 
-						case ThingType::battery:
-						{
-							if (state->game.inventory_count >= 2)
-							{
-								state->game.combining_item = item;
+			//			case ThingType::battery:
+			//			{
+			//				if (state->game.inventory_count >= 2)
+			//				{
+			//					state->game.combining_item = item;
 
-								FOR_ELEMS(it, state->game.inventory_buffer, state->game.inventory_count)
-								{
-									if (it != item)
-									{
-										state->game.inventory_index = it_index;
-									}
-								}
-							}
-							else
-							{
-								state->game.notification_message = "\"There's nothing to put batteries into.\"";
-								state->game.notification_keytime = 1.0f;
-							}
-						} break;
-					}
-				}
-			}
+			//					FOR_ELEMS(it, state->game.inventory_buffer, state->game.inventory_count)
+			//					{
+			//						if (it != item)
+			//						{
+			//							state->game.inventory_index = it_index;
+			//						}
+			//					}
+			//				}
+			//				else
+			//				{
+			//					state->game.notification_message = "\"There's nothing to put batteries into.\"";
+			//					state->game.notification_keytime = 1.0f;
+			//				}
+			//			} break;
+			//		}
+			//	}
+			//}
 
-			if (state->game.using_flashlight)
-			{
-				if (state->game.using_flashlight->flashlight.on)
-				{
-					state->game.using_flashlight->flashlight.power      = clamp(state->game.using_flashlight->flashlight.power - SECONDS_PER_UPDATE / 60.0f, 0.0f, 1.0f);
-					state->game.using_flashlight->flashlight.activation = dampen(state->game.using_flashlight->flashlight.activation, sinf(TAU / 4.0f * (1.0f - powf(1.0f - state->game.using_flashlight->flashlight.power, 16.0f))), 25.0f, SECONDS_PER_UPDATE);
+			//if (state->game.using_flashlight)
+			//{
+			//	if (state->game.using_flashlight->flashlight.on)
+			//	{
+			//		state->game.using_flashlight->flashlight.power      = clamp(state->game.using_flashlight->flashlight.power - SECONDS_PER_UPDATE / 60.0f, 0.0f, 1.0f);
+			//		state->game.using_flashlight->flashlight.activation = dampen(state->game.using_flashlight->flashlight.activation, sinf(TAU / 4.0f * (1.0f - powf(1.0f - state->game.using_flashlight->flashlight.power, 16.0f))), 25.0f, SECONDS_PER_UPDATE);
 
-					if (state->game.using_flashlight->flashlight.power == 0.0f)
-					{
-						state->game.using_flashlight->flashlight.on = false;
+			//		if (state->game.using_flashlight->flashlight.power == 0.0f)
+			//		{
+			//			state->game.using_flashlight->flashlight.on = false;
 
-						if (state->game.using_flashlight == state->game.using_flashlight)
-						{
-							state->game.notification_message = "\"The flashlight died.\"";
-							state->game.notification_keytime = 1.0f;
-						}
-					}
-				}
-				else
-				{
-					state->game.using_flashlight->flashlight.activation = dampen(state->game.using_flashlight->flashlight.activation, 0.0f, 25.0f, SECONDS_PER_UPDATE);
-				}
-			}
+			//			if (state->game.using_flashlight == state->game.using_flashlight)
+			//			{
+			//				state->game.notification_message = "\"The flashlight died.\"";
+			//				state->game.notification_keytime = 1.0f;
+			//			}
+			//		}
+			//	}
+			//	else
+			//	{
+			//		state->game.using_flashlight->flashlight.activation = dampen(state->game.using_flashlight->flashlight.activation, 0.0f, 25.0f, SECONDS_PER_UPDATE);
+			//	}
+			//}
 
 			state->game.flashlight_keytime += 0.00005f + 0.005f * norm(state->game.lucia_velocity) * SECONDS_PER_UPDATE;
 			if (state->game.flashlight_keytime > 1.0f)
@@ -1507,8 +1530,19 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 			state->game.notification_keytime = clamp(state->game.notification_keytime - SECONDS_PER_UPDATE / 8.0f, 0.0f, 1.0f);
 
-			persist bool32 CEILING_ACTIVATION = false;
 			if (PRESSED(Input::tab))
+			{
+				state->game.inventory_visibility = !state->game.inventory_visibility;
+				state->game.inventory_cursor     = VIEW_RES / 2.0f;
+			}
+
+			if (state->game.inventory_visibility)
+			{
+				state->game.inventory_cursor += platform->cursor_delta * 0.25f;
+			}
+
+			persist bool32 CEILING_ACTIVATION = false; // @TEMP@
+			if (PRESSED(Input::escape))
 			{
 				CEILING_ACTIVATION = !CEILING_ACTIVATION;
 			}
@@ -1805,74 +1839,72 @@ extern "C" PROTOTYPE_RENDER(render)
 				QueryPerformanceCounter(&DEBUG_WALL_FLOOR_CEILING_li0);
 				#endif
 
-				#if 1
 				FOR_RANGE(y, 0, VIEW_RES.y)
 				{
 					vf3 ray = normalize({ ray_horizontal.x, ray_horizontal.y, (y - VIEW_RES.y / 2.0f) * state->game.lucia_fov / HORT_TO_VERT_K });
 
-						f32     d;
-						vf2     uv;
-						vf3     n;
-						Mipmap* mm;
+					f32     d;
+					vf2     uv;
+					vf3     n;
+					Mipmap* mm;
 
-						if (IN_RANGE(y, pixel_starting_y, pixel_ending_y))
+					if (IN_RANGE(y, pixel_starting_y, pixel_ending_y))
+					{
+						uv = { wall_portion, static_cast<f32>(y - starting_y) / (ending_y - starting_y) };
+						d  = sqrtf(square(wall_distance) + square(uv.y * WALL_HEIGHT - state->game.lucia_position.z));
+						n  = vxx(wall_normal, 0.0f);
+						mm = &state->game.wall;
+					}
+					else if (fabs(ray.z) > 0.0001f)
+					{
+						if (y < VIEW_RES.y / 2)
 						{
-							uv = { wall_portion, static_cast<f32>(y - starting_y) / (ending_y - starting_y) };
-							d  = sqrtf(square(wall_distance) + square(uv.y * WALL_HEIGHT - state->game.lucia_position.z));
-							n  = vxx(wall_normal, 0.0f);
-							mm = &state->game.wall;
-						}
-						else if (fabs(ray.z) > 0.0001f)
-						{
-							if (y < VIEW_RES.y / 2)
-							{
-								f32 zk = -state->game.lucia_position.z / ray.z;
-								uv   = state->game.lucia_position.xy + zk * ray.xy;
-								d    = sqrtf(square(zk) * 2.0f - square(state->game.lucia_position.z));
-								n    = { 0.0f, 0.0f, 1.0f };
-								mm   = &state->game.floor;
-							}
-							else
-							{
-								f32 zk = (WALL_HEIGHT - state->game.lucia_position.z) / ray.z;
-								uv   = state->game.lucia_position.xy + zk * ray.xy;
-								d    = sqrtf(square(zk) * 2.0f - square(state->game.lucia_position.z));
-								n    = { 0.0f, 0.0f, -1.0f };
-								mm   = &state->game.ceiling;
-							}
-
-							uv.x = mod(uv.x / 4.0f, 1.0f);
-							uv.y = mod(uv.y / 4.0f, 1.0f);
+							f32 zk = -state->game.lucia_position.z / ray.z;
+							uv   = state->game.lucia_position.xy + zk * ray.xy;
+							d    = sqrtf(square(zk) * 2.0f - square(state->game.lucia_position.z));
+							n    = { 0.0f, 0.0f, 1.0f };
+							mm   = &state->game.floor;
 						}
 						else
 						{
-							continue;
+							f32 zk = (WALL_HEIGHT - state->game.lucia_position.z) / ray.z;
+							uv   = state->game.lucia_position.xy + zk * ray.xy;
+							d    = sqrtf(square(zk) * 2.0f - square(state->game.lucia_position.z));
+							n    = { 0.0f, 0.0f, -1.0f };
+							mm   = &state->game.ceiling;
 						}
 
-						view_pixels[(VIEW_RES.y - 1 - y) * VIEW_RES.x + x] =
-							to_pixel
-							(
-								mipmap_color_at(mm, d / 4.0f + MIPMAP_LEVELS * square(1.0f - fabsf(dot(ray, n))), uv)
-									* clamp
-										(
-											0.015f
-												- fabsf(dot(ray, n)) * 0.01f
-												+ ((state->game.lucia_position.z + ray.z * d) / WALL_HEIGHT + 0.95f) * 0.7f * (0.5f - 4.0f * cube(state->game.ceiling_lights_keytime - 0.5f))
-												+ (state->game.using_flashlight
-													?
-														clamp((dot(ray, state->game.flashlight_ray) - FLASHLIGHT_OUTER_CUTOFF) / (FLASHLIGHT_INNER_CUTOFF - FLASHLIGHT_OUTER_CUTOFF), 0.0f, 1.0f)
-															/ (square(d) + 0.1f)
-															* FLASHLIGHT_STRENGTH
-															* state->game.using_flashlight->flashlight.activation
-													: 0.0f)
-												+ powf(clamp(1.0f - d / AMBIENT_LIGHT_RADIUS, 0.0f, 1.0f), AMBIENT_LIGHT_POW),
-											0.0f,
-											1.0f
-										)
-							);
-						state->game.view_inv_depth_buffer[x][y] = 1.0f / d;
+						uv.x = mod(uv.x / 4.0f, 1.0f);
+						uv.y = mod(uv.y / 4.0f, 1.0f);
 					}
-				#endif
+					else
+					{
+						continue;
+					}
+
+					view_pixels[(VIEW_RES.y - 1 - y) * VIEW_RES.x + x] =
+						to_pixel
+						(
+							mipmap_color_at(mm, d / 4.0f + MIPMAP_LEVELS * square(1.0f - fabsf(dot(ray, n))), uv)
+								* clamp
+									(
+										0.015f
+											- fabsf(dot(ray, n)) * 0.01f
+											+ ((state->game.lucia_position.z + ray.z * d) / WALL_HEIGHT + 0.95f) * 0.7f * (0.5f - 4.0f * cube(state->game.ceiling_lights_keytime - 0.5f))
+											//+ (state->game.using_flashlight
+											//	?
+											//		clamp((dot(ray, state->game.flashlight_ray) - FLASHLIGHT_OUTER_CUTOFF) / (FLASHLIGHT_INNER_CUTOFF - FLASHLIGHT_OUTER_CUTOFF), 0.0f, 1.0f)
+											//			/ (square(d) + 0.1f)
+											//			* FLASHLIGHT_STRENGTH
+											//			* state->game.using_flashlight->flashlight.activation
+											//	: 0.0f)
+											+ powf(clamp(1.0f - d / AMBIENT_LIGHT_RADIUS, 0.0f, 1.0f), AMBIENT_LIGHT_POW),
+										0.0f,
+										1.0f
+									)
+						);
+					state->game.view_inv_depth_buffer[x][y] = 1.0f / d;
+				}
 
 				#if PROFILE
 				LARGE_INTEGER DEBUG_WALL_FLOOR_CEILING_li1;
@@ -1892,21 +1924,21 @@ extern "C" PROTOTYPE_RENDER(render)
 				QueryPerformanceCounter(&DEBUG_THING_li0);
 				#endif
 
-				struct ThingNode
+				struct RenderScanNode
 				{
-					Thing*     thing;
-					f32        distance;
-					f32        portion;
-					ThingNode* next_node;
+					ImgRGBA*        img;
+					vf3             position;
+					vf2             normal;
+					f32             distance;
+					f32             portion;
+					RenderScanNode* next_node;
 				};
 
-				ThingNode* intersected_thing_node = 0;
+				RenderScanNode* render_scan_node = 0;
+				memory_arena_checkpoint(&state->transient_arena);
 
-				MemoryArena arena = memory_arena_checkpoint(&state->transient_arena);
-
-				FOR_ELEMS(thing, state->game.thing_buffer, ARRAY_CAPACITY(state->game.specials) + state->game.item_count)
-				{
-					FOR_RANGE(i, 9) // @TODO@ Optimize
+				auto intersect =
+					[&](ImgRGBA* img, vf3 position, vf2 normal)
 					{
 						f32 distance;
 						f32 portion;
@@ -1918,43 +1950,55 @@ extern "C" PROTOTYPE_RENDER(render)
 								&portion,
 								state->game.lucia_position.xy,
 								ray_horizontal,
-								vi2 { i % 3 - 1, i / 3 - 1 } * MAP_DIM * WALL_SPACING + thing->position.xy - rotate90(thing->normal) / 2.0f,
-								vi2 { i % 3 - 1, i / 3 - 1 } * MAP_DIM * WALL_SPACING + thing->position.xy + rotate90(thing->normal) / 2.0f
+								position.xy - rotate90(normal) / 2.0f,
+								position.xy + rotate90(normal) / 2.0f
 							)
 							&& IN_RANGE(portion, 0.0f, 1.0f)
 						)
 						{
-							ThingNode** post_node = &intersected_thing_node;
+							RenderScanNode** post_node = &render_scan_node;
 							while (*post_node && (*post_node)->distance > distance)
 							{
 								post_node = &(*post_node)->next_node;
 							}
 
-							ThingNode* new_node = memory_arena_push<ThingNode>(&arena);
-							new_node->thing     = thing;
+							RenderScanNode* new_node = memory_arena_push<RenderScanNode>(&state->transient_arena);
+							new_node->img       = img;
+							new_node->position  = position;
+							new_node->normal    = normal;
 							new_node->distance  = distance;
 							new_node->portion   = portion;
 							new_node->next_node = *post_node;
 							*post_node = new_node;
 						}
+					};
+
+				intersect(&state->game.monster_img, state->game.monster_position, state->game.monster_normal);
+				intersect(&state->game.hand_img, state->game.hand_position, state->game.hand_normal);
+
+				FOR_ELEMS(item, state->game.item_buffer, state->game.item_count)
+				{
+					FOR_RANGE(i, 9) // @TODO@ Optimize
+					{
+						intersect(&state->game.default_item_imgs[+item->type - +ItemType::ITEM_START], vi3 { i % 3 - 1, i / 3 - 1, 0 } * MAP_DIM * WALL_SPACING + item->position, item->normal);
 					}
 				}
 
-				for (ThingNode* node = intersected_thing_node; node; node = node->next_node)
+				for (RenderScanNode* node = render_scan_node; node; node = node->next_node)
 				{
-					i32 thing_starting_y       = static_cast<i32>(VIEW_RES.y / 2.0f + HORT_TO_VERT_K / state->game.lucia_fov * (node->thing->position.z - norm(node->thing->normal) / 2.0f - state->game.lucia_position.z) / (node->distance + 0.1f));
-					i32 thing_ending_y         = static_cast<i32>(VIEW_RES.y / 2.0f + HORT_TO_VERT_K / state->game.lucia_fov * (node->thing->position.z + norm(node->thing->normal) / 2.0f - state->game.lucia_position.z) / (node->distance + 0.1f));
-					i32 thing_pixel_starting_y = MAXIMUM(0, thing_starting_y);
-					i32 thing_pixel_ending_y   = MINIMUM(thing_ending_y, VIEW_RES.y);
+					i32 scan_starting_y       = static_cast<i32>(VIEW_RES.y / 2.0f + HORT_TO_VERT_K / state->game.lucia_fov * (node->position.z - norm(node->normal) / 2.0f - state->game.lucia_position.z) / (node->distance + 0.1f));
+					i32 scan_ending_y         = static_cast<i32>(VIEW_RES.y / 2.0f + HORT_TO_VERT_K / state->game.lucia_fov * (node->position.z + norm(node->normal) / 2.0f - state->game.lucia_position.z) / (node->distance + 0.1f));
+					i32 scan_pixel_starting_y = MAXIMUM(0, scan_starting_y);
+					i32 scan_pixel_ending_y   = MINIMUM(scan_ending_y, VIEW_RES.y);
 
-					FOR_RANGE(y, thing_pixel_starting_y, thing_pixel_ending_y)
+					FOR_RANGE(y, scan_pixel_starting_y, scan_pixel_ending_y)
 					{
-						vf4* thing_pixel =
-							node->thing->img->rgba
-								+ static_cast<i32>(node->portion * node->thing->img->dim.x) * node->thing->img->dim.y
-								+ static_cast<i32>(static_cast<f32>(y - thing_starting_y) / (thing_ending_y - thing_starting_y) * node->thing->img->dim.y);
+						vf4* scan_pixel =
+							node->img->rgba
+								+ static_cast<i32>(node->portion * node->img->dim.x) * node->img->dim.y
+								+ static_cast<i32>(static_cast<f32>(y - scan_starting_y) / (scan_ending_y - scan_starting_y) * node->img->dim.y);
 
-						if (thing_pixel->w)
+						if (scan_pixel->w)
 						{
 							vf3 ray = normalize({ ray_horizontal.x, ray_horizontal.y, (y - VIEW_RES.y / 2.0f) * state->game.lucia_fov / HORT_TO_VERT_K });
 
@@ -1969,24 +2013,24 @@ extern "C" PROTOTYPE_RENDER(render)
 											lerp
 											(
 												to_color(view_pixels[y * VIEW_RES.x + x]),
-												thing_pixel->xyz
+												scan_pixel->xyz
 													* clamp
 														(
 															0.015f
-																- fabsf(dot(ray.xy, node->thing->normal)) * 0.01f
+																- fabsf(dot(ray.xy, node->normal)) * 0.01f
 																+ ((state->game.lucia_position.z + ray.z * node->distance) / WALL_HEIGHT + 0.95f) * 0.7f * (0.5f - 4.0f * cube(state->game.ceiling_lights_keytime - 0.5f))
-																+ (state->game.using_flashlight
-																	?
-																		clamp((dot(ray, state->game.flashlight_ray) - FLASHLIGHT_OUTER_CUTOFF) / (FLASHLIGHT_INNER_CUTOFF - FLASHLIGHT_OUTER_CUTOFF), 0.0f, 1.0f)
-																			/ (square(node->distance) + 0.1f)
-																			* FLASHLIGHT_STRENGTH
-																			* state->game.using_flashlight->flashlight.activation
-																	: 0.0f)
+																//+ (state->game.using_flashlight
+																//	?
+																//		clamp((dot(ray, state->game.flashlight_ray) - FLASHLIGHT_OUTER_CUTOFF) / (FLASHLIGHT_INNER_CUTOFF - FLASHLIGHT_OUTER_CUTOFF), 0.0f, 1.0f)
+																//			/ (square(node->distance) + 0.1f)
+																//			* FLASHLIGHT_STRENGTH
+																//			* state->game.using_flashlight->flashlight.activation
+																//	: 0.0f)
 																+ powf(clamp(1.0f - node->distance / AMBIENT_LIGHT_RADIUS, 0.0f, 1.0f), AMBIENT_LIGHT_POW),
 															0.0f,
 															1.0f
 														),
-												thing_pixel->w
+												scan_pixel->w
 											)
 										);
 								}
@@ -2002,15 +2046,40 @@ extern "C" PROTOTYPE_RENDER(render)
 				DEBUG_THING_counter += 1;
 				if (DEBUG_THING_counter > DEBUG_SCANS)
 				{
-					DEBUG_printf("thing %f\n", static_cast<f64>(DEBUG_THING_total) / DEBUG_PERFORMANCE_FREQ.QuadPart);
+					DEBUG_printf("scan %f\n", static_cast<f64>(DEBUG_THING_total) / DEBUG_PERFORMANCE_FREQ.QuadPart);
 					DEBUG_THING_total   = 0;
 					DEBUG_THING_counter = 0;
 				}
 				#endif
+
+			}
+
+			if (state->game.inventory_visibility)
+			{
+				constexpr i32 INVENTORY_DIM     = 30;
+				constexpr i32 INVENTORY_PADDING = 5;
+				FOR_RANGE(y, ARRAY_CAPACITY(state->game.inventory))
+				{
+					FOR_RANGE(x, ARRAY_CAPACITY(state->game.inventory[y]))
+					{
+						draw_img_box
+						(
+							view_pixels,
+							get_corresponding_item_img(state, &state->game.inventory[y][x]),
+							{
+								VIEW_RES.x / 2 + x * (INVENTORY_DIM + INVENTORY_PADDING) - static_cast<i32>(ARRAY_CAPACITY(state->game.inventory[y]) * (INVENTORY_DIM + INVENTORY_PADDING) - INVENTORY_PADDING) / 2,
+								VIEW_RES.y / 2 + y * (INVENTORY_DIM + INVENTORY_PADDING) - static_cast<i32>(ARRAY_CAPACITY(state->game.inventory   ) * (INVENTORY_DIM + INVENTORY_PADDING) - INVENTORY_PADDING) / 2
+							},
+							INVENTORY_DIM
+						);
+					}
+				}
+
+				draw_img(view_pixels, &state->game.hand_img, vxx(vf2 { state->game.inventory_cursor.x - 15.0f / 2.0f, VIEW_RES.y - 1 - state->game.inventory_cursor.y - 15.0f / 2.0f }), 15);
 			}
 
 			SDL_UnlockTexture(state->game.view_texture);
-			blit_texture(platform->renderer, state->game.view_texture, vxx(vi2 { PADDING, PADDING }), vxx(VIEW_RES));
+			blit_texture(platform->renderer, state->game.view_texture, { PADDING, PADDING }, VIEW_RES);
 
 			if (state->game.notification_keytime)
 			{
@@ -2030,53 +2099,43 @@ extern "C" PROTOTYPE_RENDER(render)
 			set_color(platform->renderer, { 0.15f, 0.15f, 0.15f });
 			draw_rect(platform->renderer, vxx(vi2 { PADDING, VIEW_RES.y + PADDING * 2 }), vxx(HUD_RES));
 
-			blit_item_box
-			(
-				platform->renderer,
-				state,
-				state->game.inventory_count ? &state->game.inventory_buffer[state->game.inventory_index] : 0,
-				{ PADDING, WIN_RES.y - HUD_RES.y - PADDING },
-				HUD_RES.y
-			);
+			//if (state->game.inventory_count >= 2 && !state->game.combining_item || state->game.inventory_count >= 3 && state->game.combining_item)
+			//{
+			//	Thing* next_item = &state->game.inventory_buffer[(state->game.inventory_index + 1) % state->game.inventory_count];
 
-			if (state->game.inventory_count >= 2 && !state->game.combining_item || state->game.inventory_count >= 3 && state->game.combining_item)
-			{
-				Thing* next_item = &state->game.inventory_buffer[(state->game.inventory_index + 1) % state->game.inventory_count];
+			//	if (next_item == state->game.combining_item)
+			//	{
+			//		next_item = &state->game.inventory_buffer[(state->game.inventory_index + 2) % state->game.inventory_count];
+			//	}
 
-				if (next_item == state->game.combining_item)
-				{
-					next_item = &state->game.inventory_buffer[(state->game.inventory_index + 2) % state->game.inventory_count];
-				}
+			//	blit_item_box
+			//	(
+			//		platform->renderer,
+			//		state,
+			//		next_item,
+			//		{ PADDING + HUD_RES.y, WIN_RES.y - HUD_RES.y / 2 - PADDING },
+			//		HUD_RES.y / 2
+			//	);
+			//}
 
-				blit_item_box
-				(
-					platform->renderer,
-					state,
-					next_item,
-					{ PADDING + HUD_RES.y, WIN_RES.y - HUD_RES.y / 2 - PADDING },
-					HUD_RES.y / 2
-				);
-			}
+			//if (state->game.combining_item)
+			//{
+			//	blit_item_box
+			//	(
+			//		platform->renderer,
+			//		state,
+			//		state->game.combining_item,
+			//		{ PADDING + HUD_RES.y, WIN_RES.y - HUD_RES.y - PADDING },
+			//		HUD_RES.y / 2
+			//	);
+			//}
 
-			if (state->game.combining_item)
-			{
-				blit_item_box
-				(
-					platform->renderer,
-					state,
-					state->game.combining_item,
-					{ PADDING + HUD_RES.y, WIN_RES.y - HUD_RES.y - PADDING },
-					HUD_RES.y / 2
-				);
-			}
-
-			constexpr f32 LUCIA_HUD_SCALAR = 0.8f;
 			blit_texture
 			(
 				platform->renderer,
 				state->game.lucia_normal,
-				{ (WIN_RES.x - HUD_RES.y * LUCIA_HUD_SCALAR) / 2.0f, WIN_RES.y - 1.0f - PADDING - HUD_RES.y + HUD_RES.y * LUCIA_HUD_SCALAR * (1.0f - LUCIA_HUD_SCALAR) - 3.0f },
-				vi2 { HUD_RES.y, HUD_RES.y } * LUCIA_HUD_SCALAR
+				{ (WIN_RES.x - HUD_RES.y) / 2, WIN_RES.y - 1 - PADDING - HUD_RES.y },
+				{ HUD_RES.y, HUD_RES.y }
 			);
 
 			//draw_text
