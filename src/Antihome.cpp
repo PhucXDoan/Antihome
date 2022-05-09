@@ -20,16 +20,18 @@
 #include "platform.h"
 #include "utilities.cpp"
 
-global constexpr vi2 WIN_RES        = WIN_DIM / 3; // @TODO@ This affects text.
-global constexpr i32 PADDING        = 5;
-global constexpr vi2 VIEW_RES       = vxx(vf2 { 1.0f, 0.5f } * (WIN_RES.x - PADDING * 2.0f));
-global constexpr vi2 HUD_RES        = { WIN_RES.x - PADDING * 2, WIN_RES.y - VIEW_RES.y - PADDING * 3 };
-global constexpr f32 HORT_TO_VERT_K = 0.927295218f * VIEW_RES.x;
-global constexpr f32 WALL_HEIGHT    = 2.7432f;
-global constexpr f32 WALL_THICKNESS = 0.25f;
-global constexpr f32 LUCIA_HEIGHT   = 1.4986f;
-global constexpr i32 MAP_DIM        = 8;
-global constexpr f32 WALL_SPACING   = 3.0f;
+global constexpr vi2 WIN_RES           = WIN_DIM / 3; // @TODO@ This affects text.
+global constexpr i32 PADDING           = 5;
+global constexpr vi2 VIEW_RES          = vxx(vf2 { 1.0f, 0.5f } * (WIN_RES.x - PADDING * 2.0f));
+global constexpr vi2 HUD_RES           = { WIN_RES.x - PADDING * 2, WIN_RES.y - VIEW_RES.y - PADDING * 3 };
+global constexpr f32 HORT_TO_VERT_K    = 0.927295218f * VIEW_RES.x;
+global constexpr f32 WALL_HEIGHT       = 2.7432f;
+global constexpr f32 WALL_THICKNESS    = 0.25f;
+global constexpr f32 LUCIA_HEIGHT      = 1.4986f;
+global constexpr i32 MAP_DIM           = 8;
+global constexpr f32 WALL_SPACING      = 3.0f;
+global constexpr i32 INVENTORY_DIM     = 30;
+global constexpr i32 INVENTORY_PADDING = 5;
 
 enum_loose (TitleMenuOption, i32)
 {
@@ -221,6 +223,9 @@ struct State
 
 		bool32               inventory_visibility;
 		vf2                  inventory_cursor;
+		vf2                  inventory_click_position;
+		Item*                inventory_selected;
+		bool32               inventory_grabbing;
 		union
 		{
 			Item             inventory[2][4];
@@ -361,17 +366,17 @@ internal void draw_img(u32* view_pixels, ImgRGBA* img, vi2 position, i32 dimensi
 	}
 }
 
-internal void draw_img_box(u32* view_pixels, ImgRGBA* img, vi2 position, i32 dimension)
+internal void draw_img_box(u32* view_pixels, ImgRGBA* img, vf3 border_color, vi2 position, i32 dimension)
 {
-	constexpr u32 BORDER = to_pixel({ 0.5f, 0.5f, 0.5f });
+	u32 border = to_pixel(border_color);
 	constexpr u32 BG     = to_pixel({ 0.2f, 0.2f, 0.2f });
 
 	FOR_RANGE(i, dimension)
 	{
-		view_pixels[position.y * VIEW_RES.x + position.x + i]                   = BORDER;
-		view_pixels[(position.y + dimension - 1) * VIEW_RES.x + position.x + i] = BORDER;
-		view_pixels[(position.y + i) * VIEW_RES.x + position.x]                 = BORDER;
-		view_pixels[(position.y + i) * VIEW_RES.x + position.x + dimension - 1] = BORDER;
+		view_pixels[position.y * VIEW_RES.x + position.x + i]                   = border;
+		view_pixels[(position.y + dimension - 1) * VIEW_RES.x + position.x + i] = border;
+		view_pixels[(position.y + i) * VIEW_RES.x + position.x]                 = border;
+		view_pixels[(position.y + i) * VIEW_RES.x + position.x + dimension - 1] = border;
 	}
 
 	FOR_RANGE(iy, dimension - 2)
@@ -1534,11 +1539,74 @@ extern "C" PROTOTYPE_UPDATE(update)
 			{
 				state->game.inventory_visibility = !state->game.inventory_visibility;
 				state->game.inventory_cursor     = VIEW_RES / 2.0f;
+				state->game.inventory_selected   = 0;
+				state->game.inventory_grabbing   = false;
 			}
 
 			if (state->game.inventory_visibility)
 			{
-				state->game.inventory_cursor += platform->cursor_delta * 0.25f;
+				state->game.inventory_cursor += conjugate(platform->cursor_delta) * 0.25f;
+
+				if (PRESSED(Input::left_mouse))
+				{
+					state->game.inventory_click_position = state->game.inventory_cursor;
+
+					FOR_RANGE(y, ARRAY_CAPACITY(state->game.inventory))
+					{
+						FOR_RANGE(x, ARRAY_CAPACITY(state->game.inventory[y]))
+						{
+							if
+							(
+								fabsf(VIEW_RES.x / 2.0f + (x + (1.0f - ARRAY_CAPACITY(state->game.inventory[y])) / 2.0f) * (INVENTORY_DIM + INVENTORY_PADDING) - state->game.inventory_cursor.x) < INVENTORY_DIM / 2.0f &&
+								fabsf(VIEW_RES.y / 2.0f + (y + (1.0f - ARRAY_CAPACITY(state->game.inventory   )) / 2.0f) * (INVENTORY_DIM + INVENTORY_PADDING) - state->game.inventory_cursor.y) < INVENTORY_DIM / 2.0f
+							)
+							{
+								if (state->game.inventory[y][x].type != ItemType::null)
+								{
+									state->game.inventory_selected = &state->game.inventory[y][x];
+								}
+
+								break;
+							}
+						}
+					}
+				}
+				else if (HOLDING(Input::left_mouse))
+				{
+					if (!state->game.inventory_grabbing && norm_sq(state->game.inventory_cursor - state->game.inventory_click_position) > 25.0f)
+					{
+						state->game.inventory_grabbing = true;
+					}
+				}
+				else if (RELEASED(Input::left_mouse))
+				{
+					FOR_RANGE(y, ARRAY_CAPACITY(state->game.inventory))
+					{
+						FOR_RANGE(x, ARRAY_CAPACITY(state->game.inventory[y]))
+						{
+							if
+							(
+								fabsf(VIEW_RES.x / 2.0f + (x + (1.0f - ARRAY_CAPACITY(state->game.inventory[y])) / 2.0f) * (INVENTORY_DIM + INVENTORY_PADDING) - state->game.inventory_cursor.x) < INVENTORY_DIM / 2.0f &&
+								fabsf(VIEW_RES.y / 2.0f + (y + (1.0f - ARRAY_CAPACITY(state->game.inventory   )) / 2.0f) * (INVENTORY_DIM + INVENTORY_PADDING) - state->game.inventory_cursor.y) < INVENTORY_DIM / 2.0f
+							)
+							{
+								if (state->game.inventory[y][x].type == ItemType::null)
+								{
+									state->game.inventory[y][x] = *state->game.inventory_selected;
+									state->game.inventory_selected->type = ItemType::null;
+								}
+								else
+								{
+									DEBUG_printf("Combine\n"); // @TODO@
+								}
+								break;
+							}
+						}
+					}
+
+					state->game.inventory_selected = 0;
+					state->game.inventory_grabbing = false;
+				}
 			}
 
 			persist bool32 CEILING_ACTIVATION = false; // @TEMP@
@@ -2056,8 +2124,6 @@ extern "C" PROTOTYPE_RENDER(render)
 
 			if (state->game.inventory_visibility)
 			{
-				constexpr i32 INVENTORY_DIM     = 30;
-				constexpr i32 INVENTORY_PADDING = 5;
 				FOR_RANGE(y, ARRAY_CAPACITY(state->game.inventory))
 				{
 					FOR_RANGE(x, ARRAY_CAPACITY(state->game.inventory[y]))
@@ -2065,7 +2131,12 @@ extern "C" PROTOTYPE_RENDER(render)
 						draw_img_box
 						(
 							view_pixels,
-							get_corresponding_item_img(state, &state->game.inventory[y][x]),
+							state->game.inventory_grabbing && state->game.inventory_selected == &state->game.inventory[y][x]
+								? 0
+								: get_corresponding_item_img(state, &state->game.inventory[y][x]),
+							&state->game.inventory[y][x] == state->game.inventory_selected
+								? vf3 { 0.7f, 0.7f, 0.25f }
+								: vf3 { 0.5f, 0.5f, 0.5f },
 							{
 								VIEW_RES.x / 2 + x * (INVENTORY_DIM + INVENTORY_PADDING) - static_cast<i32>(ARRAY_CAPACITY(state->game.inventory[y]) * (INVENTORY_DIM + INVENTORY_PADDING) - INVENTORY_PADDING) / 2,
 								VIEW_RES.y / 2 + y * (INVENTORY_DIM + INVENTORY_PADDING) - static_cast<i32>(ARRAY_CAPACITY(state->game.inventory   ) * (INVENTORY_DIM + INVENTORY_PADDING) - INVENTORY_PADDING) / 2
@@ -2075,7 +2146,13 @@ extern "C" PROTOTYPE_RENDER(render)
 					}
 				}
 
-				draw_img(view_pixels, &state->game.hand_img, vxx(vf2 { state->game.inventory_cursor.x - 15.0f / 2.0f, VIEW_RES.y - 1 - state->game.inventory_cursor.y - 15.0f / 2.0f }), 15);
+				if (state->game.inventory_grabbing)
+				{
+					draw_img(view_pixels, get_corresponding_item_img(state, state->game.inventory_selected), vxx(state->game.inventory_cursor) - vi2 { INVENTORY_DIM, INVENTORY_DIM } / 4, INVENTORY_DIM / 2);
+				}
+
+				i32 cursor_dim = HOLDING(Input::left_mouse) ? 10 : 15;
+				draw_img(view_pixels, &state->game.hand_img, vxx(vf2 { state->game.inventory_cursor.x - cursor_dim / 2.0f, state->game.inventory_cursor.y - cursor_dim / 2.0f }), cursor_dim);
 			}
 
 			SDL_UnlockTexture(state->game.view_texture);
