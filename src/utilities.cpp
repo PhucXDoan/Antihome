@@ -357,6 +357,18 @@ internal void set_color(SDL_Renderer* renderer, vf3 color)
 	);
 }
 
+internal void set_color(SDL_Renderer* renderer, vf4 color)
+{
+	SDL_SetRenderDrawColor
+	(
+		renderer,
+		static_cast<u8>(color.x * 255.0f),
+		static_cast<u8>(color.y * 255.0f),
+		static_cast<u8>(color.z * 255.0f),
+		static_cast<u8>(color.w * 255.0f)
+	);
+}
+
 internal void draw_filled_rect(SDL_Renderer* renderer, vi2 position, vi2 dimensions)
 {
 	SDL_Rect rect = { position.x, position.y, dimensions.x, dimensions.y };
@@ -450,6 +462,31 @@ internal void draw_text(SDL_Renderer* renderer, FC_Font* font, vf2 coordinates, 
 		renderer,
 		coordinates.x,
 		coordinates.y,
+		FC_MakeEffect
+		(
+			alignment,
+			FC_MakeScale(scalar, scalar),
+			FC_MakeColor
+			(
+				static_cast<u8>(rgba.x * 255.0f),
+				static_cast<u8>(rgba.y * 255.0f),
+				static_cast<u8>(rgba.z * 255.0f),
+				static_cast<u8>(rgba.w * 255.0f)
+			)
+		),
+		fstr,
+		arguments...
+	);
+}
+
+template <typename... ARGUMENTS>
+internal void draw_boxed_text(SDL_Renderer* renderer, FC_Font* font, vi2 coordinates, vi2 dimensions, FC_AlignEnum alignment, f32 scalar, vf4 rgba, strlit fstr, ARGUMENTS... arguments)
+{
+	FC_DrawBoxEffect
+	(
+		font,
+		renderer,
+		{ coordinates.x, coordinates.y, static_cast<i32>(dimensions.x / scalar), static_cast<i32>(dimensions.y / scalar) },
 		FC_MakeEffect
 		(
 			alignment,

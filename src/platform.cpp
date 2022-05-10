@@ -93,6 +93,13 @@ int main(int, char**)
 		exit(-1);
 	}
 
+	if (SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND))
+	{
+		DEBUG_printf("SDL_Error: '%s'\n", SDL_GetError());
+		ASSERT(false);
+		exit(-1);
+	}
+
 	{
 		SDL_Surface* icon = SDL_LoadBMP(DATA_DIR "icon.bmp");
 		SDL_SetWindowIcon(window, icon);
