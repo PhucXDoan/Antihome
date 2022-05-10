@@ -172,12 +172,13 @@ struct State
 
 	struct
 	{
+		SDL_Texture*     background;
+
 		TitleMenuContext context;
 
 		i32 option_index;
 		f32 option_index_repeated_movement_countdown;
 		f32 option_cursor_interpolated_index;
-		f32 option_cursor_interpolated_text_width;
 
 		struct
 		{
@@ -821,7 +822,7 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 	{
 		case StateContext::title_menu:
 		{
-			state->title_menu.option_cursor_interpolated_text_width = FC_GetWidth(state->major_font, TITLE_MENU_OPTIONS[state->title_menu.option_index]);
+			state->title_menu.background = IMG_LoadTexture(renderer, DATA_DIR "title_menu.png");
 		} break;
 
 		case StateContext::game:
@@ -854,6 +855,7 @@ internal void boot_down_state(State* state)
 	{
 		case StateContext::title_menu:
 		{
+			SDL_DestroyTexture(state->title_menu.background);
 		} break;
 
 		case StateContext::game:
@@ -984,8 +986,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 						}
 					}
 
-					state->title_menu.option_cursor_interpolated_index      = dampen(state->title_menu.option_cursor_interpolated_index, static_cast<f32>(state->title_menu.option_index), 8.0f, SECONDS_PER_UPDATE);
-					state->title_menu.option_cursor_interpolated_text_width = dampen(state->title_menu.option_cursor_interpolated_text_width, FC_GetWidth(state->major_font, TITLE_MENU_OPTIONS[state->title_menu.option_index]), 8.0f, SECONDS_PER_UPDATE);
+					state->title_menu.option_cursor_interpolated_index = dampen(state->title_menu.option_cursor_interpolated_index, static_cast<f32>(state->title_menu.option_index), 8.0f, SECONDS_PER_UPDATE);
 				} break;
 
 				case TitleMenuContext::settings:
@@ -998,11 +999,9 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 					if ((PRESSED(Input::space) || PRESSED(Input::enter)) && state->title_menu.option_index == +SettingOption::done)
 					{
-						state->title_menu.context                               = TitleMenuContext::title_menu;
-						state->title_menu                                       = {};
-						state->title_menu.option_index                          = +TitleMenuOption::settings;
-						state->title_menu.option_cursor_interpolated_index      = static_cast<f32>(TitleMenuOption::settings);
-						state->title_menu.option_cursor_interpolated_text_width = static_cast<f32>(FC_GetWidth(state->major_font, TITLE_MENU_OPTIONS[state->title_menu.option_index]));
+						state->title_menu.context                          = TitleMenuContext::title_menu;
+						state->title_menu.option_index                     = +TitleMenuOption::settings;
+						state->title_menu.option_cursor_interpolated_index = static_cast<f32>(TitleMenuOption::settings);
 
 						return UpdateCode::resume;
 					}
@@ -1028,19 +1027,16 @@ extern "C" PROTOTYPE_UPDATE(update)
 						} break;
 					}
 
-					state->title_menu.option_cursor_interpolated_index      = dampen(state->title_menu.option_cursor_interpolated_index, static_cast<f32>(state->title_menu.option_index), 8.0f, SECONDS_PER_UPDATE);
-					state->title_menu.option_cursor_interpolated_text_width = dampen(state->title_menu.option_cursor_interpolated_text_width, FC_GetWidth(state->major_font, TITLE_MENU_OPTIONS[state->title_menu.option_index]), 8.0f, SECONDS_PER_UPDATE);
+					state->title_menu.option_cursor_interpolated_index = dampen(state->title_menu.option_cursor_interpolated_index, static_cast<f32>(state->title_menu.option_index), 8.0f, SECONDS_PER_UPDATE);
 				} break;
 
 				case TitleMenuContext::credits:
 				{
 					if (PRESSED(Input::space) || PRESSED(Input::enter))
 					{
-						state->title_menu.context                               = TitleMenuContext::title_menu;
-						state->title_menu                                       = {};
-						state->title_menu.option_index                          = +TitleMenuOption::credits;
-						state->title_menu.option_cursor_interpolated_index      = static_cast<f32>(TitleMenuOption::credits);
-						state->title_menu.option_cursor_interpolated_text_width = static_cast<f32>(FC_GetWidth(state->major_font, TITLE_MENU_OPTIONS[state->title_menu.option_index]));
+						state->title_menu.context                          = TitleMenuContext::title_menu;
+						state->title_menu.option_index                     = +TitleMenuOption::credits;
+						state->title_menu.option_cursor_interpolated_index = static_cast<f32>(TitleMenuOption::credits);
 						return UpdateCode::resume;
 					}
 				} break;
@@ -1051,7 +1047,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 					if (intro.is_exiting)
 					{
-						intro.exiting_keytime += SECONDS_PER_UPDATE / 2.0f;
+						intro.exiting_keytime += SECONDS_PER_UPDATE / 0.75f;
 
 						if (intro.exiting_keytime >= 1.0f)
 						{
@@ -1171,8 +1167,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 								intro.entering_keytime = 1.0f;
 							}
 
-							state->title_menu.option_cursor_interpolated_index      = dampen(state->title_menu.option_cursor_interpolated_index, static_cast<f32>(state->title_menu.option_index), 8.0f, SECONDS_PER_UPDATE);
-							state->title_menu.option_cursor_interpolated_text_width = dampen(state->title_menu.option_cursor_interpolated_text_width, FC_GetWidth(state->major_font, TITLE_MENU_OPTIONS[state->title_menu.option_index]), 8.0f, SECONDS_PER_UPDATE);
+							state->title_menu.option_cursor_interpolated_index = dampen(state->title_menu.option_cursor_interpolated_index, static_cast<f32>(state->title_menu.option_index), 8.0f, SECONDS_PER_UPDATE);
 						}
 
 						if (intro.entering_keytime == 1.0f)
@@ -1846,6 +1841,8 @@ extern "C" PROTOTYPE_RENDER(render)
 
 	state->transient_arena.used = 0;
 
+	f32 blackout = 0.0f;
+
 	switch (state->context)
 	{
 		case StateContext::title_menu:
@@ -1855,12 +1852,13 @@ extern "C" PROTOTYPE_RENDER(render)
 				set_color(platform->renderer, { 0.05f, 0.1f, 0.15f, 1.0f });
 				SDL_RenderClear(platform->renderer);
 
+				blit_texture(platform->renderer, state->title_menu.background, { 0, 0 }, WIN_RES);
 				draw_text
 				(
 					platform->renderer,
 					state->major_font,
-					{ WIN_RES.x * 0.5f, WIN_RES.y * 0.15f },
-					FC_ALIGN_CENTER,
+					{ WIN_RES.x * 0.05f, WIN_RES.y * 0.05f },
+					FC_ALIGN_LEFT,
 					1.0f,
 					{ 1.0f, 1.0f, 1.0f, 1.0f },
 					"Antihome"
@@ -1883,8 +1881,8 @@ extern "C" PROTOTYPE_RENDER(render)
 					(
 						platform->renderer,
 						state->major_font,
-						{ WIN_RES.x * 0.5f, WIN_RES.y * (0.37f + it_index * OPTION_SPACING) },
-						FC_ALIGN_CENTER,
+						{ WIN_RES.x * 0.08f, WIN_RES.y * (0.3f + it_index * OPTION_SPACING) },
+						FC_ALIGN_LEFT,
 						OPTION_SCALAR,
 						vxx
 						(
@@ -1899,27 +1897,16 @@ extern "C" PROTOTYPE_RENDER(render)
 				(
 					platform->renderer,
 					state->major_font,
-					{ WIN_RES.x * 0.5f - state->title_menu.option_cursor_interpolated_text_width * OPTION_SCALAR * 0.6f, WIN_RES.y * (0.37f + state->title_menu.option_cursor_interpolated_index * OPTION_SPACING) },
+					{ WIN_RES.x * 0.07f, WIN_RES.y * (0.3f + state->title_menu.option_cursor_interpolated_index * OPTION_SPACING) },
 					FC_ALIGN_RIGHT,
 					OPTION_SCALAR,
 					{ 1.0f, 1.0f, 0.2f, 1.0f },
 					">"
 				);
-				draw_text
-				(
-					platform->renderer,
-					state->major_font,
-					{ WIN_RES.x * 0.5f + state->title_menu.option_cursor_interpolated_text_width * OPTION_SCALAR * 0.6f, WIN_RES.y * (0.37f + state->title_menu.option_cursor_interpolated_index * OPTION_SPACING) },
-					FC_ALIGN_LEFT,
-					OPTION_SCALAR,
-					{ 1.0f, 1.0f, 0.2f, 1.0f },
-					"<"
-				);
 
 				if (state->title_menu.context == TitleMenuContext::intro)
 				{
-					set_color(platform->renderer, { 0.0f, 0.0f, 0.0f, state->title_menu.intro.entering_keytime * 2.0f });
-					draw_filled_rect(platform->renderer, { 0, 0 }, WIN_RES);
+					blackout = state->title_menu.intro.entering_keytime * 2.0f;
 				}
 			}
 			else if (state->title_menu.context == TitleMenuContext::intro)
@@ -1958,13 +1945,12 @@ extern "C" PROTOTYPE_RENDER(render)
 
 				if (state->title_menu.intro.is_exiting)
 				{
-					set_color(platform->renderer, { 0.0f, 0.0f, 0.0f, state->title_menu.intro.exiting_keytime });
+					blackout = state->title_menu.intro.exiting_keytime;
 				}
 				else
 				{
-					set_color(platform->renderer, { 0.0f, 0.0f, 0.0f, 1.0f - (state->title_menu.intro.entering_keytime - 0.5f) * 2.0f });
+					blackout = 1.0f - (state->title_menu.intro.entering_keytime - 0.5f) * 2.0f;
 				}
-				draw_filled_rect(platform->renderer, { 0, 0 }, WIN_RES);
 			}
 			else if (state->title_menu.context == TitleMenuContext::settings)
 			{
@@ -2519,10 +2505,12 @@ extern "C" PROTOTYPE_RENDER(render)
 				}
 			}
 
-			set_color(platform->renderer, { 0.0f, 0.0f, 0.0f, 1.0f - state->game.entering_keytime });
-			draw_filled_rect(platform->renderer, { 0, 0 }, WIN_RES);
+			blackout = 1.0f - state->game.entering_keytime;
 		} break;
 	}
+
+	set_color(platform->renderer, { 0.0f, 0.0f, 0.0f, blackout });
+	draw_filled_rect(platform->renderer, { 0, 0 }, WIN_RES);
 
 	SDL_RenderPresent(platform->renderer);
 }
