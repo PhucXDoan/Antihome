@@ -194,6 +194,12 @@ struct State
 		PathCoordinatesNode* available_path_coordinates_node;
 		strlit               notification_message;
 		f32                  notification_keytime;
+		f32                  heart_rate_values[50];
+		i32                  heart_rate_index;
+		f32                  heart_rate_update_keytime;
+		f32                  heart_rate_velocity;
+		f32                  heart_rate_beat_keytime;
+		f32                  heart_rate_bpm;
 
 		WallVoxel            wall_voxels[MAP_DIM][MAP_DIM];
 		f32                  ceiling_lights_keytime;
@@ -1163,8 +1169,6 @@ extern "C" PROTOTYPE_UPDATE(update)
 				}
 			}
 
-			DEBUG_printf("%u\n", state->game.lucia_out_of_breath);
-
 			FOR_ELEMS(it, state->game.item_buffer, state->game.item_count)
 			{
 				it->velocity    *= 0.9f;
@@ -1667,6 +1671,35 @@ extern "C" PROTOTYPE_UPDATE(update)
 						state->game.inventory_selected = 0;
 						state->game.inventory_grabbing = false;
 					}
+				}
+			}
+
+			state->game.heart_rate_bpm = 80.0f + 80.0f * (1.0f - state->game.lucia_stamina);
+			if (state->game.heart_rate_bpm)
+			{
+				state->game.heart_rate_beat_keytime += SECONDS_PER_UPDATE * state->game.heart_rate_bpm / 60.0f;
+			}
+
+			if (state->game.heart_rate_beat_keytime >= 1.0f)
+			{
+				state->game.heart_rate_beat_keytime -= 1.0f;
+				state->game.heart_rate_velocity     += 64.0f;
+			}
+
+			state->game.heart_rate_update_keytime += SECONDS_PER_UPDATE / 0.02f;
+			FOR_RANGE(8)
+			{
+				if (state->game.heart_rate_update_keytime >= 1.0f)
+				{
+					state->game.heart_rate_update_keytime                       -= 1.0f;
+					state->game.heart_rate_velocity                             -= state->game.heart_rate_values[mod(state->game.heart_rate_index - 1, ARRAY_CAPACITY(state->game.heart_rate_values))] * 32.0f;
+					state->game.heart_rate_velocity                             *= 0.45f;
+					state->game.heart_rate_values[state->game.heart_rate_index]  = state->game.heart_rate_values[mod(state->game.heart_rate_index - 1, ARRAY_CAPACITY(state->game.heart_rate_values))] + state->game.heart_rate_velocity * SECONDS_PER_UPDATE;
+					state->game.heart_rate_index                                 = (state->game.heart_rate_index + 1) % ARRAY_CAPACITY(state->game.heart_rate_values);
+				}
+				else
+				{
+					break;
 				}
 			}
 
@@ -2303,6 +2336,27 @@ extern "C" PROTOTYPE_RENDER(render)
 				"%f",
 				state->game.lucia_stamina
 			);
+
+			constexpr vi2 HEART_RATE_MONITOR_DIMENSIONS  = { 50, HUD_RES.y - 20 };
+			constexpr vi2 HEART_RATE_MONITOR_COORDINATES = vi2 { WIN_RES.x - PADDING - 10, WIN_RES.y - PADDING - 10 } - HEART_RATE_MONITOR_DIMENSIONS;
+			static_assert(ARRAY_CAPACITY(state->game.heart_rate_values) <= HEART_RATE_MONITOR_DIMENSIONS.x);
+
+			set_color(platform->renderer, monochrome(0.15f));
+			draw_filled_rect(platform->renderer, HEART_RATE_MONITOR_COORDINATES, HEART_RATE_MONITOR_DIMENSIONS);
+
+			FOR_ELEMS(it, state->game.heart_rate_values, ARRAY_CAPACITY(state->game.heart_rate_values) - 1)
+			{
+				if (it_index + 1 != state->game.heart_rate_index)
+				{
+					set_color(platform->renderer, { mod(it_index - state->game.heart_rate_index, ARRAY_CAPACITY(state->game.heart_rate_values)) / static_cast<f32>(ARRAY_CAPACITY(state->game.heart_rate_values)), 0.0f, 0.0f });
+					draw_line
+					(
+						platform->renderer,
+						HEART_RATE_MONITOR_COORDINATES + vxx(vf2 {  it_index         / static_cast<f32>(ARRAY_CAPACITY(state->game.heart_rate_values)) * HEART_RATE_MONITOR_DIMENSIONS.x, clamp((0.75f - * it      / 2.0f), 0.0f, 1.0f) * HEART_RATE_MONITOR_DIMENSIONS.y }),
+						HEART_RATE_MONITOR_COORDINATES + vxx(vf2 { (it_index + 1.0f) / static_cast<f32>(ARRAY_CAPACITY(state->game.heart_rate_values)) * HEART_RATE_MONITOR_DIMENSIONS.x, clamp((0.75f - *(it + 1) / 2.0f), 0.0f, 1.0f) * HEART_RATE_MONITOR_DIMENSIONS.y })
+					);
+				}
+			}
 		} break;
 	}
 
