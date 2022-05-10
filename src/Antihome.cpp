@@ -1,5 +1,4 @@
 /* @TODO@
-	- Better inventory system
 	- Stamina and battery meter
 	- Varying Anomal types and behaviors
 	- Implemented document reading
@@ -7,13 +6,16 @@
 	- Sound effects
 	- End screen
 	- Fleshed out screens
+
+	- Handle disconnected initial and updated values
+	- Mouse controls
 */
 
 // @NOTE@ Credits
 // "A Fast Voxel Traversal Algorithm for Ray Tracing" https://www.flipcode.com/archives/A%20faster%20voxel%20traversal%20algorithm%20for%20ray%20tracing.pdf
 // "How to check if two given line segments intersect?" https://www.geeksforgeeks.org/check-if-two-given-line-segments-intersect/, http://www.dcs.gla.ac.uk/~pat/52233/slides/Geometry1x1.pdf
 
-// @TODO@ Consider half-precision floats for framebuffer.
+// @TODO@ Consider half-precision floats for depth buffer.
 
 #define STB_IMAGE_IMPLEMENTATION true
 #include <stb_image.h>
@@ -29,7 +31,7 @@ global constexpr f32 HORT_TO_VERT_K    = 0.927295218f * VIEW_RES.x;
 global constexpr f32 WALL_HEIGHT       = 2.7432f;
 global constexpr f32 WALL_THICKNESS    = 0.25f;
 global constexpr f32 LUCIA_HEIGHT      = 1.4986f;
-global constexpr i32 MAP_DIM           = 8;
+global constexpr i32 MAP_DIM           = 32;
 global constexpr f32 WALL_SPACING      = 3.0f;
 global constexpr i32 INVENTORY_DIM     = 30;
 global constexpr i32 INVENTORY_PADDING = 5;
@@ -220,7 +222,7 @@ struct State
 		vf2                  hand_normal;
 
 		i32                  item_count;
-		Item                 item_buffer[16];
+		Item                 item_buffer[32];
 
 		bool32               inventory_visibility;
 		vf2                  inventory_cursor;
@@ -1004,13 +1006,12 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 								state->game.monster_position.xy = rng_open_position(state);
 
-								FOR_RANGE(12)
+								FOR_RANGE(ARRAY_CAPACITY(state->game.item_buffer))
 								{
 									Item* item = allocate_item(state);
 									*item             = {};
 									item->type        = static_cast<ItemType>(rng(&state->seed, +ItemType::ITEM_START, +ItemType::ITEM_END));
 									item->position.xy = rng_open_position(state);
-									item->position.z  = 1.0f + sinf(state->time * 3.0f) * 0.1f;
 									item->normal      = polar(state->time * 1.5f);
 								}
 
@@ -1141,7 +1142,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 			{
 				it->velocity    *= 0.9f;
 				it->position.xy  = move(state, it->position.xy, it->velocity * SECONDS_PER_UPDATE);
-				it->position.z   = lerp(0.1f, state->game.lucia_position.z, clamp(1.0f - norm_sq(ray_to_closest(state->game.lucia_position.xy, it->position.xy)) / 36.0f, 0.0f, 1.0f)) + sinf(state->time * 3.0f) * 0.025f;
+				it->position.z   = lerp(0.15f, state->game.lucia_position.z, clamp(1.0f - norm_sq(ray_to_closest(state->game.lucia_position.xy, it->position.xy)) / 36.0f, 0.0f, 1.0f)) + sinf(state->time * 3.0f) * 0.025f;
 				it->normal       = polar(state->time * 0.7f);
 			}
 
@@ -1543,6 +1544,8 @@ extern "C" PROTOTYPE_UPDATE(update)
 											{
 												if (state->game.inventory[y][x].type == ItemType::null)
 												{
+													// @NOTE@ Item move.
+
 													state->game.inventory[y][x]          = *state->game.inventory_selected;
 													state->game.inventory_selected->type = ItemType::null;
 
@@ -1553,6 +1556,8 @@ extern "C" PROTOTYPE_UPDATE(update)
 												}
 												else
 												{
+													// @NOTE@ Item combine.
+
 													Item* battery;
 													Item* flashlight;
 													if (check_combine(&battery, ItemType::battery, &flashlight, ItemType::flashlight, &state->game.inventory[y][x], state->game.inventory_selected))
@@ -1582,18 +1587,33 @@ extern "C" PROTOTYPE_UPDATE(update)
 							}
 							else
 							{
+								// @NOTE@ Item drop.
+
 								Item* dropped = allocate_item(state);
 								*dropped = *state->game.inventory_selected;
 								dropped->position = state->game.lucia_position;
-								dropped->velocity = polar(state->game.lucia_angle) * rng(&state->seed) * 10.0f;
+								dropped->velocity = polar(state->game.lucia_angle + rng(&state->seed, -0.5f, 0.5f) * 1.0f) * rng(&state->seed, 1.5f, 5.0f);
 
 								state->game.inventory_selected->type = ItemType::null;
+
+								if (state->game.using_flashlight == state->game.inventory_selected)
+								{
+									state->game.using_flashlight = 0;
+								}
 							}
 						}
 						else
 						{
+							// @NOTE@ Item use.
+
 							switch (state->game.inventory_selected->type)
 							{
+								case ItemType::battery:
+								{
+									state->game.notification_message = "\"Some batteries. They feel cheap.\"";
+									state->game.notification_keytime = 1.0f;
+								} break;
+
 								case ItemType::flashlight:
 								{
 									if (state->game.inventory_selected == state->game.using_flashlight)
@@ -1748,8 +1768,8 @@ extern "C" PROTOTYPE_RENDER(render)
 						{
 							f32 baseline = FC_GetBaseline(state->main_font) * OPTION_SCALAR;
 							set_color(platform->renderer, { 1.0f, 1.0f, 1.0f });
-							draw_line(platform->renderer, { WIN_RES.x * 0.5f, WIN_RES.y * (0.37f + it_index * OPTION_SPACING) + baseline / 2.0f }, { WIN_RES.x * 0.9f, WIN_RES.y * (0.37f + it_index * OPTION_SPACING) + baseline / 2.0f });
-							draw_filled_circle(platform->renderer, { WIN_RES.x * lerp(0.5f, 0.9f, *slider_value), WIN_RES.y * (0.37f + it_index * OPTION_SPACING) + baseline / 2.0f }, 5);
+							draw_line(platform->renderer, vxx(vf2 { WIN_RES.x * 0.5f, WIN_RES.y * (0.37f + it_index * OPTION_SPACING) + baseline / 2.0f }), vxx(vf2 { WIN_RES.x * 0.9f, WIN_RES.y * (0.37f + it_index * OPTION_SPACING) + baseline / 2.0f }));
+							draw_filled_circle(platform->renderer, vxx(vf2 { WIN_RES.x * lerp(0.5f, 0.9f, *slider_value), WIN_RES.y * (0.37f + it_index * OPTION_SPACING) + baseline / 2.0f }), 5);
 						}
 					}
 
@@ -1964,24 +1984,32 @@ extern "C" PROTOTYPE_RENDER(render)
 						continue;
 					}
 
-					view_pixels[(VIEW_RES.y - 1 - y) * VIEW_RES.x + x] =
-						to_pixel
+					f32 flashlight_k =
+						clamp
 						(
-							mipmap_color_at(mm, d / 4.0f + MIPMAP_LEVELS * square(1.0f - fabsf(dot(ray, n))), uv)
-								* clamp
-									(
-										0.015f
-											- fabsf(dot(ray, n)) * 0.01f
-											+ ((state->game.lucia_position.z + ray.z * d) / WALL_HEIGHT + 0.95f) * 0.7f * (0.5f - 4.0f * cube(state->game.ceiling_lights_keytime - 0.5f))
-											+ clamp((dot(ray, state->game.flashlight_ray) - FLASHLIGHT_OUTER_CUTOFF) / (FLASHLIGHT_INNER_CUTOFF - FLASHLIGHT_OUTER_CUTOFF), 0.0f, 1.0f)
-												/ (square(d) + 0.1f)
-												* FLASHLIGHT_STRENGTH
-												* state->game.flashlight_activation
-											+ powf(clamp(1.0f - d / AMBIENT_LIGHT_RADIUS, 0.0f, 1.0f), AMBIENT_LIGHT_POW),
-										0.0f,
-										1.0f
-									)
+							clamp((dot(ray, state->game.flashlight_ray) - FLASHLIGHT_OUTER_CUTOFF) / (FLASHLIGHT_INNER_CUTOFF - FLASHLIGHT_OUTER_CUTOFF), 0.0f, 1.0f)
+								/ (square(d) + 0.1f)
+								* FLASHLIGHT_STRENGTH
+								* state->game.flashlight_activation,
+							0.0f,
+							1.0f
 						);
+
+					vf3 color =
+						mipmap_color_at(mm, d / 4.0f + MIPMAP_LEVELS * square(1.0f - fabsf(dot(ray, n))), uv)
+							* clamp
+								(
+									0.015f
+										- fabsf(dot(ray, n)) * 0.01f
+										+ ((state->game.lucia_position.z + ray.z * d) / WALL_HEIGHT + 0.95f) * 0.7f * (0.5f - 4.0f * cube(state->game.ceiling_lights_keytime - 0.5f))
+										+ flashlight_k
+										+ powf(clamp(1.0f - d / AMBIENT_LIGHT_RADIUS, 0.0f, 1.0f), AMBIENT_LIGHT_POW),
+									0.0f,
+									1.0f
+								)
+							+ vxx(powf(square(dot(ray, n)), 64) * square(dot(ray, state->game.flashlight_ray)) * 0.4f * flashlight_k);
+
+					view_pixels[(VIEW_RES.y - 1 - y) * VIEW_RES.x + x] = to_pixel({ clamp(color.x, 0.0f, 1.0f), clamp(color.y, 0.0f, 1.0f), clamp(color.z, 0.0f, 1.0f) });
 					state->game.view_inv_depth_buffer[x][y] = 1.0f / d;
 				}
 
@@ -2183,8 +2211,8 @@ extern "C" PROTOTYPE_RENDER(render)
 				);
 			}
 
-			set_color(platform->renderer, { 0.15f, 0.15f, 0.15f });
-			draw_rect(platform->renderer, vxx(vi2 { PADDING, VIEW_RES.y + PADDING * 2 }), vxx(HUD_RES));
+			set_color(platform->renderer, monochrome(0.1f));
+			draw_filled_rect(platform->renderer, { PADDING, VIEW_RES.y + PADDING * 2 }, HUD_RES);
 
 			blit_texture
 			(
@@ -2194,18 +2222,46 @@ extern "C" PROTOTYPE_RENDER(render)
 				{ HUD_RES.y, HUD_RES.y }
 			);
 
-			if (state->game.using_flashlight)
+			constexpr i32 BATTERY_LEFT_PADDING       = 10;
+			constexpr i32 BATTERY_TOP_BOTTOM_PADDING = 10;
+			constexpr i32 BATTERY_WIDTH              = 15;
+			constexpr i32 BATTERY_OUTLINE            = 2;
+
+			set_color(platform->renderer, monochrome(0.25f));
+			draw_filled_rect
+			(
+				platform->renderer,
+				{ PADDING + BATTERY_LEFT_PADDING - BATTERY_OUTLINE, WIN_RES.y - PADDING - HUD_RES.y + BATTERY_TOP_BOTTOM_PADDING - BATTERY_OUTLINE },
+				{ BATTERY_WIDTH + BATTERY_OUTLINE * 2, HUD_RES.y - BATTERY_TOP_BOTTOM_PADDING * 2 + BATTERY_OUTLINE * 2 }
+			);
+			draw_filled_rect
+			(
+				platform->renderer,
+				{ PADDING + BATTERY_LEFT_PADDING + BATTERY_WIDTH / 2 - BATTERY_OUTLINE * 2, WIN_RES.y - PADDING - HUD_RES.y + BATTERY_TOP_BOTTOM_PADDING - BATTERY_OUTLINE * 2 },
+				{ BATTERY_OUTLINE * 4, BATTERY_OUTLINE * 2 }
+			);
+
+			constexpr vf3 BATTERY_LEVEL_COLORS[] = { { 0.7f, 0.05f, 0.04f }, { 0.7f, 0.4f, 0.03f }, { 0.4f, 0.7f, 0.04f }, { 0.04f, 0.85f, 0.04f } };
+			FOR_ELEMS(level, BATTERY_LEVEL_COLORS)
 			{
-				draw_text
+				set_color
 				(
 					platform->renderer,
-					state->main_font,
-					{ 0.0f, 0.0f },
-					FC_ALIGN_LEFT,
-					0.25f,
-					{ 1.0f, 1.0f, 1.0f, 1.0f },
-					"Power : %.2f",
-					state->game.using_flashlight->flashlight.power
+					lerp
+					(
+						monochrome((level->x + level->y + level->z) / (3.0f + level_index)),
+						*level,
+						state->game.using_flashlight
+							? clamp((state->game.using_flashlight->flashlight.power - static_cast<f32>(level_index) / ARRAY_CAPACITY(BATTERY_LEVEL_COLORS)) * ARRAY_CAPACITY(BATTERY_LEVEL_COLORS), 0.0f, 1.0f)
+							: 0.0f
+					)
+				);
+
+				draw_filled_rect
+				(
+					platform->renderer,
+					{ PADDING + BATTERY_LEFT_PADDING, static_cast<i32>(WIN_RES.y - PADDING - HUD_RES.y + BATTERY_TOP_BOTTOM_PADDING + (HUD_RES.y - BATTERY_TOP_BOTTOM_PADDING * 2.0f) * (1.0f - (1.0f + level_index) / static_cast<i32>(ARRAY_CAPACITY(BATTERY_LEVEL_COLORS)))) },
+					{ BATTERY_WIDTH, (HUD_RES.y - BATTERY_TOP_BOTTOM_PADDING * 2) / static_cast<i32>(ARRAY_CAPACITY(BATTERY_LEVEL_COLORS)) }
 				);
 			}
 		} break;

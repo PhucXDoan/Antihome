@@ -104,6 +104,8 @@ internal constexpr vf3 cross(vf3 u, vf3 v) { return { u.y * v.z - u.z * v.y, u.z
 
 internal constexpr vf4 hadamard_product(vf4 u, vf4 v) { return { u.x * v.x, u.y * v.y, u.z * v.z, u.w * v.w }; }
 
+internal constexpr vf3 monochrome(f32 x) { return { x, x, x }; }
+
 internal f32 norm_sq(vf3 v) { return v.x * v.x + v.y * v.y + v.z * v.z; }
 internal f32 norm_sq(vf2 v) { return v.x * v.x + v.y * v.y            ; }
 
@@ -355,11 +357,6 @@ internal void set_color(SDL_Renderer* renderer, vf3 color)
 	);
 }
 
-internal void set_color(SDL_Renderer* renderer, f32 gray)
-{
-	set_color(renderer, { gray, gray, gray });
-}
-
 internal void draw_filled_rect(SDL_Renderer* renderer, vi2 position, vi2 dimensions)
 {
 	SDL_Rect rect = { position.x, position.y, dimensions.x, dimensions.y };
@@ -372,81 +369,74 @@ internal void draw_rect(SDL_Renderer* renderer, vi2 position, vi2 dimensions)
 	SDL_RenderDrawRect(renderer, &rect);
 }
 
-// @TODO@ DEPRECATE
-internal void draw_rect(SDL_Renderer* renderer, vf2 position, vf2 dimensions)
-{
-	SDL_Rect rect = { static_cast<i32>(position.x), static_cast<i32>(position.y), static_cast<i32>(dimensions.x), static_cast<i32>(dimensions.y) };
-	SDL_RenderFillRect(renderer, &rect);
-}
-
-internal void draw_line(SDL_Renderer* renderer, vf2 start, vf2 end)
+internal void draw_line(SDL_Renderer* renderer, vi2 start, vi2 end)
 {
 	ASSERT(fabs(start.x - end.x) + fabs(start.y - end.y) < 4096.0f);
-	SDL_RenderDrawLine(renderer, static_cast<i32>(start.x), static_cast<i32>(start.y), static_cast<i32>(end.x), static_cast<i32>(end.y));
+	SDL_RenderDrawLine(renderer, start.x, start.y, end.x, end.y);
 }
 
-internal void draw_circle(SDL_Renderer* renderer, vf2 center, f32 radius)
+internal void draw_circle(SDL_Renderer* renderer, vi2 center, i32 radius)
 {
-	ASSERT(radius < 256.0f);
+	ASSERT(radius < 256);
 
-	vf2 p     = { radius - 1.0f, 0.0f };
+	vi2 p     = { radius - 1, 0 };
 	vi2 t     = { 1, 1 };
-	f32 error = t.x - 2.0f * radius;
+	i32 error = t.x - 2 * radius;
 
 	while (p.x >= p.y)
 	{
-		SDL_RenderDrawPoint(renderer, static_cast<i32>(center.x + p.x), static_cast<i32>(center.y - p.y));
-		SDL_RenderDrawPoint(renderer, static_cast<i32>(center.x + p.x), static_cast<i32>(center.y + p.y));
-		SDL_RenderDrawPoint(renderer, static_cast<i32>(center.x - p.x), static_cast<i32>(center.y - p.y));
-		SDL_RenderDrawPoint(renderer, static_cast<i32>(center.x - p.x), static_cast<i32>(center.y + p.y));
-		SDL_RenderDrawPoint(renderer, static_cast<i32>(center.x + p.y), static_cast<i32>(center.y - p.x));
-		SDL_RenderDrawPoint(renderer, static_cast<i32>(center.x + p.y), static_cast<i32>(center.y + p.x));
-		SDL_RenderDrawPoint(renderer, static_cast<i32>(center.x - p.y), static_cast<i32>(center.y - p.x));
-		SDL_RenderDrawPoint(renderer, static_cast<i32>(center.x - p.y), static_cast<i32>(center.y + p.x));
+		SDL_RenderDrawPoint(renderer, center.x + p.x, center.y - p.y);
+		SDL_RenderDrawPoint(renderer, center.x + p.x, center.y + p.y);
+		SDL_RenderDrawPoint(renderer, center.x - p.x, center.y - p.y);
+		SDL_RenderDrawPoint(renderer, center.x - p.x, center.y + p.y);
+		SDL_RenderDrawPoint(renderer, center.x + p.y, center.y - p.x);
+		SDL_RenderDrawPoint(renderer, center.x + p.y, center.y + p.x);
+		SDL_RenderDrawPoint(renderer, center.x - p.y, center.y - p.x);
+		SDL_RenderDrawPoint(renderer, center.x - p.y, center.y + p.x);
 
-		if (error <= 0.0f)
+		if (error <= 0)
 		{
-			p.y   += 1.0f;
+			p.y   += 1;
 			error += t.y;
 			t.y   += 2;
 		}
 
-		if (error > 0.0f)
+		if (error > 0)
 		{
-			p.x   -= 1.0f;
+			p.x   -= 1;
 			t.x   += 2;
-			error += t.x - 2.0f * radius;
+			error += t.x - 2 * radius;
 		}
 	}
 }
 
-internal void draw_filled_circle(SDL_Renderer* renderer, vf2 center, f32 radius)
+internal void draw_filled_circle(SDL_Renderer* renderer, vi2 center, i32 radius)
 {
-	ASSERT(radius < 256.0f);
+	ASSERT(radius < 256);
 
-	vf2 p     = { radius - 1.0f, 0.0f };
+	vi2 p     = { radius - 1, 0 };
 	vi2 t     = { 1, 1 };
-	f32 error = t.x - 2.0f * radius;
+	i32 error = t.x - 2 * radius;
 
 	while (p.x >= p.y)
 	{
-		SDL_RenderDrawLine(renderer, static_cast<i32>(center.x - p.x), static_cast<i32>(center.y - p.y), static_cast<i32>(center.x + p.x), static_cast<i32>(center.y - p.y));
-		SDL_RenderDrawLine(renderer, static_cast<i32>(center.x - p.y), static_cast<i32>(center.y - p.x), static_cast<i32>(center.x + p.y), static_cast<i32>(center.y - p.x));
-		SDL_RenderDrawLine(renderer, static_cast<i32>(center.x - p.x), static_cast<i32>(center.y + p.y), static_cast<i32>(center.x + p.x), static_cast<i32>(center.y + p.y));
-		SDL_RenderDrawLine(renderer, static_cast<i32>(center.x - p.y), static_cast<i32>(center.y + p.x), static_cast<i32>(center.x + p.y), static_cast<i32>(center.y + p.x));
+		SDL_RenderDrawLine(renderer, center.x - p.x, center.y - p.y, center.x + p.x, center.y - p.y);
+		SDL_RenderDrawLine(renderer, center.x - p.y, center.y - p.x, center.x + p.y, center.y - p.x);
+		SDL_RenderDrawLine(renderer, center.x - p.x, center.y + p.y, center.x + p.x, center.y + p.y);
+		SDL_RenderDrawLine(renderer, center.x - p.y, center.y + p.x, center.x + p.y, center.y + p.x);
 
-		if (error <= 0.0f)
+		if (error <= 0)
 		{
-			p.y   += 1.0f;
+			p.y   += 1;
 			error += t.y;
 			t.y   += 2;
 		}
 
-		if (error > 0.0f)
+		if (error > 0)
 		{
-			p.x   -= 1.0f;
+			p.x   -= 1;
 			t.x   += 2;
-			error += t.x - 2.0f * radius;
+			error += t.x - 2 * radius;
 		}
 	}
 }
