@@ -486,7 +486,7 @@ internal void draw_boxed_text(SDL_Renderer* renderer, FC_Font* font, vi2 coordin
 	(
 		font,
 		renderer,
-		{ coordinates.x, coordinates.y, static_cast<i32>(dimensions.x / scalar), static_cast<i32>(dimensions.y / scalar) },
+		{ coordinates.x, coordinates.y, static_cast<i32>(dimensions.x / scalar), dimensions.y },
 		FC_MakeEffect
 		(
 			alignment,

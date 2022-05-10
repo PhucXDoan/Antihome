@@ -15,6 +15,7 @@
 #define persist  static
 #define global   static
 #define refering const auto&
+#define aliasing auto&
 
 #define MACRO_CONCAT__(X, Y)                            X##Y
 #define MACRO_CONCAT_(X, Y)                             MACRO_CONCAT__(X, Y)

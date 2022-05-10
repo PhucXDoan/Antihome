@@ -35,6 +35,18 @@ global constexpr f32 WALL_SPACING      = 3.0f;
 global constexpr i32 INVENTORY_DIM     = 30;
 global constexpr i32 INVENTORY_PADDING = 5;
 
+global constexpr struct { i32 slide_index; strlit text; } INTRO_DATA[] =
+	{
+		{ 0, "\"The subject of our debrief goes by the name of Lucia.```````````````` As always,```````` exposition will be the appetizer of the night.\"" },
+		{ 1, "Several chuckles were dispensed." },
+		{ 2, "\"It was a dark and stormy night.````.````.```` and Lucia here is stumbling around drunk,```````` although that's probably just how she walked.\"" },
+		{ 2, "\"Anyways,```` she must've been getting some bad hunger pangs```` 'cause she managed to stumble behind our tagged Thai restaurant.\"" },
+		{ 3, "\"MAN I LOVE PAD THAI!!\"" },
+		{ 4, "\"...\"" },
+		{ 5, "\".``.``.``.``.``.``\"" },
+		{ 6, "\"Ahu -`-`-`\"" }
+	};
+
 enum_loose (TitleMenuOption, i32)
 {
 	start,
@@ -177,8 +189,14 @@ struct State
 
 		struct
 		{
-			f32 keytime;
-			i32 index;
+			f32    entering_keytime;
+			bool32 is_exiting;
+			f32    exiting_keytime;
+			char   text[256];
+			i32    current_text_index;
+			i32    current_text_length;
+			i32    next_char_index;
+			f32    next_char_keytime;
 		} intro;
 	} title_menu;
 
@@ -197,6 +215,8 @@ struct State
 		SDL_Texture*         lucia_normal;
 		SDL_Texture*         lucia_wounded;
 		SDL_Texture*         view_texture;
+
+		f32                  entering_keytime;
 
 		f32                  view_inv_depth_buffer[VIEW_RES.x][VIEW_RES.y];
 		PathCoordinatesNode* available_path_coordinates_node;
@@ -1027,24 +1047,13 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 				case TitleMenuContext::intro:
 				{
-					if (state->title_menu.intro.keytime < 1.0f)
+					aliasing intro = state->title_menu.intro;
+
+					if (intro.is_exiting)
 					{
-						state->title_menu.intro.keytime += SECONDS_PER_UPDATE / 1.0f;
+						intro.exiting_keytime += SECONDS_PER_UPDATE / 2.0f;
 
-						if (state->title_menu.intro.keytime >= 1.0f)
-						{
-							state->title_menu.intro.keytime = 1.0f;
-						}
-					}
-
-					if (state->title_menu.intro.keytime == 1.0f)
-					{
-						if (PRESSED(Input::space) || PRESSED(Input::enter))
-						{
-							state->title_menu.intro.index += 1;
-						}
-
-						if (state->title_menu.intro.index == 4)
+						if (intro.exiting_keytime >= 1.0f)
 						{
 							boot_down_state(state);
 							state->context = StateContext::game;
@@ -1151,15 +1160,81 @@ extern "C" PROTOTYPE_UPDATE(update)
 							return UpdateCode::resume;
 						}
 					}
+					else
+					{
+						if (intro.entering_keytime < 1.0f)
+						{
+							intro.entering_keytime += SECONDS_PER_UPDATE / 1.0f;
 
-					state->title_menu.option_cursor_interpolated_index      = dampen(state->title_menu.option_cursor_interpolated_index, static_cast<f32>(state->title_menu.option_index), 8.0f, SECONDS_PER_UPDATE);
-					state->title_menu.option_cursor_interpolated_text_width = dampen(state->title_menu.option_cursor_interpolated_text_width, FC_GetWidth(state->major_font, TITLE_MENU_OPTIONS[state->title_menu.option_index]), 8.0f, SECONDS_PER_UPDATE);
+							if (intro.entering_keytime >= 1.0f)
+							{
+								intro.entering_keytime = 1.0f;
+							}
+
+							state->title_menu.option_cursor_interpolated_index      = dampen(state->title_menu.option_cursor_interpolated_index, static_cast<f32>(state->title_menu.option_index), 8.0f, SECONDS_PER_UPDATE);
+							state->title_menu.option_cursor_interpolated_text_width = dampen(state->title_menu.option_cursor_interpolated_text_width, FC_GetWidth(state->major_font, TITLE_MENU_OPTIONS[state->title_menu.option_index]), 8.0f, SECONDS_PER_UPDATE);
+						}
+
+						if (intro.entering_keytime == 1.0f)
+						{
+							auto iterate_text =
+								[&]()
+								{
+									if (INTRO_DATA[intro.current_text_index].text[intro.next_char_index] != '\0')
+									{
+										if (INTRO_DATA[intro.current_text_index].text[intro.next_char_index] != '`')
+										{
+											ASSERT(intro.current_text_length < ARRAY_CAPACITY(intro.text) - 1);
+											intro.text[intro.current_text_length] = INTRO_DATA[intro.current_text_index].text[intro.next_char_index];
+											intro.current_text_length += 1;
+											intro.text[intro.current_text_length] = '\0';
+										}
+
+										intro.next_char_index += 1;
+
+										return INTRO_DATA[intro.current_text_index].text[intro.next_char_index] != '\0';
+									}
+
+									return false;
+								};
+
+							for (intro.next_char_keytime += SECONDS_PER_UPDATE / 0.05f; intro.next_char_keytime >= 1.0f; intro.next_char_keytime -= 1.0f)
+							{
+								iterate_text();
+							}
+
+							if (PRESSED(Input::space) || PRESSED(Input::enter))
+							{
+								if (INTRO_DATA[intro.current_text_index].text[intro.next_char_index] == '\0')
+								{
+									if (intro.current_text_index == ARRAY_CAPACITY(INTRO_DATA) - 1)
+									{
+										intro.is_exiting = true;
+									}
+									else
+									{
+										intro.next_char_keytime    = 0.0f;
+										intro.current_text_index  += 1;
+										intro.current_text_length  = 0;
+										intro.next_char_index      = 0;
+										intro.text[0]              = '\0';
+									}
+								}
+								else
+								{
+									while (iterate_text());
+								}
+							}
+						}
+					}
 				} break;
 			}
 		} break;
 
 		case StateContext::game:
 		{
+			state->game.entering_keytime = clamp(state->game.entering_keytime + SECONDS_PER_UPDATE / 1.0f, 0.0f, 1.0f);
+
 			if (PRESSED(Input::escape))
 			{
 				boot_down_state(state);
@@ -1716,7 +1791,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 				}
 			}
 
-			state->game.heart_rate_bpm = 80.0f + 80.0f * (1.0f - state->game.lucia_stamina);
+			state->game.heart_rate_bpm = 63.5f + 80.0f * (1.0f - state->game.lucia_stamina);
 			if (state->game.heart_rate_bpm)
 			{
 				state->game.heart_rate_beat_keytime += SECONDS_PER_UPDATE * state->game.heart_rate_bpm / 60.0f;
@@ -1775,7 +1850,7 @@ extern "C" PROTOTYPE_RENDER(render)
 	{
 		case StateContext::title_menu:
 		{
-			if (state->title_menu.intro.keytime < 0.5f)
+			if (state->title_menu.intro.entering_keytime < 0.5f)
 			{
 				set_color(platform->renderer, { 0.05f, 0.1f, 0.15f, 1.0f });
 				SDL_RenderClear(platform->renderer);
@@ -1791,8 +1866,13 @@ extern "C" PROTOTYPE_RENDER(render)
 					"Antihome"
 				);
 			}
+			else
+			{
+				set_color(platform->renderer, monochrome(0.0f));
+				SDL_RenderClear(platform->renderer);
+			}
 
-			if (state->title_menu.context == TitleMenuContext::title_menu || state->title_menu.context == TitleMenuContext::intro && state->title_menu.intro.keytime < 0.5f)
+			if (state->title_menu.context == TitleMenuContext::title_menu || state->title_menu.context == TitleMenuContext::intro && state->title_menu.intro.entering_keytime < 0.5f)
 			{
 				constexpr f32 OPTION_SCALAR  = 0.425f;
 				constexpr f32 OPTION_SPACING = 0.1f;
@@ -1838,7 +1918,7 @@ extern "C" PROTOTYPE_RENDER(render)
 
 				if (state->title_menu.context == TitleMenuContext::intro)
 				{
-					set_color(platform->renderer, { 0.0f, 0.0f, 0.0f, state->title_menu.intro.keytime * 2.0f });
+					set_color(platform->renderer, { 0.0f, 0.0f, 0.0f, state->title_menu.intro.entering_keytime * 2.0f });
 					draw_filled_rect(platform->renderer, { 0, 0 }, WIN_RES);
 				}
 			}
@@ -1859,7 +1939,7 @@ extern "C" PROTOTYPE_RENDER(render)
 					1.0f,
 					{ 0.9f, 0.9f, 0.9f, 1.0f },
 					"%d",
-					state->title_menu.intro.index
+					INTRO_DATA[state->title_menu.intro.current_text_index].slide_index
 				);
 
 				constexpr i32 TEXT_PADDING = 5;
@@ -1870,15 +1950,20 @@ extern "C" PROTOTYPE_RENDER(render)
 					{ PADDING + TEXT_PADDING, WIN_RES.y - PADDING - HUD_RES.y + TEXT_PADDING },
 					HUD_RES - vi2 { TEXT_PADDING, TEXT_PADDING } * 2,
 					FC_ALIGN_LEFT,
-					1.0f,
+					0.8f,
 					{ 0.9f, 0.9f, 0.9f, 1.0f },
-					"Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua."
-					"Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat."
-					"Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur."
-					"Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum."
+					"%s",
+					state->title_menu.intro.text
 				);
 
-				set_color(platform->renderer, { 0.0f, 0.0f, 0.0f, 1.0f - (state->title_menu.intro.keytime - 0.5f) * 2.0f });
+				if (state->title_menu.intro.is_exiting)
+				{
+					set_color(platform->renderer, { 0.0f, 0.0f, 0.0f, state->title_menu.intro.exiting_keytime });
+				}
+				else
+				{
+					set_color(platform->renderer, { 0.0f, 0.0f, 0.0f, 1.0f - (state->title_menu.intro.entering_keytime - 0.5f) * 2.0f });
+				}
 				draw_filled_rect(platform->renderer, { 0, 0 }, WIN_RES);
 			}
 			else if (state->title_menu.context == TitleMenuContext::settings)
@@ -2413,18 +2498,6 @@ extern "C" PROTOTYPE_RENDER(render)
 				);
 			}
 
-			draw_text
-			(
-				platform->renderer,
-				state->major_font,
-				{ 0.0f, 0.0f },
-				FC_ALIGN_LEFT,
-				0.25f,
-				{ 1.0f, 1.0f, 1.0f, 1.0f },
-				"%f",
-				state->game.lucia_stamina
-			);
-
 			constexpr vi2 HEART_RATE_MONITOR_DIMENSIONS  = { 50, HUD_RES.y - 20 };
 			constexpr vi2 HEART_RATE_MONITOR_COORDINATES = vi2 { WIN_RES.x - PADDING - 10, WIN_RES.y - PADDING - 10 } - HEART_RATE_MONITOR_DIMENSIONS;
 			static_assert(ARRAY_CAPACITY(state->game.heart_rate_values) <= HEART_RATE_MONITOR_DIMENSIONS.x);
@@ -2445,6 +2518,9 @@ extern "C" PROTOTYPE_RENDER(render)
 					);
 				}
 			}
+
+			set_color(platform->renderer, { 0.0f, 0.0f, 0.0f, 1.0f - state->game.entering_keytime });
+			draw_filled_rect(platform->renderer, { 0, 0 }, WIN_RES);
 		} break;
 	}
 
