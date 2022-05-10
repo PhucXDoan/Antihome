@@ -1,5 +1,4 @@
 /* @TODO@
-	- Stamina and battery meter
 	- Varying Anomal types and behaviors
 	- Implemented document reading
 	- Map display
@@ -208,6 +207,9 @@ struct State
 		f32                  lucia_angle;
 		f32                  lucia_fov;
 		f32                  lucia_head_bob_keytime;
+		f32                  lucia_stamina;
+		f32                  lucia_sprint_keytime;
+		bool32               lucia_out_of_breath;
 
 		PathCoordinatesNode* monster_path;
 		vi2                  monster_path_goal;
@@ -1003,6 +1005,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 								state->game.lucia_position.xy = rng_open_position(state);
 								state->game.lucia_position.z  = LUCIA_HEIGHT;
 								state->game.lucia_fov         = TAU / 3.0f;
+								state->game.lucia_stamina     = 1.0f;
 
 								state->game.monster_position.xy = rng_open_position(state);
 
@@ -1133,10 +1136,34 @@ extern "C" PROTOTYPE_UPDATE(update)
 			if (HOLDING(Input::a)) { wasd.y += 1.0f; }
 			if (+wasd)
 			{
-				state->game.lucia_velocity += rotate(normalize(wasd), state->game.lucia_angle) * 2.0f;
+				constexpr f32 MIN_PORTION = 0.7f;
+				state->game.lucia_velocity += rotate(normalize(wasd), state->game.lucia_angle) * 2.0f * ((1.0f - powf(1.0f - state->game.lucia_stamina, 8) + MIN_PORTION) / (1.0f + MIN_PORTION));
+
 			}
 
-			state->game.lucia_velocity *= HOLDING(Input::shift) ? 0.75f : 0.6f;
+			if (+wasd && HOLDING(Input::shift) && !state->game.lucia_out_of_breath)
+			{
+				state->game.lucia_velocity       *= 0.75f;
+				state->game.lucia_stamina         = clamp(state->game.lucia_stamina - SECONDS_PER_UPDATE / 25.0f * (1.0f + (1.0f - square(1.0f - 2.0f * state->game.lucia_sprint_keytime)) * 4.0f), 0.0f, 1.0f);
+				state->game.lucia_sprint_keytime  = clamp(state->game.lucia_sprint_keytime + SECONDS_PER_UPDATE / 1.5f, 0.0f, 1.0f);
+				if (state->game.lucia_stamina == 0.0f)
+				{
+					state->game.lucia_out_of_breath = true;
+				}
+			}
+			else
+			{
+				state->game.lucia_velocity       *= 0.6f;
+				state->game.lucia_stamina         = clamp(state->game.lucia_stamina + SECONDS_PER_UPDATE / 10.0f * square(1.0f - state->game.lucia_sprint_keytime) * (state->game.lucia_out_of_breath ? 0.5f : 1.0f), 0.0f, 1.0f);
+				state->game.lucia_sprint_keytime  = clamp(state->game.lucia_sprint_keytime - SECONDS_PER_UPDATE / 1.0f, 0.0f, 1.0f);
+
+				if (state->game.lucia_out_of_breath && state->game.lucia_stamina > 0.5f)
+				{
+					state->game.lucia_out_of_breath = false;
+				}
+			}
+
+			DEBUG_printf("%u\n", state->game.lucia_out_of_breath);
 
 			FOR_ELEMS(it, state->game.item_buffer, state->game.item_count)
 			{
@@ -2264,6 +2291,18 @@ extern "C" PROTOTYPE_RENDER(render)
 					{ BATTERY_WIDTH, (HUD_RES.y - BATTERY_TOP_BOTTOM_PADDING * 2) / static_cast<i32>(ARRAY_CAPACITY(BATTERY_LEVEL_COLORS)) }
 				);
 			}
+
+			draw_text
+			(
+				platform->renderer,
+				state->main_font,
+				{ 0.0f, 0.0f },
+				FC_ALIGN_LEFT,
+				0.25f,
+				{ 1.0f, 1.0f, 1.0f, 1.0f },
+				"%f",
+				state->game.lucia_stamina
+			);
 		} break;
 	}
 
