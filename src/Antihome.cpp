@@ -72,12 +72,12 @@ enum_loose (SettingOption, i32)
 	CAPACITY
 };
 
-global constexpr strlit SETTING_OPTIONS[SettingOption::CAPACITY]
-{
-	"Master Volume",
-	"Brightness",
-	"Done"
-};
+global constexpr strlit SETTING_OPTIONS[SettingOption::CAPACITY] =
+	{
+		"Master Volume",
+		"Brightness",
+		"Done"
+	};
 
 struct RGB
 {
@@ -109,6 +109,13 @@ global constexpr strlit DEFAULT_ITEM_IMG_FILE_PATHS[ItemType::ITEM_COUNT] =
 		DATA_DIR "battery.png",
 		DATA_DIR "paper.png",
 		DATA_DIR "flashlight_off.png"
+	};
+
+global constexpr f32 ITEM_SPAWN_WEIGHTS[ItemType::ITEM_COUNT] =
+	{
+		10.0f,
+		5.0f,
+		1.0f
 	};
 
 struct Item
@@ -145,7 +152,8 @@ struct PathCoordinatesNode
 enum struct StateContext : u32
 {
 	title_menu,
-	game
+	game,
+	end
 };
 
 enum struct TitleMenuContext : u32
@@ -279,6 +287,11 @@ struct State
 
 		Item*                using_flashlight;
 	} game;
+
+	struct
+	{
+		f32 entering_keytime;
+	} end;
 };
 
 global constexpr struct { WallVoxel voxel; vf2 start; vf2 end; vf2 normal; } WALL_VOXEL_DATA[] =
@@ -1204,11 +1217,42 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 							state->game.monster_position.xy = rng_open_position(state);
 
-							FOR_RANGE(ARRAY_CAPACITY(state->game.item_buffer))
+							for (ItemType type = ItemType::ITEM_START; type != ItemType::ITEM_END; type = static_cast<ItemType>(+type + 1))
 							{
 								Item* item = allocate_item(state);
 								*item             = {};
-								item->type        = static_cast<ItemType>(rng(&state->seed, +ItemType::ITEM_START, +ItemType::ITEM_END));
+								item->type        = type;
+								item->position.xy = rng_open_position(state);
+								item->normal      = polar(state->time * 1.5f);
+							}
+
+							FOR_RANGE(ARRAY_CAPACITY(state->game.item_buffer) - state->game.item_count)
+							{
+								f32 total_weights = 0.0f;
+								FOR_ELEMS(w, ITEM_SPAWN_WEIGHTS)
+								{
+									total_weights += *w;
+								}
+
+								f32 n = rng(&state->seed, 0.0f, total_weights);
+								i32 i = -1;
+								total_weights = 0.0f;
+								FOR_ELEMS(w, ITEM_SPAWN_WEIGHTS)
+								{
+									if (IN_RANGE(n - total_weights, 0.0f, *w))
+									{
+										i = w_index;
+										break;
+									}
+									else
+									{
+										total_weights += *w;
+									}
+								}
+
+								Item* item = allocate_item(state);
+								*item             = {};
+								item->type        = static_cast<ItemType>(+ItemType::ITEM_START + i);
 								item->position.xy = rng_open_position(state);
 								item->normal      = polar(state->time * 1.5f);
 							}
@@ -1294,13 +1338,13 @@ extern "C" PROTOTYPE_UPDATE(update)
 		{
 			if (state->game.is_exiting)
 			{
-				state->game.exiting_keytime += SECONDS_PER_UPDATE / 0.5f;
+				state->game.exiting_keytime += SECONDS_PER_UPDATE / 1.5f;
 
 				if (state->game.exiting_keytime >= 1.0f)
 				{
 					boot_down_state(state);
-					state->context    = StateContext::title_menu;
-					state->title_menu = {};
+					state->context = StateContext::end;
+					state->end     = {};
 					boot_up_state(platform->renderer, state);
 
 					return UpdateCode::resume;
@@ -1625,7 +1669,9 @@ extern "C" PROTOTYPE_UPDATE(update)
 						if (it->voxel == state->game.door_wall_voxel)
 						{
 							vf2 door_position = (state->game.door_coordinates + (it->start + it->end) / 2.0f) * WALL_SPACING;
-							if (dot(ray_to_closest(state->game.lucia_position.xy, door_position), it->normal) < 0.0f && norm_sq(door_position - state->game.lucia_position.xy) < 4.0f)
+							vf2 ray_to_door   = ray_to_closest(state->game.lucia_position.xy, door_position);
+
+							if (dot(ray_to_door, it->normal) < 0.0f && norm_sq(ray_to_door) < 6.0f)
 							{
 								state->game.hand_on_door = true;
 								exists_hand_object       = true;
@@ -1944,6 +1990,24 @@ extern "C" PROTOTYPE_UPDATE(update)
 				else
 				{
 					state->game.ceiling_lights_keytime = clamp(state->game.ceiling_lights_keytime - SECONDS_PER_UPDATE / 0.5f, 0.0f, 1.0f);
+				}
+			}
+		} break;
+
+		case StateContext::end:
+		{
+			aliasing end = state->end;
+
+			end.entering_keytime = clamp(end.entering_keytime + SECONDS_PER_UPDATE / 1.0f, 0.0f, 1.0f);
+
+			if (end.entering_keytime == 1.0f)
+			{
+				if (PRESSED(Input::space))
+				{
+					boot_down_state(state);
+					state->context    = StateContext::title_menu;
+					state->title_menu = {};
+					boot_up_state(platform->renderer, state);
 				}
 			}
 		} break;
@@ -2671,6 +2735,27 @@ extern "C" PROTOTYPE_RENDER(render)
 				blackout = 1.0f - state->game.entering_keytime;
 			}
 		} break;
+
+		case StateContext::end:
+		{
+			aliasing end = state->end;
+
+			set_color(platform->renderer, { 0.1f, 0.05f, 0.05f, 1.0f });
+			SDL_RenderClear(platform->renderer);
+
+			draw_text
+			(
+				platform->renderer,
+				state->major_font,
+				{ WIN_RES.x * 0.5f, WIN_RES.y * 0.5f },
+				FC_ALIGN_CENTER,
+				1.0f,
+				{ 1.0f, 1.0f, 1.0f, 1.0f },
+				"END OF REPORT"
+			);
+
+			blackout = 1.0f - end.entering_keytime;
+		};
 	}
 
 	set_color(platform->renderer, { 0.0f, 0.0f, 0.0f, blackout });
