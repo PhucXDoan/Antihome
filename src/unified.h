@@ -16,6 +16,7 @@
 #define global   static
 #define refering const auto&
 #define aliasing auto&
+#define lambda   const auto
 
 #define MACRO_CONCAT__(X, Y)                            X##Y
 #define MACRO_CONCAT_(X, Y)                             MACRO_CONCAT__(X, Y)
@@ -277,6 +278,8 @@ internal constexpr vi4&   operator*=(vi4& v, i32 k) { return v = v * k; }
 internal constexpr vi2&   operator/=(vi2& v, i32 k) { return v = v / k; }
 internal constexpr vi3&   operator/=(vi3& v, i32 k) { return v = v / k; }
 internal constexpr vi4&   operator/=(vi4& v, i32 k) { return v = v / k; }
+
+internal constexpr vf3    vx3(vf2 v, f32 a) { return { v.x, v.y, a }; }
 
 internal constexpr vf3    vxx(f32 a) { return { a, a, a }; }
 

@@ -206,6 +206,7 @@ struct State
 		Mipmap               wall;
 		Mipmap               floor;
 		Mipmap               ceiling;
+		Mipmap               door;
 		ImgRGBA              monster_img;
 		ImgRGBA              hand_img;
 		ImgRGBA              flashlight_on_img;
@@ -235,6 +236,8 @@ struct State
 		f32                  flashlight_activation;
 		vf3                  flashlight_ray;
 		f32                  flashlight_keytime;
+		vi2                  door_coordinates;
+		WallVoxel            door_wall_voxel;
 
 		vf2                  lucia_velocity;
 		vf3                  lucia_position;
@@ -248,15 +251,15 @@ struct State
 
 		PathCoordinatesNode* monster_path;
 		vi2                  monster_path_goal;
-		Item*                hand_hovered_item;
 
 		vf3                  monster_position;
 		vf2                  monster_velocity;
 		vf2                  monster_normal;
 
 		vf3                  hand_position;
-		vf2                  hand_velocity;
 		vf2                  hand_normal;
+		bool32               hand_on_door;
+		Item*                hand_hovered_item;
 
 		i32                  item_count;
 		Item                 item_buffer[32];
@@ -830,6 +833,7 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 			state->game.wall              = init_mipmap(DATA_DIR "wall.png");
 			state->game.floor             = init_mipmap(DATA_DIR "floor.png");
 			state->game.ceiling           = init_mipmap(DATA_DIR "ceiling.png");
+			state->game.door              = init_mipmap(DATA_DIR "door.png");
 			state->game.monster_img       = init_img_rgba(DATA_DIR "monster.png");
 			state->game.hand_img          = init_img_rgba(DATA_DIR "hand.png");
 			state->game.flashlight_on_img = init_img_rgba(DATA_DIR "flashlight_on.png");
@@ -863,6 +867,7 @@ internal void boot_down_state(State* state)
 			deinit_mipmap(&state->game.wall);
 			deinit_mipmap(&state->game.floor);
 			deinit_mipmap(&state->game.ceiling);
+			deinit_mipmap(&state->game.door);
 			deinit_img_rgba(&state->game.monster_img);
 			deinit_img_rgba(&state->game.hand_img);
 			deinit_img_rgba(&state->game.flashlight_on_img);
@@ -1137,7 +1142,52 @@ extern "C" PROTOTYPE_UPDATE(update)
 								}
 							}
 
-							state->game.lucia_position.xy = rng_open_position(state);
+							{
+								memory_arena_checkpoint(&state->transient_arena);
+
+								struct DoorSpotNode
+								{
+									vi2           coordinates;
+									WallVoxel     wall_voxel;
+									DoorSpotNode* next_node;
+								};
+
+								DoorSpotNode* door_spot_node  = 0;
+								i32           door_spot_count = 0;
+
+								FOR_RANGE(y, MAP_DIM)
+								{
+									FOR_RANGE(x, MAP_DIM)
+									{
+										FOR_ELEMS(it, WALL_VOXEL_DATA)
+										{
+											if (+(state->game.wall_voxels[y][x] & it->voxel))
+											{
+												DoorSpotNode* node = memory_arena_push<DoorSpotNode>(&state->transient_arena);
+												node->coordinates  = { x, y };
+												node->wall_voxel   = it->voxel;
+												node->next_node    = door_spot_node;
+												door_spot_node     = node;
+												door_spot_count   += 1;
+											}
+										}
+									}
+								}
+
+								ASSERT(door_spot_node);
+
+								for (i32 i = rng(&state->seed, 0, door_spot_count); i; i -= 1)
+								{
+									door_spot_node = door_spot_node->next_node;
+								}
+
+								state->game.door_coordinates = door_spot_node->coordinates;
+								state->game.door_wall_voxel  = door_spot_node->wall_voxel;
+							}
+
+							// @TEMP@
+							// @TODO@ Patch graphical bug.
+							// state->game.lucia_position.xy = rng_open_position(state);
 							state->game.lucia_position.z  = LUCIA_HEIGHT;
 							state->game.lucia_fov         = TAU / 3.0f;
 							state->game.lucia_stamina     = 1.0f;
@@ -1172,7 +1222,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 						if (intro.entering_keytime == 1.0f)
 						{
-							auto iterate_text =
+							lambda iterate_text =
 								[&]()
 								{
 									if (INTRO_DATA[intro.current_text_index].text[intro.next_char_index] != '\0')
@@ -1198,7 +1248,11 @@ extern "C" PROTOTYPE_UPDATE(update)
 								iterate_text();
 							}
 
-							if (PRESSED(Input::space) || PRESSED(Input::enter))
+							if (PRESSED(Input::escape))
+							{
+								intro.is_exiting = true;
+							}
+							else if (PRESSED(Input::space) || PRESSED(Input::enter))
 							{
 								if (INTRO_DATA[intro.current_text_index].text[intro.next_char_index] == '\0')
 								{
@@ -1262,7 +1316,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 			if (+wasd && HOLDING(Input::shift) && !state->game.lucia_out_of_breath)
 			{
 				state->game.lucia_velocity       *= 0.75f;
-				state->game.lucia_stamina         = clamp(state->game.lucia_stamina - SECONDS_PER_UPDATE / 25.0f * (1.0f + (1.0f - square(1.0f - 2.0f * state->game.lucia_sprint_keytime)) * 4.0f), 0.0f, 1.0f);
+				state->game.lucia_stamina         = clamp(state->game.lucia_stamina - SECONDS_PER_UPDATE / 35.0f * (1.0f + (1.0f - square(1.0f - 2.0f * state->game.lucia_sprint_keytime)) * 4.0f), 0.0f, 1.0f);
 				state->game.lucia_sprint_keytime  = clamp(state->game.lucia_sprint_keytime + SECONDS_PER_UPDATE / 1.5f, 0.0f, 1.0f);
 				if (state->game.lucia_stamina == 0.0f)
 				{
@@ -1532,28 +1586,66 @@ extern "C" PROTOTYPE_UPDATE(update)
 			state->game.monster_position.z   = cosf(state->time * 3.0f) * 0.15f + WALL_HEIGHT / 2.0f;
 			state->game.monster_normal       = normalize(dampen(state->game.monster_normal, normalize(ray_to_closest(state->game.lucia_position.xy, state->game.monster_position.xy)), 1.0f, SECONDS_PER_UPDATE));
 
-			state->game.hand_hovered_item = 0;
+			bool32 exists_hand_object   = false;
+			vf3    hand_object_position = {};
 
-			f32 closest_distance = NAN;
-			FOR_ELEMS(item, state->game.item_buffer, state->game.item_count)
+			state->game.hand_on_door = false;
+			if (+state->game.door_wall_voxel)
 			{
-				f32 distance = norm(ray_to_closest(state->game.lucia_position.xy, item->position.xy));
-				if ((!state->game.hand_hovered_item && distance < 2.0f || closest_distance > distance) && exists_clear_way(state, state->game.lucia_position.xy, item->position.xy))
+				FOR_ELEMS(it, WALL_VOXEL_DATA)
 				{
-					state->game.hand_hovered_item = item;
-					closest_distance              = distance;
+					if (it->voxel == state->game.door_wall_voxel)
+					{
+						vf2 door_position = (state->game.door_coordinates + (it->start + it->end) / 2.0f) * WALL_SPACING;
+						if (dot(ray_to_closest(state->game.lucia_position.xy, door_position), it->normal) < 0.0f && norm_sq(door_position - state->game.lucia_position.xy) < 4.0f)
+						{
+							state->game.hand_on_door = true;
+							exists_hand_object       = true;
+							hand_object_position     = vx3(door_position + it->normal * 0.25f, WALL_HEIGHT / 2.0f);
+						}
+
+						break;
+					}
 				}
 			}
 
-			if (state->game.hand_hovered_item)
+			state->game.hand_hovered_item = 0;
+			if (!state->game.hand_on_door)
 			{
-				vf2 ray = ray_to_closest(state->game.hand_hovered_item->position.xy, state->game.lucia_position.xy);
+				f32 closest_distance = NAN;
+				FOR_ELEMS(item, state->game.item_buffer, state->game.item_count)
+				{
+					f32 distance = norm(ray_to_closest(state->game.lucia_position.xy, item->position.xy));
+					if ((!state->game.hand_hovered_item && distance < 2.0f || closest_distance > distance) && exists_clear_way(state, state->game.lucia_position.xy, item->position.xy))
+					{
+						state->game.hand_hovered_item = item;
+						closest_distance              = distance;
+					}
+				}
 
-				state->game.hand_position.xy = state->game.hand_hovered_item->position.xy + ray / 2.0f;
-				state->game.hand_position.z  = lerp(state->game.hand_hovered_item->position.z, state->game.lucia_position.z, 0.75f);
-				state->game.hand_normal      = normalize(ray) * 0.15f;
+				if (state->game.hand_hovered_item)
+				{
+					exists_hand_object   = true;
+					hand_object_position = state->game.hand_hovered_item->position;
+				}
+			}
 
-				if (PRESSED(Input::space))
+			if (exists_hand_object)
+			{
+				vf2 hand_object_ray = ray_to_closest(hand_object_position.xy, state->game.lucia_position.xy);
+
+				state->game.hand_position.xy = hand_object_position.xy + hand_object_ray / 2.0f;
+				state->game.hand_position.z  = lerp(hand_object_position.z, state->game.lucia_position.z, 0.75f);
+				state->game.hand_normal      = normalize(hand_object_ray) * 0.15f;
+			}
+
+			if (PRESSED(Input::space))
+			{
+				if (state->game.hand_on_door)
+				{
+					DEBUG_printf("Door open.\n"); // @TODO@
+				}
+				else if (state->game.hand_hovered_item)
 				{
 					Item* open_space = 0;
 					FOR_ELEMS(it, state->game.flat_inventory)
@@ -1577,10 +1669,6 @@ extern "C" PROTOTYPE_UPDATE(update)
 						state->game.notification_keytime = 1.0f;
 					}
 				}
-			}
-			else
-			{
-				state->game.hand_normal = { 0.0f, 0.0f };
 			}
 
 			if (state->game.using_flashlight)
@@ -2077,16 +2165,17 @@ extern "C" PROTOTYPE_RENDER(render)
 						step.x / ray_horizontal.x * WALL_SPACING,
 						step.y / ray_horizontal.y * WALL_SPACING
 					};
-				vi2 coordinates =
+				vi2 wall_coordinates =
 					{
 						static_cast<i32>(floorf(state->game.lucia_position.x / WALL_SPACING)),
 						static_cast<i32>(floorf(state->game.lucia_position.y / WALL_SPACING))
 					};
+				WallVoxel wall_voxel = {};
 				FOR_RANGE(MAP_DIM * MAP_DIM)
 				{
 					FOR_ELEMS(voxel_data, WALL_VOXEL_DATA)
 					{
-						if (+(*get_wall_voxel(state, coordinates) & voxel_data->voxel))
+						if (+(*get_wall_voxel(state, wall_coordinates) & voxel_data->voxel))
 						{
 							f32 distance;
 							f32 portion;
@@ -2098,8 +2187,8 @@ extern "C" PROTOTYPE_RENDER(render)
 									&portion,
 									state->game.lucia_position.xy,
 									ray_horizontal,
-									(coordinates + voxel_data->start) * WALL_SPACING,
-									(coordinates + voxel_data->end  ) * WALL_SPACING
+									(wall_coordinates + voxel_data->start) * WALL_SPACING,
+									(wall_coordinates + voxel_data->end  ) * WALL_SPACING
 								)
 								&& IN_RANGE(portion, 0.0f, 1.0f)
 								&& (!wall_exists || distance < wall_distance)
@@ -2109,6 +2198,7 @@ extern "C" PROTOTYPE_RENDER(render)
 								wall_normal   = voxel_data->normal;
 								wall_distance = distance;
 								wall_portion  = portion;
+								wall_voxel    = voxel_data->voxel;
 							}
 						}
 					}
@@ -2120,15 +2210,18 @@ extern "C" PROTOTYPE_RENDER(render)
 
 					if (t_max.x < t_max.y)
 					{
-						t_max.x       += t_delta.x;
-						coordinates.x += step.x;
+						t_max.x            += t_delta.x;
+						wall_coordinates.x += step.x;
 					}
 					else
 					{
-						t_max.y       += t_delta.y;
-						coordinates.y += step.y;
+						t_max.y            += t_delta.y;
+						wall_coordinates.y += step.y;
 					}
 				}
+
+				wall_coordinates.x = mod(wall_coordinates.x, MAP_DIM);
+				wall_coordinates.y = mod(wall_coordinates.y, MAP_DIM);
 
 				i32 starting_y       = 0;
 				i32 ending_y         = 0;
@@ -2174,7 +2267,38 @@ extern "C" PROTOTYPE_RENDER(render)
 						uv = { wall_portion, static_cast<f32>(y - starting_y) / (ending_y - starting_y) };
 						d  = sqrtf(square(wall_distance) + square(uv.y * WALL_HEIGHT - state->game.lucia_position.z));
 						n  = vxx(wall_normal, 0.0f);
-						mm = &state->game.wall;
+
+
+						if (wall_coordinates == state->game.door_coordinates && wall_voxel == state->game.door_wall_voxel && dot(wall_normal, ray.xy) < 0)
+						{
+							constexpr f32 SLASH_SPAN   = 0.53f;
+							constexpr f32 ALIGNED_SPAN = 0.75f;
+							if (+(state->game.door_wall_voxel & (WallVoxel::back_slash | WallVoxel::forward_slash)))
+							{
+								if (fabs(wall_portion - 0.5f) < SLASH_SPAN / 2.0f)
+								{
+									uv.x = (uv.x - (0.5f - SLASH_SPAN / 2.0f)) / SLASH_SPAN;
+									mm   = &state->game.door;
+								}
+								else
+								{
+									mm = &state->game.wall;
+								}
+							}
+							else if (fabs(wall_portion - 0.5f) < ALIGNED_SPAN / 2.0f)
+							{
+								uv.x = (uv.x - (0.5f - ALIGNED_SPAN / 2.0f)) / ALIGNED_SPAN;
+								mm   = &state->game.door;
+							}
+							else
+							{
+								mm = &state->game.wall;
+							}
+						}
+						else
+						{
+							mm = &state->game.wall;
+						}
 					}
 					else if (fabs(ray.z) > 0.0001f)
 					{
@@ -2263,7 +2387,7 @@ extern "C" PROTOTYPE_RENDER(render)
 				RenderScanNode* render_scan_node = 0;
 				memory_arena_checkpoint(&state->transient_arena);
 
-				auto intersect =
+				lambda intersect =
 					[&](ImgRGBA* img, vf3 position, vf2 normal)
 					{
 						f32 distance;
@@ -2304,7 +2428,11 @@ extern "C" PROTOTYPE_RENDER(render)
 					vf3 offset = vi3 { i % 3 - 1, i / 3 - 1, 0 } * MAP_DIM * WALL_SPACING;
 
 					intersect(&state->game.monster_img, offset + state->game.monster_position, state->game.monster_normal);
-					intersect(&state->game.hand_img, offset + state->game.hand_position, state->game.hand_normal);
+
+					if (state->game.hand_hovered_item || state->game.hand_on_door)
+					{
+						intersect(&state->game.hand_img, offset + state->game.hand_position, state->game.hand_normal);
+					}
 
 					FOR_ELEMS(item, state->game.item_buffer, state->game.item_count)
 					{
