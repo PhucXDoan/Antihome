@@ -102,6 +102,11 @@ global constexpr f32 ITEM_SPAWN_WEIGHTS[ItemType::ITEM_COUNT] =
 		1.0f
 	};
 
+global constexpr struct { f32 min_scalar; f32 max_scalar; strlit file_path; } PAPER_DATA[] =
+	{
+		{ 0.15f, 0.75f, DATA_DIR "document.png" }
+	};
+
 struct Item
 {
 	ItemType  type;
@@ -168,9 +173,9 @@ struct State
 
 		TitleMenuContext context;
 
-		i32 option_index;
-		f32 option_index_repeated_movement_countdown;
-		f32 option_cursor_interpolated_index;
+		i32              option_index;
+		f32              option_index_repeated_movement_countdown;
+		f32              option_cursor_interpolated_index;
 
 		struct
 		{
@@ -203,7 +208,7 @@ struct State
 		ImgRGBA              hand_img;
 		ImgRGBA              flashlight_on_img;
 		ImgRGBA              default_item_imgs[ItemType::ITEM_COUNT];
-		ImgRGBA              paper_imgs[1];
+		ImgRGBA              paper_imgs[ARRAY_CAPACITY(PAPER_DATA)];
 		SDL_Texture*         lucia_haunted;
 		SDL_Texture*         lucia_healed;
 		SDL_Texture*         lucia_hit;
@@ -282,6 +287,7 @@ struct State
 		f32                  flashlight_keytime;
 		vf2                  paper_velocity;
 		vf2                  paper_delta_position;
+		i32                  paper_index;
 		f32                  paper_scalar_velocity;
 		f32                  paper_scalar;
 	} game;
@@ -763,7 +769,10 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 			state->game.hand_img          = init_img_rgba(DATA_DIR "hand.png");
 			state->game.flashlight_on_img = init_img_rgba(DATA_DIR "flashlight_on.png");
 
-			state->game.paper_imgs[0] = init_img_rgba(DATA_DIR "document.png");
+			FOR_ELEMS(it, state->game.paper_imgs)
+			{
+				*it = init_img_rgba(PAPER_DATA[it_index].file_path);
+			}
 
 			FOR_ELEMS(it, DEFAULT_ITEM_IMG_FILE_PATHS)
 			{
@@ -1275,7 +1284,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 				if (state->game.inventory_visibility || state->game.holding.paper)
 				{
-					state->game.interacting_cursor_velocity += platform->cursor_delta * 8.0f;
+					state->game.interacting_cursor_velocity += platform->cursor_delta * 16.0f;
 					state->game.interacting_cursor_velocity *= 0.3f;
 
 					state->game.interacting_cursor   += state->game.interacting_cursor_velocity * SECONDS_PER_UPDATE;
@@ -1300,7 +1309,6 @@ extern "C" PROTOTYPE_UPDATE(update)
 									fabsf(VIEW_RES.y / 2.0f - (y + (1.0f - ARRAY_CAPACITY(state->game.inventory   )) / 2.0f) * (INVENTORY_DIM + INVENTORY_PADDING) - state->game.interacting_cursor.y) < INVENTORY_DIM / 2.0f
 								)
 								{
-												DEBUG_printf("%d %d\n", x, y);
 									if (state->game.inventory[y][x].type != ItemType::null)
 									{
 										state->game.inventory_selected = &state->game.inventory[y][x];
@@ -1439,9 +1447,12 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 									case ItemType::paper:
 									{
-										state->game.holding.paper        = state->game.inventory_selected;
-										state->game.paper_scalar         = 1.0f;
-										state->game.paper_delta_position = { 0.0f, 0.0f };
+										state->game.holding.paper         = state->game.inventory_selected;
+										state->game.paper_velocity        = { 0.0f, 0.0f };
+										state->game.paper_delta_position  = { 0.0f, 0.0f };
+										state->game.paper_index           = 0; // @TEMP@
+										state->game.paper_scalar_velocity = 0.0f;
+										state->game.paper_scalar          = PAPER_DATA[state->game.paper_index].min_scalar;
 									} break;
 
 									case ItemType::flashlight:
@@ -1472,63 +1483,97 @@ extern "C" PROTOTYPE_UPDATE(update)
 				}
 				else if (state->game.holding.paper)
 				{
-					state->game.paper_scalar_velocity += platform->scroll * 0.3f;
-					state->game.paper_scalar_velocity *= 0.5f;
-					state->game.paper_scalar           = state->game.paper_scalar + state->game.paper_scalar_velocity * state->game.paper_scalar * SECONDS_PER_UPDATE;
-
-					if (0.1f > state->game.paper_scalar || state->game.paper_scalar > 4.0f)
+					if
+					(
+						PRESSED(Input::left_mouse) &&
+						(
+							state->game.interacting_cursor.x < VIEW_RES.x / 2.0f + (state->game.paper_delta_position.x - state->game.paper_imgs[state->game.paper_index].dim.x / 2.0f) * state->game.paper_scalar ||
+							state->game.interacting_cursor.x > VIEW_RES.x / 2.0f + (state->game.paper_delta_position.x + state->game.paper_imgs[state->game.paper_index].dim.x / 2.0f) * state->game.paper_scalar ||
+							state->game.interacting_cursor.y < VIEW_RES.y / 2.0f + (state->game.paper_delta_position.y - state->game.paper_imgs[state->game.paper_index].dim.y / 2.0f) * state->game.paper_scalar ||
+							state->game.interacting_cursor.y > VIEW_RES.y / 2.0f + (state->game.paper_delta_position.y + state->game.paper_imgs[state->game.paper_index].dim.y / 2.0f) * state->game.paper_scalar
+						)
+					)
 					{
-						state->game.paper_scalar          = clamp(state->game.paper_scalar, 0.1f, 4.0f);
-						state->game.paper_scalar_velocity = 0.0f;
-					}
-
-					if (HOLDING(Input::left_mouse))
-					{
-						state->game.paper_velocity = state->game.interacting_cursor_velocity;
+						state->game.holding.paper = 0;
 					}
 					else
 					{
-						state->game.paper_velocity *= 0.5f;
-					}
+						if (HOLDING(Input::left_mouse))
+						{
+							state->game.paper_velocity = state->game.interacting_cursor_velocity;
+						}
+						else
+						{
+							state->game.paper_velocity *= 0.5f;
+						}
 
-					state->game.paper_delta_position += state->game.paper_velocity / state->game.paper_scalar * SECONDS_PER_UPDATE;
+						state->game.paper_scalar_velocity += platform->scroll * 0.8f;
+						state->game.paper_scalar_velocity *= 0.5f;
+						state->game.paper_scalar           = state->game.paper_scalar + state->game.paper_scalar_velocity * state->game.paper_scalar * SECONDS_PER_UPDATE;
+
+						if (PAPER_DATA[state->game.paper_index].min_scalar > state->game.paper_scalar || state->game.paper_scalar > PAPER_DATA[state->game.paper_index].max_scalar)
+						{
+							state->game.paper_scalar          = clamp(state->game.paper_scalar, PAPER_DATA[state->game.paper_index].min_scalar, PAPER_DATA[state->game.paper_index].max_scalar);
+							state->game.paper_scalar_velocity = 0.0f;
+						}
+
+						state->game.paper_delta_position += state->game.paper_velocity / state->game.paper_scalar * SECONDS_PER_UPDATE;
+
+						constexpr f32 PAPER_MARGIN = 25.0f;
+						vf2 region =
+							vf2 {
+								(VIEW_RES.x + state->game.paper_imgs[state->game.paper_index].dim.x * state->game.paper_scalar) / 2.0f - PAPER_MARGIN,
+								(VIEW_RES.y + state->game.paper_imgs[state->game.paper_index].dim.y * state->game.paper_scalar) / 2.0f - PAPER_MARGIN
+							} / state->game.paper_scalar;
+
+						if (fabsf(state->game.paper_delta_position.x) > region.x)
+						{
+							state->game.paper_delta_position.x = clamp(state->game.paper_delta_position.x, -region.x, region.x);
+							state->game.paper_velocity.x       = 0.0f;
+						}
+						if (fabsf(state->game.paper_delta_position.y) > region.y)
+						{
+							state->game.paper_delta_position.y = clamp(state->game.paper_delta_position.y, -region.y, region.y);
+							state->game.paper_velocity.y       = 0.0f;
+						}
+					}
 				}
 				else
 				{
 					state->game.lucia_angle_velocity -= platform->cursor_delta.x * 0.01f / SECONDS_PER_UPDATE;
 					state->game.lucia_angle_velocity *= 0.4f;
 					state->game.lucia_angle           = mod(state->game.lucia_angle + state->game.lucia_angle_velocity * SECONDS_PER_UPDATE, TAU);
+				}
 
-					if (PRESSED(Input::space))
+				if (PRESSED(Input::space))
+				{
+					if (state->game.hand_hovered_item)
 					{
-						if (state->game.hand_on_door)
+						Item* open_space = 0;
+						FOR_ELEMS(it, state->game.flat_inventory)
 						{
-							state->game.is_exiting = true;
-						}
-						else if (state->game.hand_hovered_item)
-						{
-							Item* open_space = 0;
-							FOR_ELEMS(it, state->game.flat_inventory)
+							if (it->type == ItemType::null)
 							{
-								if (it->type == ItemType::null)
-								{
-									open_space = it;
-									break;
-								}
+								open_space = it;
+								break;
 							}
+						}
 
-							if (open_space)
-							{
-								*open_space = *state->game.hand_hovered_item;
-								deallocate_item(state, state->game.hand_hovered_item);
-								state->game.hand_hovered_item = 0;
-							}
-							else
-							{
-								state->game.notification_message = "\"I can't carry anymore.\"";
-								state->game.notification_keytime = 1.0f;
-							}
+						if (open_space)
+						{
+							*open_space = *state->game.hand_hovered_item;
+							deallocate_item(state, state->game.hand_hovered_item);
+							state->game.hand_hovered_item = 0;
 						}
+						else
+						{
+							state->game.notification_message = "\"I can't carry anymore.\"";
+							state->game.notification_keytime = 1.0f;
+						}
+					}
+					else if (state->game.hand_on_door)
+					{
+						state->game.is_exiting = true;
 					}
 				}
 
@@ -1833,7 +1878,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 				vf3    hand_object_position = {};
 
 				state->game.hand_on_door = false;
-				if (+state->game.door_wall_voxel)
+				if (+state->game.door_wall_voxel && !state->game.holding.paper)
 				{
 					FOR_ELEMS(it, WALL_VOXEL_DATA)
 					{
@@ -1861,7 +1906,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 					FOR_ELEMS(item, state->game.item_buffer, state->game.item_count)
 					{
 						f32 distance = norm(ray_to_closest(state->game.lucia_position.xy, item->position.xy));
-						if ((!state->game.hand_hovered_item && distance < 2.0f || closest_distance > distance) && exists_clear_way(state, state->game.lucia_position.xy, item->position.xy))
+						if ((!state->game.hand_hovered_item && distance < 1.5f || closest_distance > distance) && exists_clear_way(state, state->game.lucia_position.xy, item->position.xy))
 						{
 							state->game.hand_hovered_item = item;
 							closest_distance              = distance;
@@ -1881,7 +1926,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 					state->game.hand_position.xy = hand_object_position.xy + hand_object_ray / 2.0f;
 					state->game.hand_position.z  = lerp(hand_object_position.z, state->game.lucia_position.z, 0.75f);
-					state->game.hand_normal      = normalize(hand_object_ray) * 0.15f;
+					state->game.hand_normal      = normalize(hand_object_ray);
 				}
 
 				if (state->game.holding.flashlight)
@@ -2444,6 +2489,8 @@ extern "C" PROTOTYPE_RENDER(render)
 					vf2             normal;
 					f32             distance;
 					f32             portion;
+					i32             starting_y;
+					i32             ending_y;
 					RenderScanNode* next_node;
 				};
 
@@ -2451,7 +2498,7 @@ extern "C" PROTOTYPE_RENDER(render)
 				memory_arena_checkpoint(&state->transient_arena);
 
 				lambda intersect =
-					[&](ImgRGBA* img, vf3 position, vf2 normal)
+					[&](ImgRGBA* img, vf3 position, vf2 normal, vf2 dimensions)
 					{
 						f32 distance;
 						f32 portion;
@@ -2463,8 +2510,8 @@ extern "C" PROTOTYPE_RENDER(render)
 								&portion,
 								state->game.lucia_position.xy,
 								ray_horizontal,
-								position.xy - rotate90(normal) / 2.0f,
-								position.xy + rotate90(normal) / 2.0f
+								position.xy - rotate90(normal) * dimensions.x / 2.0f,
+								position.xy + rotate90(normal) * dimensions.x / 2.0f
 							)
 							&& IN_RANGE(portion, 0.0f, 1.0f)
 						)
@@ -2476,12 +2523,14 @@ extern "C" PROTOTYPE_RENDER(render)
 							}
 
 							RenderScanNode* new_node = memory_arena_push<RenderScanNode>(&state->transient_arena);
-							new_node->img       = img;
-							new_node->position  = position;
-							new_node->normal    = normal;
-							new_node->distance  = distance;
-							new_node->portion   = portion;
-							new_node->next_node = *post_node;
+							new_node->img        = img;
+							new_node->position   = position;
+							new_node->normal     = normal;
+							new_node->distance   = distance;
+							new_node->portion    = portion;
+							new_node->next_node  = *post_node;
+							new_node->starting_y = static_cast<i32>(VIEW_RES.y / 2.0f + HORT_TO_VERT_K / state->game.lucia_fov * (position.z - 0.5f * dimensions.y - state->game.lucia_position.z) / (distance + 0.1f));
+							new_node->ending_y   = static_cast<i32>(VIEW_RES.y / 2.0f + HORT_TO_VERT_K / state->game.lucia_fov * (position.z + 0.5f * dimensions.y - state->game.lucia_position.z) / (distance + 0.1f));
 							*post_node = new_node;
 						}
 					};
@@ -2490,32 +2539,30 @@ extern "C" PROTOTYPE_RENDER(render)
 				{
 					vf3 offset = vi3 { i % 3 - 1, i / 3 - 1, 0 } * MAP_DIM * WALL_SPACING;
 
-					intersect(&state->game.monster_img, offset + state->game.monster_position, state->game.monster_normal);
+					intersect(&state->game.monster_img, offset + state->game.monster_position, state->game.monster_normal, { 1.0f, 1.0f });
 
 					if (state->game.hand_hovered_item || state->game.hand_on_door)
 					{
-						intersect(&state->game.hand_img, offset + state->game.hand_position, state->game.hand_normal);
+						intersect(&state->game.hand_img, offset + state->game.hand_position, state->game.hand_normal, { 0.05f, 0.05f });
 					}
 
 					FOR_ELEMS(item, state->game.item_buffer, state->game.item_count)
 					{
-						intersect(&state->game.default_item_imgs[+item->type - +ItemType::ITEM_START], offset + item->position, item->normal / 2.0f);
+						intersect(&state->game.default_item_imgs[+item->type - +ItemType::ITEM_START], offset + item->position, item->normal, { 0.25f, 0.25f });
 					}
 				}
 
 				for (RenderScanNode* node = render_scan_node; node; node = node->next_node)
 				{
-					i32 scan_starting_y       = static_cast<i32>(VIEW_RES.y / 2.0f + HORT_TO_VERT_K / state->game.lucia_fov * (node->position.z - norm(node->normal) / 2.0f - state->game.lucia_position.z) / (node->distance + 0.1f));
-					i32 scan_ending_y         = static_cast<i32>(VIEW_RES.y / 2.0f + HORT_TO_VERT_K / state->game.lucia_fov * (node->position.z + norm(node->normal) / 2.0f - state->game.lucia_position.z) / (node->distance + 0.1f));
-					i32 scan_pixel_starting_y = MAXIMUM(0, scan_starting_y);
-					i32 scan_pixel_ending_y   = MINIMUM(scan_ending_y, VIEW_RES.y);
+					i32 scan_pixel_starting_y = clamp(node->starting_y, 0, VIEW_RES.y);
+					i32 scan_pixel_ending_y   = clamp(node->ending_y  , 0, VIEW_RES.y);
 
 					FOR_RANGE(y, scan_pixel_starting_y, scan_pixel_ending_y)
 					{
 						vf4* scan_pixel =
 							node->img->rgba
 								+ static_cast<i32>(node->portion * node->img->dim.x) * node->img->dim.y
-								+ static_cast<i32>(static_cast<f32>(y - scan_starting_y) / (scan_ending_y - scan_starting_y) * node->img->dim.y);
+								+ static_cast<i32>((static_cast<f32>(y) - node->starting_y) / (node->ending_y - node->starting_y) * (node->img->dim.y - 1.0f));
 
 						if (scan_pixel->w)
 						{
