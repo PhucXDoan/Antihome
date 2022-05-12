@@ -2,7 +2,6 @@
 	- Varying Anomal types and behaviors
 	- Map display
 	- Sound effects
-	- End screen
 	- Fleshed out screens
 
 	- Handle disconnected initial and updated values
@@ -77,20 +76,6 @@ global constexpr strlit SETTING_OPTIONS[SettingOption::CAPACITY] =
 		"Brightness",
 		"Done"
 	};
-
-struct RGB
-{
-	u8 r;
-	u8 g;
-	u8 b;
-	u8 PADDING_;
-};
-
-struct Mipmap
-{
-	vi2  base_dim;
-	RGB* data;
-};
 
 enum_loose (ItemType, i32)
 {
@@ -230,7 +215,6 @@ struct State
 		bool32               is_exiting;
 		f32                  exiting_keytime;
 
-		f32                  view_inv_depth_buffer[VIEW_RES.x][VIEW_RES.y];
 		PathCoordinatesNode* available_path_coordinates_node;
 		strlit               notification_message;
 		f32                  notification_keytime;
@@ -270,8 +254,9 @@ struct State
 		i32                  item_count;
 		Item                 item_buffer[32];
 
+		vf2                  interacting_cursor_velocity;
+		vf2                  interacting_cursor;
 		bool32               inventory_visibility;
-		vf2                  inventory_cursor;
 		vf2                  inventory_click_position;
 		Item*                inventory_selected;
 		bool32               inventory_grabbing;
@@ -315,24 +300,6 @@ global constexpr struct { WallVoxel voxel; vf2 start; vf2 end; vf2 normal; } WAL
 		{ WallVoxel::forward_slash, { 0.0f, 0.0f }, { 1.0f, 1.0f }, { -INVSQRT2,  INVSQRT2 } }
 	};
 
-internal constexpr u32 to_pixel(vf3 color)
-{
-	return
-		(static_cast<u8>(color.x * 255.0f) << 24) |
-		(static_cast<u8>(color.y * 255.0f) << 16) |
-		(static_cast<u8>(color.z * 255.0f) <<  8);
-}
-
-internal constexpr vf3 to_color(u32 pixel)
-{
-	return
-	{
-		static_cast<f32>((pixel >> 24) & 0xFF) / 255.0f,
-		static_cast<f32>((pixel >> 16) & 0xFF) / 255.0f,
-		static_cast<f32>((pixel >>  8) & 0xFF) / 255.0f
-	};
-}
-
 internal ImgRGBA* get_corresponding_item_img(State* state, Item* item)
 {
 	switch (item->type)
@@ -348,90 +315,10 @@ internal ImgRGBA* get_corresponding_item_img(State* state, Item* item)
 			{
 				return &state->game.flashlight_on_img;
 			}
-			else
-			{
-			return &state->game.default_item_imgs[+item->type - +ItemType::ITEM_START];
-			}
-		} break;
-
-		default:
-		{
-			return &state->game.default_item_imgs[+item->type - +ItemType::ITEM_START];
 		} break;
 	}
-}
 
-internal Mipmap init_mipmap(strlit file_path)
-{
-	Mipmap mipmap;
-
-	vi2  absolute_dim;
-	u32* stbimg = reinterpret_cast<u32*>(stbi_load(file_path, &absolute_dim.x, &absolute_dim.y, 0, STBI_rgb_alpha));
-	DEFER { stbi_image_free(stbimg); };
-	ASSERT(stbimg);
-
-	mipmap.base_dim = { absolute_dim.x * 2 / 3, absolute_dim.y };
-	mipmap.data     = reinterpret_cast<RGB*>(malloc((mipmap.base_dim.x * mipmap.base_dim.y * 2 - mipmap.base_dim.x * mipmap.base_dim.y * 2 / (1 << MIPMAP_LEVELS)) * sizeof(RGB)));
-
-	vi2  stbimg_coordinates = { 0, 0 };
-	RGB* mipmap_pixel = mipmap.data;
-	FOR_RANGE(i, MIPMAP_LEVELS)
-	{
-		FOR_RANGE(ix, mipmap.base_dim.x / (1 << i))
-		{
-			FOR_RANGE(iy, mipmap.base_dim.y / (1 << i))
-			{
-				u32 stbimg_pixel = *(stbimg + (stbimg_coordinates.y + iy) * absolute_dim.x + stbimg_coordinates.x + ix);
-				*mipmap_pixel++ =
-					{
-						static_cast<u8>(stbimg_pixel >>  0 & 0xFF),
-						static_cast<u8>(stbimg_pixel >>  8 & 0xFF),
-						static_cast<u8>(stbimg_pixel >> 16 & 0xFF)
-					};
-			}
-		}
-
-		stbimg_coordinates = { mipmap.base_dim.x, mipmap.base_dim.y - mipmap.base_dim.y / (1 << i) };
-	}
-
-	return mipmap;
-}
-
-internal void deinit_mipmap(Mipmap* mipmap)
-{
-	free(mipmap->data);
-}
-
-internal vf3 mipmap_color_at(Mipmap* mipmap, f32 level, vf2 uv)
-{
-	ASSERT(0.0f <= uv.x && uv.x <= 1.0f);
-	ASSERT(0.0f <= uv.y && uv.y <= 1.0f);
-
-	i32 l = static_cast<i32>(clamp(level, 0.0f, MIPMAP_LEVELS - 1.0f));
-	RGB p =
-		*(
-			mipmap->data
-				+ mipmap->base_dim.x * mipmap->base_dim.y * 4 / 3 - mipmap->base_dim.x * mipmap->base_dim.y * 4 / 3 / (1 << (l * 2))
-				+ static_cast<i32>(uv.x * (mipmap->base_dim.x / (1 << l) - 1.0f)) * (mipmap->base_dim.y / (1 << l))
-				+ static_cast<i32>((1.0f - uv.y) * (mipmap->base_dim.y / (1 << l) - 1.0f))
-		);
-
-	if (IN_RANGE(level, 0.0f, MIPMAP_LEVELS - 1.0f))
-	{
-		RGB q =
-			*(
-				mipmap->data
-					+ mipmap->base_dim.x * mipmap->base_dim.y * 4 / 3 - mipmap->base_dim.x * mipmap->base_dim.y * 4 / 3 / (1 << ((l + 1) * 2))
-					+ static_cast<i32>(uv.x * (mipmap->base_dim.x / (1 << (l + 1)) - 1.0f)) * (mipmap->base_dim.y / (1 << (l + 1)))
-					+ static_cast<i32>((1.0f - uv.y) * (mipmap->base_dim.y / (1 << (l + 1)) - 1.0f))
-			);
-
-		return vf3 { lerp(p.r, q.r, level - l), lerp(p.g, q.g, level - l), lerp(p.b, q.b, level - l) } / 255.0f;
-	}
-	else
-	{
-		return vf3 { p.r / 255.0f, p.g / 255.0f, p.b / 255.0f };
-	}
+	return &state->game.default_item_imgs[+item->type - +ItemType::ITEM_START];
 }
 
 internal bool32 check_combine(Item** out_a, ItemType a_type, Item** out_b, ItemType b_type, Item* fst, Item* snd)
@@ -465,15 +352,16 @@ internal void draw_img(u32* view_pixels, ImgRGBA* img, vi2 position, i32 dimensi
 					+ static_cast<i32>(static_cast<f32>(x - position.x) / dimension * img->dim.x) * img->dim.y
 					+ static_cast<i32>((1.0f - static_cast<f32>(y - position.y) / dimension) * (img->dim.y - 1.0f));
 
-			view_pixels[y * VIEW_RES.x + x] = to_pixel(lerp(to_color(view_pixels[y * VIEW_RES.x + x]), rgba->xyz, rgba->w));
+			view_pixels[y * VIEW_RES.x + x] = pack_color(lerp(unpack_color(view_pixels[y * VIEW_RES.x + x]), rgba->xyz, rgba->w));
 		}
 	}
 }
 
 internal void draw_img_box(u32* view_pixels, ImgRGBA* img, vf3 border_color, vi2 position, i32 dimension)
 {
-	u32 border = to_pixel(border_color);
-	constexpr u32 BG     = to_pixel({ 0.2f, 0.2f, 0.2f });
+	constexpr u32 BG = pack_color({ 0.2f, 0.2f, 0.2f });
+
+	u32 border = pack_color(border_color);
 
 	FOR_RANGE(i, dimension)
 	{
@@ -678,7 +566,6 @@ internal void deallocate_item(State* state, Item* item)
 internal vf2 rng_open_position(State* state)
 {
 	// @TODO@ Clean up?
-
 	vi2 coordinates = { rng(&state->seed, 0, MAP_DIM), rng(&state->seed, 0, MAP_DIM) };
 
 	constexpr f32 SPAWN_PADDING = 0.1f;
@@ -883,12 +770,12 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 				state->game.default_item_imgs[it_index] = init_img_rgba(*it);
 			}
 
-			state->game.lucia_haunted    = IMG_LoadTexture(renderer, DATA_DIR "lucia_haunted.png");
-			state->game.lucia_healed     = IMG_LoadTexture(renderer, DATA_DIR "lucia_healed.png");
-			state->game.lucia_hit        = IMG_LoadTexture(renderer, DATA_DIR "lucia_hit.png");
-			state->game.lucia_normal     = IMG_LoadTexture(renderer, DATA_DIR "lucia_normal.png");
-			state->game.lucia_wounded    = IMG_LoadTexture(renderer, DATA_DIR "lucia_wounded.png");
-			state->game.view_texture     = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_STREAMING, VIEW_RES.x, VIEW_RES.y);
+			state->game.lucia_haunted = IMG_LoadTexture(renderer, DATA_DIR "lucia_haunted.png");
+			state->game.lucia_healed  = IMG_LoadTexture(renderer, DATA_DIR "lucia_healed.png");
+			state->game.lucia_hit     = IMG_LoadTexture(renderer, DATA_DIR "lucia_hit.png");
+			state->game.lucia_normal  = IMG_LoadTexture(renderer, DATA_DIR "lucia_normal.png");
+			state->game.lucia_wounded = IMG_LoadTexture(renderer, DATA_DIR "lucia_wounded.png");
+			state->game.view_texture  = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_STREAMING, VIEW_RES.x, VIEW_RES.y);
 		} break;
 	}
 }
@@ -1371,15 +1258,37 @@ extern "C" PROTOTYPE_UPDATE(update)
 			{
 				state->game.entering_keytime = clamp(state->game.entering_keytime + SECONDS_PER_UPDATE / 1.0f, 0.0f, 1.0f);
 
+				if (PRESSED(Input::tab))
+				{
+					state->game.inventory_visibility = !state->game.inventory_visibility;
+					state->game.inventory_selected   = 0;
+					state->game.inventory_grabbing   = false;
+
+					if (!state->game.holding.paper)
+					{
+						state->game.interacting_cursor_velocity = { 0.0f, 0.0f };
+						state->game.interacting_cursor          = VIEW_RES / 2.0f;
+					}
+
+					state->game.holding.paper = 0;
+				}
+
+				if (state->game.inventory_visibility || state->game.holding.paper)
+				{
+					state->game.interacting_cursor_velocity += platform->cursor_delta * 8.0f;
+					state->game.interacting_cursor_velocity *= 0.3f;
+
+					state->game.interacting_cursor   += state->game.interacting_cursor_velocity * SECONDS_PER_UPDATE;
+					state->game.interacting_cursor.x  = clamp(state->game.interacting_cursor.x, 0.0f, static_cast<f32>(VIEW_RES.x));
+					state->game.interacting_cursor.y  = clamp(state->game.interacting_cursor.y, 0.0f, static_cast<f32>(VIEW_RES.y));
+				}
+
+
 				if (state->game.inventory_visibility)
 				{
-					state->game.inventory_cursor   += conjugate(platform->cursor_delta) * 0.25f;
-					state->game.inventory_cursor.x  = clamp(state->game.inventory_cursor.x, 0.0f, static_cast<f32>(VIEW_RES.x));
-					state->game.inventory_cursor.y  = clamp(state->game.inventory_cursor.y, 0.0f, static_cast<f32>(VIEW_RES.y));
-
 					if (PRESSED(Input::left_mouse))
 					{
-						state->game.inventory_click_position = state->game.inventory_cursor;
+						state->game.inventory_click_position = state->game.interacting_cursor;
 
 						FOR_RANGE(y, ARRAY_CAPACITY(state->game.inventory))
 						{
@@ -1387,10 +1296,11 @@ extern "C" PROTOTYPE_UPDATE(update)
 							{
 								if
 								(
-									fabsf(VIEW_RES.x / 2.0f + (x + (1.0f - ARRAY_CAPACITY(state->game.inventory[y])) / 2.0f) * (INVENTORY_DIM + INVENTORY_PADDING) - state->game.inventory_cursor.x) < INVENTORY_DIM / 2.0f &&
-									fabsf(VIEW_RES.y / 2.0f + (y + (1.0f - ARRAY_CAPACITY(state->game.inventory   )) / 2.0f) * (INVENTORY_DIM + INVENTORY_PADDING) - state->game.inventory_cursor.y) < INVENTORY_DIM / 2.0f
+									fabsf(VIEW_RES.x / 2.0f + (x + (1.0f - ARRAY_CAPACITY(state->game.inventory[y])) / 2.0f) * (INVENTORY_DIM + INVENTORY_PADDING) - state->game.interacting_cursor.x) < INVENTORY_DIM / 2.0f &&
+									fabsf(VIEW_RES.y / 2.0f - (y + (1.0f - ARRAY_CAPACITY(state->game.inventory   )) / 2.0f) * (INVENTORY_DIM + INVENTORY_PADDING) - state->game.interacting_cursor.y) < INVENTORY_DIM / 2.0f
 								)
 								{
+												DEBUG_printf("%d %d\n", x, y);
 									if (state->game.inventory[y][x].type != ItemType::null)
 									{
 										state->game.inventory_selected = &state->game.inventory[y][x];
@@ -1405,7 +1315,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 					{
 						if (HOLDING(Input::left_mouse))
 						{
-							if (!state->game.inventory_grabbing && norm_sq(state->game.inventory_cursor - state->game.inventory_click_position) > 25.0f)
+							if (!state->game.inventory_grabbing && norm_sq(state->game.interacting_cursor - state->game.inventory_click_position) > 25.0f)
 							{
 								state->game.inventory_grabbing = true;
 							}
@@ -1416,8 +1326,8 @@ extern "C" PROTOTYPE_UPDATE(update)
 							{
 								if
 								(
-									fabs(state->game.inventory_cursor.x * 2.0f - VIEW_RES.x) < ARRAY_CAPACITY(state->game.inventory[0]) * (INVENTORY_DIM + INVENTORY_PADDING) &&
-									fabs(state->game.inventory_cursor.y * 2.0f - VIEW_RES.y) < ARRAY_CAPACITY(state->game.inventory   ) * (INVENTORY_DIM + INVENTORY_PADDING)
+									fabs(state->game.interacting_cursor.x * 2.0f - VIEW_RES.x) < ARRAY_CAPACITY(state->game.inventory[0]) * (INVENTORY_DIM + INVENTORY_PADDING) &&
+									fabs(state->game.interacting_cursor.y * 2.0f - VIEW_RES.y) < ARRAY_CAPACITY(state->game.inventory   ) * (INVENTORY_DIM + INVENTORY_PADDING)
 								)
 								{
 									FOR_RANGE(y, ARRAY_CAPACITY(state->game.inventory))
@@ -1426,8 +1336,8 @@ extern "C" PROTOTYPE_UPDATE(update)
 										{
 											if
 											(
-												fabsf(VIEW_RES.x / 2.0f + (x + (1.0f - ARRAY_CAPACITY(state->game.inventory[y])) / 2.0f) * (INVENTORY_DIM + INVENTORY_PADDING) - state->game.inventory_cursor.x) < INVENTORY_DIM / 2.0f &&
-												fabsf(VIEW_RES.y / 2.0f + (y + (1.0f - ARRAY_CAPACITY(state->game.inventory   )) / 2.0f) * (INVENTORY_DIM + INVENTORY_PADDING) - state->game.inventory_cursor.y) < INVENTORY_DIM / 2.0f
+												fabsf(VIEW_RES.x / 2.0f + (x + (1.0f - ARRAY_CAPACITY(state->game.inventory[y])) / 2.0f) * (INVENTORY_DIM + INVENTORY_PADDING) - state->game.interacting_cursor.x) < INVENTORY_DIM / 2.0f &&
+												fabsf(VIEW_RES.y / 2.0f - (y + (1.0f - ARRAY_CAPACITY(state->game.inventory   )) / 2.0f) * (INVENTORY_DIM + INVENTORY_PADDING) - state->game.interacting_cursor.y) < INVENTORY_DIM / 2.0f
 											)
 											{
 												if (&state->game.inventory[y][x] != state->game.inventory_selected)
@@ -1439,51 +1349,60 @@ extern "C" PROTOTYPE_UPDATE(update)
 														state->game.inventory[y][x]          = *state->game.inventory_selected;
 														state->game.inventory_selected->type = ItemType::null;
 
-														if (state->game.holding.flashlight == state->game.inventory_selected)
+														FOR_ELEMS(it, state->game.holdings)
 														{
-															state->game.holding.flashlight = &state->game.inventory[y][x];
+															if (*it == state->game.inventory_selected)
+															{
+																*it = &state->game.inventory[y][x];
+																break;
+															}
 														}
 													}
 													else
 													{
 														// @NOTE@ Item combine.
 
-														Item* battery;
-														Item* flashlight;
-														if (check_combine(&battery, ItemType::battery, &flashlight, ItemType::flashlight, &state->game.inventory[y][x], state->game.inventory_selected))
+														bool32 combined        = false;
+														Item   combined_result = {};
+
 														{
-															state->game.notification_message = "(You replaced the batteries in the flashlight.)";
-															state->game.notification_keytime = 1.0f;
-
-															flashlight->flashlight.power = 1.0f;
-
-															if (battery == state->game.inventory_selected)
+															Item* battery;
+															Item* flashlight;
+															if (check_combine(&battery, ItemType::battery, &flashlight, ItemType::flashlight, &state->game.inventory[y][x], state->game.inventory_selected))
 															{
-																battery->type = ItemType::null;
+																combined = true;
+																state->game.notification_message = "(You replaced the batteries in the flashlight.)";
+																state->game.notification_keytime = 1.0f;
+
+																combined_result = *flashlight;
+																combined_result.flashlight.power = 1.0f;
+
+																if (state->game.holding.flashlight == state->game.inventory_selected)
+																{
+																	state->game.holding.flashlight = &state->game.inventory[y][x];
+																}
 															}
 															else
 															{
-																if (state->game.holding.flashlight == flashlight)
-																{
-																	state->game.holding.flashlight = battery;
-																}
-
-																*battery = *flashlight;
-																flashlight->type = ItemType::null;
+																state->game.notification_message = "\"I'm not sure how these fit.\"";
+																state->game.notification_keytime = 1.0f;
 															}
 														}
-														else
+
+														if (combined)
 														{
-															state->game.notification_message = "\"I'm not sure how these fit.\"";
-															state->game.notification_keytime = 1.0f;
+															state->game.inventory_selected->type = ItemType::null;
+															state->game.inventory[y][x]          = combined_result;
 														}
 													}
 												}
 
-												break;
+												goto DONE_SEARCH;
 											}
 										}
 									}
+
+									DONE_SEARCH:;
 								}
 								else
 								{
@@ -1542,11 +1461,12 @@ extern "C" PROTOTYPE_UPDATE(update)
 										}
 									};
 								}
+
+								state->game.inventory_visibility = false;
 							}
 
 							state->game.inventory_selected   = 0;
 							state->game.inventory_grabbing   = false;
-							state->game.inventory_visibility = false;
 						}
 					}
 				}
@@ -1555,15 +1475,23 @@ extern "C" PROTOTYPE_UPDATE(update)
 					state->game.paper_scalar_velocity += platform->scroll * 0.3f;
 					state->game.paper_scalar_velocity *= 0.5f;
 					state->game.paper_scalar           = state->game.paper_scalar + state->game.paper_scalar_velocity * state->game.paper_scalar * SECONDS_PER_UPDATE;
+
 					if (0.1f > state->game.paper_scalar || state->game.paper_scalar > 4.0f)
 					{
 						state->game.paper_scalar          = clamp(state->game.paper_scalar, 0.1f, 4.0f);
 						state->game.paper_scalar_velocity = 0.0f;
 					}
 
-					state->game.paper_velocity        += platform->cursor_delta * 8.0f;
-					state->game.paper_velocity        *= 0.5f;
-					state->game.paper_delta_position  += state->game.paper_velocity / state->game.paper_scalar * SECONDS_PER_UPDATE;
+					if (HOLDING(Input::left_mouse))
+					{
+						state->game.paper_velocity = state->game.interacting_cursor_velocity;
+					}
+					else
+					{
+						state->game.paper_velocity *= 0.5f;
+					}
+
+					state->game.paper_delta_position += state->game.paper_velocity / state->game.paper_scalar * SECONDS_PER_UPDATE;
 				}
 				else
 				{
@@ -1602,15 +1530,6 @@ extern "C" PROTOTYPE_UPDATE(update)
 							}
 						}
 					}
-				}
-
-				if (PRESSED(Input::tab))
-				{
-					state->game.inventory_visibility = !state->game.inventory_visibility;
-					state->game.inventory_cursor     = VIEW_RES / 2.0f;
-					state->game.inventory_selected   = 0;
-					state->game.inventory_grabbing   = false;
-					state->game.holding.paper        = 0;
 				}
 
 				vf2 wasd = { 0.0f, 0.0f };
@@ -1936,7 +1855,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 				}
 
 				state->game.hand_hovered_item = 0;
-				if (!state->game.hand_on_door)
+				if (!state->game.hand_on_door && !state->game.holding.paper)
 				{
 					f32 closest_distance = NAN;
 					FOR_ELEMS(item, state->game.item_buffer, state->game.item_count)
@@ -2072,7 +1991,8 @@ extern "C" PROTOTYPE_RENDER(render)
 
 	state->transient_arena.used = 0;
 
-	f32 blackout = 0.0f;
+	f32* view_inv_depth_buffer = memory_arena_push<f32>(&state->transient_arena, VIEW_RES.x * VIEW_RES.y);
+	f32  blackout              = 0.0f;
 
 	switch (state->context)
 	{
@@ -2495,8 +2415,8 @@ extern "C" PROTOTYPE_RENDER(render)
 								)
 							+ vxx(powf(square(dot(ray, n)), 64) * square(dot(ray, state->game.flashlight_ray)) * 0.4f * flashlight_k);
 
-					view_pixels[(VIEW_RES.y - 1 - y) * VIEW_RES.x + x] = to_pixel({ clamp(color.x, 0.0f, 1.0f), clamp(color.y, 0.0f, 1.0f), clamp(color.z, 0.0f, 1.0f) });
-					state->game.view_inv_depth_buffer[x][y] = 1.0f / d;
+					view_pixels[(VIEW_RES.y - 1 - y) * VIEW_RES.x + x] = pack_color({ clamp(color.x, 0.0f, 1.0f), clamp(color.y, 0.0f, 1.0f), clamp(color.z, 0.0f, 1.0f) });
+					view_inv_depth_buffer[x * VIEW_RES.y + y] = 1.0f / d;
 				}
 
 				#if PROFILE
@@ -2603,15 +2523,15 @@ extern "C" PROTOTYPE_RENDER(render)
 
 							if (IN_RANGE(state->game.lucia_position.z + ray.z * node->distance, 0.0f, WALL_HEIGHT))
 							{
-								if (state->game.view_inv_depth_buffer[x][y] < 1.0f / node->distance)
+								if (view_inv_depth_buffer[x * VIEW_RES.y + y] < 1.0f / node->distance)
 								{
-									state->game.view_inv_depth_buffer[x][y] = 1.0f / node->distance;
+									view_inv_depth_buffer[x * VIEW_RES.y + y] = 1.0f / node->distance;
 									view_pixels[(VIEW_RES.y - 1 - y) * VIEW_RES.x + x] =
-										to_pixel
+										pack_color
 										(
 											lerp
 											(
-												to_color(view_pixels[y * VIEW_RES.x + x]),
+												unpack_color(view_pixels[y * VIEW_RES.x + x]),
 												scan_pixel->xyz
 													* clamp
 														(
@@ -2665,7 +2585,7 @@ extern "C" PROTOTYPE_RENDER(render)
 								+ static_cast<i32>(static_cast<f32>(x - paper_coordinates.x) / paper_dimensions.x * state->game.paper_imgs[0].dim.x) * state->game.paper_imgs[0].dim.y
 								+ static_cast<i32>((1.0f - static_cast<f32>(y - paper_coordinates.y) / paper_dimensions.y) * (state->game.paper_imgs[0].dim.y - 1.0f));
 
-						view_pixels[y * VIEW_RES.x + x] = to_pixel(lerp(to_color(view_pixels[y * VIEW_RES.x + x]), rgba->xyz, rgba->w));
+						view_pixels[y * VIEW_RES.x + x] = pack_color(lerp(unpack_color(view_pixels[y * VIEW_RES.x + x]), rgba->xyz, rgba->w));
 					}
 				}
 			}
@@ -2696,11 +2616,14 @@ extern "C" PROTOTYPE_RENDER(render)
 
 				if (state->game.inventory_grabbing)
 				{
-					draw_img(view_pixels, get_corresponding_item_img(state, state->game.inventory_selected), vxx(state->game.inventory_cursor) - vi2 { INVENTORY_DIM, INVENTORY_DIM } / 4, INVENTORY_DIM / 2);
+					draw_img(view_pixels, get_corresponding_item_img(state, state->game.inventory_selected), vxx(vf2 { state->game.interacting_cursor.x, VIEW_RES.y - 1.0f - state->game.interacting_cursor.y }) - vi2 { INVENTORY_DIM, INVENTORY_DIM } / 4, INVENTORY_DIM / 2);
 				}
+			}
 
+			if (state->game.inventory_visibility || state->game.holding.paper)
+			{
 				i32 cursor_dim = HOLDING(Input::left_mouse) ? 10 : 15;
-				draw_img(view_pixels, &state->game.hand_img, vxx(vf2 { state->game.inventory_cursor.x - cursor_dim / 2.0f, state->game.inventory_cursor.y - cursor_dim / 2.0f }), cursor_dim);
+				draw_img(view_pixels, &state->game.hand_img, vxx(vf2 { state->game.interacting_cursor.x - cursor_dim / 2.0f, VIEW_RES.y - 1.0f - state->game.interacting_cursor.y - cursor_dim / 2.0f }), cursor_dim);
 			}
 
 			SDL_UnlockTexture(state->game.view_texture);
