@@ -82,21 +82,20 @@ global constexpr struct { i32 slide_index; strlit text; } INTRO_DATA[] =
 
 enum_loose (AudioChannel, i8)
 {
+	unreserved = -1,
+
 	enum_start_region(RESERVED)
 		bg_0,
 		bg_1,
 		_2,
 		_3,
 	enum_end_region(RESERVED)
-
 	enum_start_region(UNRESERVED)
 		_4,
 		_5,
 		_6,
 		_7,
 	enum_end_region(UNRESERVED)
-
-	CAPACITY
 };
 
 enum_loose (TitleMenuOption, u8)
@@ -159,6 +158,14 @@ global constexpr f32 ITEM_SPAWN_WEIGHTS[ItemType::ITEM_COUNT] =
 global constexpr struct { f32 min_scalar; f32 max_scalar; strlit file_path; } PAPER_DATA[] =
 	{
 		{ 0.15f, 0.75f, DATA_DIR "document.png" }
+	};
+
+global constexpr strlit FOOTSTEP_WAV_FILE_PATHS[] =
+	{
+		DATA_DIR "debug_0.wav",
+		DATA_DIR "debug_1.wav",
+		DATA_DIR "debug_2.wav",
+		DATA_DIR "debug_3.wav"
 	};
 
 struct Item
@@ -286,6 +293,7 @@ struct State
 		SDL_Texture*         view_texture;
 		Mix_Chunk*           room_ambience;
 		Mix_Chunk*           room_ambience_quiet;
+		Mix_Chunk*           footstep_sfxs[ARRAY_CAPACITY(FOOTSTEP_WAV_FILE_PATHS)];
 
 		f32                  entering_keytime;
 		bool32               is_exiting;
@@ -314,6 +322,7 @@ struct State
 		f32                  lucia_stamina;
 		f32                  lucia_sprint_keytime;
 		bool32               lucia_out_of_breath;
+		f32                  lucia_step_keytime;
 
 		PathCoordinatesNode* monster_path;
 		vi2                  monster_path_goal;
@@ -878,8 +887,14 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 			state->game.room_ambience       = Mix_LoadWAV(DATA_DIR "room_ambience.wav");
 			state->game.room_ambience_quiet = Mix_LoadWAV(DATA_DIR "room_ambience_quiet.wav");
 
-			Mix_PlayChannel(+AudioChannel::bg_0, state->game.room_ambience      , -1);
-			Mix_PlayChannel(+AudioChannel::bg_1, state->game.room_ambience_quiet, -1);
+			FOR_ELEMS(it, state->game.footstep_sfxs)
+			{
+				*it = Mix_LoadWAV(FOOTSTEP_WAV_FILE_PATHS[it_index]);
+				ASSERT(*it);
+			}
+
+			Mix_PlayChannel(+AudioChannel::bg_0 - +AudioChannel::RESERVED_START, state->game.room_ambience      , -1);
+			Mix_PlayChannel(+AudioChannel::bg_1 - +AudioChannel::RESERVED_START, state->game.room_ambience_quiet, -1);
 		} break;
 	}
 }
@@ -1813,6 +1828,13 @@ extern "C" PROTOTYPE_UPDATE(update)
 				state->game.lucia_position.x  = mod(state->game.lucia_position.x, MAP_DIM * WALL_SPACING);
 				state->game.lucia_position.y  = mod(state->game.lucia_position.y, MAP_DIM * WALL_SPACING);
 				state->game.lucia_position.z  = LUCIA_HEIGHT + 0.1f * (cosf(state->game.lucia_head_bob_keytime * TAU) - 1.0f);
+
+				state->game.lucia_step_keytime += SECONDS_PER_UPDATE * norm(state->game.lucia_velocity) / 2.75f; // @TODO@ Make this sync with head bob?
+				if (state->game.lucia_step_keytime >= 1.0f)
+				{
+					state->game.lucia_step_keytime = 0.0f;
+					Mix_PlayChannel(+AudioChannel::unreserved, state->game.footstep_sfxs[rng(&state->seed, 0, ARRAY_CAPACITY(state->game.footstep_sfxs))], 0);
+				}
 
 				state->game.lucia_head_bob_keytime = mod(state->game.lucia_head_bob_keytime + 0.001f + 0.35f * norm(state->game.lucia_velocity) * SECONDS_PER_UPDATE, 1.0f);
 
