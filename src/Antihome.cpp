@@ -28,7 +28,7 @@ global constexpr f32 HORT_TO_VERT_K    = 0.927295218f * VIEW_RES.x;
 global constexpr f32 WALL_HEIGHT       = 2.7432f;
 global constexpr f32 WALL_THICKNESS    = 0.25f;
 global constexpr f32 LUCIA_HEIGHT      = 1.4986f;
-global constexpr i32 MAP_DIM           = 8;
+global constexpr i32 MAP_DIM           = 32;
 global constexpr f32 WALL_SPACING      = 3.0f;
 global constexpr i32 INVENTORY_DIM     = 30;
 global constexpr i32 INVENTORY_PADDING = 5;
@@ -306,13 +306,28 @@ struct State
 	} end;
 };
 
-global constexpr struct { WallVoxel voxel; vf2 start; vf2 end; vf2 normal; } WALL_VOXEL_DATA[] =
+struct WallVoxelData { WallVoxel voxel; vf2 start; vf2 end; vf2 normal; };
+
+global constexpr WallVoxelData WALL_VOXEL_DATA[] =
 	{
-		{ WallVoxel::left         , { 0.0f, 0.0f }, { 0.0f, 1.0f }, {      1.0f,      0.0f } },
-		{ WallVoxel::bottom       , { 0.0f, 0.0f }, { 1.0f, 0.0f }, {      0.0f,     -1.0f } },
-		{ WallVoxel::back_slash   , { 1.0f, 0.0f }, { 0.0f, 1.0f }, {  INVSQRT2,  INVSQRT2 } },
-		{ WallVoxel::forward_slash, { 0.0f, 0.0f }, { 1.0f, 1.0f }, {  INVSQRT2, -INVSQRT2 } }
+		{ WallVoxel::left         , { 0.0f, 0.0f }, { 0.0f, 1.0f }, {     1.0f,      0.0f } },
+		{ WallVoxel::bottom       , { 0.0f, 0.0f }, { 1.0f, 0.0f }, {     0.0f,     -1.0f } },
+		{ WallVoxel::back_slash   , { 1.0f, 0.0f }, { 0.0f, 1.0f }, { INVSQRT2,  INVSQRT2 } },
+		{ WallVoxel::forward_slash, { 0.0f, 0.0f }, { 1.0f, 1.0f }, { INVSQRT2, -INVSQRT2 } }
 	};
+
+internal const WallVoxelData* get_wall_voxel_data(WallVoxel voxel)
+{
+	switch (voxel)
+	{
+		case WallVoxel::left          : return &WALL_VOXEL_DATA[0];
+		case WallVoxel::bottom        : return &WALL_VOXEL_DATA[1];
+		case WallVoxel::back_slash    : return &WALL_VOXEL_DATA[2];
+		case WallVoxel::forward_slash : return &WALL_VOXEL_DATA[3];
+	}
+
+	return 0;
+}
 
 internal ImgRGBA* get_corresponding_item_img(State* state, Item* item)
 {
@@ -1040,53 +1055,70 @@ extern "C" PROTOTYPE_UPDATE(update)
 							state->game    = {};
 							boot_up_state(platform->renderer, state);
 
-							FOR_RANGE(start_walk_y, MAP_DIM)
+							state->seed = 486;
+
+							FOR_RANGE(MAP_DIM * MAP_DIM / 3)
 							{
-								FOR_RANGE(start_walk_x, MAP_DIM)
+								vi2 start_walk = { rng(&state->seed, 0, MAP_DIM), rng(&state->seed, 0, MAP_DIM) };
+
+								if
+								(
+									!+*get_wall_voxel(state, { start_walk.x, start_walk.y })
+									&& !+(*get_wall_voxel(state, { start_walk.x    , start_walk.y - 1 }) & WallVoxel::left  )
+									&& !+(*get_wall_voxel(state, { start_walk.x - 1, start_walk.y     }) & WallVoxel::bottom)
+								)
 								{
-									if (!+*get_wall_voxel(state, { start_walk_x, start_walk_y }) && rng(&state->seed) < 0.15f)
+									vi2 walk = { start_walk.x, start_walk.y };
+									FOR_RANGE(MAP_DIM)
 									{
-										vi2 walk = { start_walk_x, start_walk_y };
-										FOR_RANGE(64)
+										switch (static_cast<i32>(rng(&state->seed) * 4.0f))
 										{
-											switch (static_cast<i32>(rng(&state->seed) * 4.0f))
+											case 0:
 											{
-												case 0:
+												if (!+*get_wall_voxel(state, walk + vi2 { -1, 0 }) && !+(*get_wall_voxel(state, walk + vi2 { -1, -1 }) & WallVoxel::left) && !+(*get_wall_voxel(state, walk + vi2 { -2, 0 }) & WallVoxel::bottom))
 												{
-													if (!+*get_wall_voxel(state, walk + vi2 { -1, 0 }) && !+(*get_wall_voxel(state, walk + vi2 { -1, -1 }) & WallVoxel::left) && !+(*get_wall_voxel(state, walk + vi2 { -2, 0 }) & WallVoxel::bottom))
-													{
-														walk.x = mod(walk.x - 1, MAP_DIM);
-														*get_wall_voxel(state, walk) |= WallVoxel::bottom;
-													}
-												} break;
+													walk.x = mod(walk.x - 1, MAP_DIM);
+													*get_wall_voxel(state, walk) |= WallVoxel::bottom;
+												}
+											} break;
 
-												case 1:
+											case 1:
+											{
+												if (!+*get_wall_voxel(state, walk + vi2 { 1, 0 }) && !+(*get_wall_voxel(state, walk) & WallVoxel::bottom) && !+(*get_wall_voxel(state, walk + vi2 { 1, -1 }) & WallVoxel::left))
 												{
-													if (!+*get_wall_voxel(state, walk + vi2 { 1, 0 }) && !+(*get_wall_voxel(state, walk) & WallVoxel::bottom) && !+(*get_wall_voxel(state, walk + vi2 { 1, -1 }) & WallVoxel::left))
-													{
-														*get_wall_voxel(state, walk) |= WallVoxel::bottom;
-														walk.x = mod(walk.x + 1, MAP_DIM);
-													}
-												} break;
+													*get_wall_voxel(state, walk) |= WallVoxel::bottom;
+													walk.x = mod(walk.x + 1, MAP_DIM);
+												}
+											} break;
 
-												case 2:
+											case 2:
+											{
+												if (!+*get_wall_voxel(state, walk + vi2 { 0, -1 }) && !+(*get_wall_voxel(state, walk + vi2 { -1, -1 }) & WallVoxel::bottom) && !+(*get_wall_voxel(state, walk + vi2 { 0, -2 }) & WallVoxel::left))
 												{
-													if (!+*get_wall_voxel(state, walk + vi2 { 0, -1 }) && !+(*get_wall_voxel(state, walk + vi2 { -1, -1 }) & WallVoxel::bottom) && !+(*get_wall_voxel(state, walk + vi2 { 0, -2 }) & WallVoxel::left))
-													{
-														walk.y = mod(walk.y - 1, MAP_DIM);
-														*get_wall_voxel(state, walk) |= WallVoxel::left;
-													}
-												} break;
+													walk.y = mod(walk.y - 1, MAP_DIM);
+													*get_wall_voxel(state, walk) |= WallVoxel::left;
+												}
+											} break;
 
-												case 3:
+											case 3:
+											{
+												if (!+*get_wall_voxel(state, walk + vi2 { 0, 1 }) && !+(*get_wall_voxel(state, walk) & WallVoxel::left) && !+(*get_wall_voxel(state, walk + vi2 { -1, 1 }) & WallVoxel::bottom))
 												{
-													if (!+*get_wall_voxel(state, walk + vi2 { 0, 1 }) && !+(*get_wall_voxel(state, walk) & WallVoxel::left) && !+(*get_wall_voxel(state, walk + vi2 { -1, 1 }) & WallVoxel::bottom))
-													{
-														*get_wall_voxel(state, walk) |= WallVoxel::left;
-														walk.y = mod(walk.y + 1, MAP_DIM);
-													}
-												} break;
-											}
+													*get_wall_voxel(state, walk) |= WallVoxel::left;
+													walk.y = mod(walk.y + 1, MAP_DIM);
+												}
+											} break;
+										}
+
+										if
+										(
+											!(!+*get_wall_voxel(state, walk + vi2 { -1, 0 }) && !+(*get_wall_voxel(state, walk + vi2 { -1, -1 }) & WallVoxel::left) && !+(*get_wall_voxel(state, walk + vi2 { -2, 0 }) & WallVoxel::bottom)) &&
+											!(!+*get_wall_voxel(state, walk + vi2 { 1, 0 }) && !+(*get_wall_voxel(state, walk) & WallVoxel::bottom) && !+(*get_wall_voxel(state, walk + vi2 { 1, -1 }) & WallVoxel::left)) &&
+											!(!+*get_wall_voxel(state, walk + vi2 { 0, -1 }) && !+(*get_wall_voxel(state, walk + vi2 { -1, -1 }) & WallVoxel::bottom) && !+(*get_wall_voxel(state, walk + vi2 { 0, -2 }) & WallVoxel::left)) &&
+											!(!+*get_wall_voxel(state, walk + vi2 { 0, 1 }) && !+(*get_wall_voxel(state, walk) & WallVoxel::left) && !+(*get_wall_voxel(state, walk + vi2 { -1, 1 }) & WallVoxel::bottom))
+										)
+										{
+											break;
 										}
 									}
 								}
@@ -1923,26 +1955,22 @@ extern "C" PROTOTYPE_UPDATE(update)
 				vf3    hand_object_position = {};
 
 				state->game.hand_on_door = false;
-				if (+state->game.door_wall_side.voxel && !state->game.holding.paper)
+				if (!state->game.holding.paper)
 				{
-					FOR_ELEMS(it, WALL_VOXEL_DATA)
+					const WallVoxelData* data = get_wall_voxel_data(state->game.door_wall_side.voxel);
+					if (data)
 					{
-						if (it->voxel == state->game.door_wall_side.voxel)
+						vf2 door_position = (state->game.door_wall_side.coordinates + (data->start + data->end) / 2.0f) * WALL_SPACING;
+						vf2 ray_to_door   = ray_to_closest(state->game.lucia_position.xy, door_position);
+
+						// @TODO@ Unstupify this.
+						vf2 normal = data->normal * (state->game.door_wall_side.is_antinormal ? -1.0f : 1.0f);
+
+						if (dot(ray_to_door, normal) < 0.0f && norm_sq(ray_to_door) < 6.0f)
 						{
-							vf2 door_position = (state->game.door_wall_side.coordinates + (it->start + it->end) / 2.0f) * WALL_SPACING;
-							vf2 ray_to_door   = ray_to_closest(state->game.lucia_position.xy, door_position);
-
-							// @TODO@ Unstupify this.
-							vf2 normal = it->normal * (state->game.door_wall_side.is_antinormal ? -1.0f : 1.0f);
-
-							if (dot(ray_to_door, normal) < 0.0f && norm_sq(ray_to_door) < 6.0f)
-							{
-								state->game.hand_on_door = true;
-								exists_hand_object       = true;
-								hand_object_position     = vx3(door_position + normal * 0.25f, WALL_HEIGHT / 2.0f);
-							}
-
-							break;
+							state->game.hand_on_door = true;
+							exists_hand_object       = true;
+							hand_object_position     = vx3(door_position + normal * 0.25f, WALL_HEIGHT / 2.0f);
 						}
 					}
 				}
@@ -2090,8 +2118,7 @@ extern "C" PROTOTYPE_RENDER(render)
 
 	state->transient_arena.used = 0;
 
-	f32* view_inv_depth_buffer = memory_arena_push<f32>(&state->transient_arena, VIEW_RES.x * VIEW_RES.y);
-	f32  blackout              = 0.0f;
+	f32 blackout = 0.0f;
 
 	switch (state->context)
 	{
@@ -2278,6 +2305,9 @@ extern "C" PROTOTYPE_RENDER(render)
 
 		case StateContext::game:
 		{
+#if 0
+			f32* view_inv_depth_buffer = memory_arena_push<f32>(&state->transient_arena, VIEW_RES.x * VIEW_RES.y);
+
 			set_color(platform->renderer, { 0.05f, 0.1f, 0.15f, 1.0f });
 			SDL_RenderClear(platform->renderer);
 
@@ -2379,16 +2409,83 @@ extern "C" PROTOTYPE_RENDER(render)
 				wall_coordinates.x = mod(wall_coordinates.x, MAP_DIM);
 				wall_coordinates.y = mod(wall_coordinates.y, MAP_DIM);
 
-				i32 starting_y       = 0;
-				i32 ending_y         = 0;
-				i32 pixel_starting_y = 0;
-				i32 pixel_ending_y   = 0;
+				i32      starting_y            = 0;
+				i32      ending_y              = 0;
+				i32      pixel_starting_y      = 0;
+				i32      pixel_ending_y        = 0;
+				ImgRGBA* overlay_img           = 0;
+				vf2      overlay_uv_position   = { 0.0f, 0.0f };
+				vf2      overlay_uv_dimensions = { 0.0f, 0.0f };
+
 				if (wall_exists)
 				{
 					starting_y       = static_cast<i32>(VIEW_RES.y / 2.0f - HORT_TO_VERT_K / state->game.lucia_fov *                state->game.lucia_position.z  / (wall_distance + 0.1f));
 					ending_y         = static_cast<i32>(VIEW_RES.y / 2.0f + HORT_TO_VERT_K / state->game.lucia_fov * (WALL_HEIGHT - state->game.lucia_position.z) / (wall_distance + 0.1f));
 					pixel_starting_y = MAXIMUM(0, starting_y);
 					pixel_ending_y   = MINIMUM(ending_y, VIEW_RES.y);
+
+					constexpr f32 ALIGNED_SPAN = 0.5f;
+					constexpr f32 SLASH_SPAN   = ALIGNED_SPAN / SQRT2;
+					if (wall_coordinates == state->game.door_wall_side.coordinates && wall_voxel == state->game.door_wall_side.voxel && dot(ray_horizontal, wall_normal) * (state->game.door_wall_side.is_antinormal ? -1.0f : 1.0f) < 0.0f)
+					{
+						if (+(state->game.door_wall_side.voxel & (WallVoxel::back_slash | WallVoxel::forward_slash)))
+						{
+							overlay_img           = &state->game.door;
+							overlay_uv_position   = { 0.5f - SLASH_SPAN / 2.0f, 0.0f };
+							overlay_uv_dimensions = { SLASH_SPAN, 1.0f };
+						}
+						else
+						{
+							overlay_img           = &state->game.door;
+							overlay_uv_position   = { 0.5f - ALIGNED_SPAN / 2.0f, 0.0f };
+							overlay_uv_dimensions = { ALIGNED_SPAN, 1.0f };
+						}
+					}
+					else
+					{
+						const WallVoxelData* intersected_data = get_wall_voxel_data(wall_voxel);
+						const WallVoxelData* door_data        = get_wall_voxel_data(state->game.door_wall_side.voxel);
+
+						f32 direction =
+							dot
+							(
+								rotate90(dot(ray_horizontal, wall_normal) < 0.0f ? -intersected_data->normal : intersected_data->normal),
+								normalize
+								(
+									ray_to_closest
+									(
+										(state->game.door_wall_side.coordinates + (door_data->start + door_data->end) / 2.0f) * WALL_SPACING + (state->game.door_wall_side.is_antinormal ? -door_data->normal : door_data->normal),
+										(wall_coordinates + (intersected_data->start + intersected_data->end) / 2.0f) * WALL_SPACING + (dot(ray_horizontal, wall_normal) > 0.0f ? -intersected_data->normal : intersected_data->normal)
+									)
+								)
+							);
+
+						constexpr f32 THRESHOLD = 0.7f;
+						if (dot(ray_horizontal, wall_normal) > 0.0f)
+						{
+							direction *= -1.0f;
+						}
+
+						if (rng_static((wall_coordinates.x + wall_coordinates.y) * 317 + wall_coordinates.y * 171 + (dot(ray_horizontal, wall_normal) < 0.0f ? 72 : 24)) < 0.2f)
+						{
+							if (direction < -THRESHOLD)
+							{
+								overlay_img = &state->game.wall_left_arrow;
+							}
+							else if (direction > THRESHOLD)
+							{
+								overlay_img = &state->game.wall_right_arrow;
+							}
+						}
+
+						overlay_uv_position   = { 0.0f, 0.0f };
+						overlay_uv_dimensions = { 1.0f, 1.0f };
+					}
+
+					if (!IN_RANGE(wall_portion, overlay_uv_position.x, overlay_uv_position.x + overlay_uv_dimensions.x))
+					{
+						overlay_img = 0;
+					}
 				}
 
 				#if PROFILE
@@ -2444,56 +2541,6 @@ extern "C" PROTOTYPE_RENDER(render)
 
 						return vf3 { clamp(new_color.x, 0.0f, 1.0f), clamp(new_color.y, 0.0f, 1.0f), clamp(new_color.z, 0.0f, 1.0f) };
 					};
-
-				ImgRGBA* overlay_img           = 0;
-				vf2      overlay_uv_position   = { 0.0f, 0.0f };
-				vf2      overlay_uv_dimensions = { 0.0f, 0.0f };
-
-				constexpr f32 ALIGNED_SPAN = 0.5f;
-				constexpr f32 SLASH_SPAN   = ALIGNED_SPAN / SQRT2;
-				if (wall_coordinates == state->game.door_wall_side.coordinates && wall_voxel == state->game.door_wall_side.voxel && dot(ray_horizontal, wall_normal) * (state->game.door_wall_side.is_antinormal ? -1.0f : 1.0f) < 0.0f)
-				{
-					if (+(state->game.door_wall_side.voxel & (WallVoxel::back_slash | WallVoxel::forward_slash)))
-					{
-						overlay_img           = &state->game.door;
-						overlay_uv_position   = { 0.5f - ALIGNED_SPAN / 2.0f, 0.0f };
-						overlay_uv_dimensions = { ALIGNED_SPAN, 1.0f };
-					}
-					else
-					{
-						overlay_img           = &state->game.door;
-						overlay_uv_position   = { 0.5f - SLASH_SPAN / 2.0f, 0.0f };
-						overlay_uv_dimensions = { SLASH_SPAN, 1.0f };
-					}
-				}
-				else
-				{
-					//i32 direction = -1.0f;
-
-					//if (direction < 0.0f)
-					//{
-					//}
-					//else if (direction > 0.0f)
-					//{
-					//}
-
-					if (dot(ray_horizontal, wall_normal) < 0.0f)
-					{
-						overlay_img = &state->game.wall_left_arrow;
-					}
-					//else
-					//{
-					//	overlay_img = &state->game.wall_right_arrow;
-					//}
-
-					overlay_uv_position   = { 0.0f, 0.0f };
-					overlay_uv_dimensions = { 1.0f, 1.0f };
-				}
-
-				if (!IN_RANGE(wall_portion, overlay_uv_position.x, overlay_uv_position.x + overlay_uv_dimensions.x))
-				{
-					overlay_img = 0;
-				}
 
 				FOR_RANGE(y, 0, VIEW_RES.y)
 				{
@@ -2865,6 +2912,97 @@ extern "C" PROTOTYPE_RENDER(render)
 				state->game.lucia_position.x,
 				state->game.lucia_position.y
 			);
+#else
+			set_color(platform->renderer, monochrome(0.0f));
+			SDL_RenderClear(platform->renderer);
+
+			persist vf2 camera_position  = vf2 { MAP_DIM * WALL_SPACING / 2.0f, MAP_DIM * WALL_SPACING / 2.0f };
+			f32 pixels_per_meter = 2.0f;
+
+			constexpr f32 SPEED = 16.0f;
+			if (HOLDING(Input::left))
+			{
+				camera_position.x -= SPEED * SECONDS_PER_UPDATE;
+			}
+			if (HOLDING(Input::right))
+			{
+				camera_position.x += SPEED * SECONDS_PER_UPDATE;
+			}
+			if (HOLDING(Input::down))
+			{
+				camera_position.y -= SPEED * SECONDS_PER_UPDATE;
+			}
+			if (HOLDING(Input::up))
+			{
+				camera_position.y += SPEED * SECONDS_PER_UPDATE;
+			}
+
+			set_color(platform->renderer, monochrome(0.1f));
+			draw_filled_rect
+			(
+				platform->renderer,
+				vxx(WIN_RES / 2.0f + vf2 { -camera_position.x * pixels_per_meter, - 1.0f + (camera_position.y - MAP_DIM * WALL_SPACING) * pixels_per_meter }),
+				vxx(vf2 { MAP_DIM * WALL_SPACING, MAP_DIM * WALL_SPACING } * pixels_per_meter)
+			);
+
+			FOR_RANGE(y, MAP_DIM)
+			{
+				FOR_RANGE(x, MAP_DIM)
+				{
+					FOR_ELEMS(it, WALL_VOXEL_DATA)
+					{
+						if (+(state->game.wall_voxels[y][x] & it->voxel))
+						{
+							set_color(platform->renderer, monochrome(0.75f));
+							SDL_RenderDrawLine
+							(
+								platform->renderer,
+								static_cast<i32>(WIN_RES.x / 2.0f + ((x + it->start.x) * WALL_SPACING - camera_position.x) * pixels_per_meter),
+								static_cast<i32>(WIN_RES.y / 2.0f - 1.0f - ((y + it->start.y) * WALL_SPACING - camera_position.y) * pixels_per_meter),
+								static_cast<i32>(WIN_RES.x / 2.0f + ((x + it->end.x) * WALL_SPACING - camera_position.x) * pixels_per_meter),
+								static_cast<i32>(WIN_RES.y / 2.0f - 1.0f - ((y + it->end.y) * WALL_SPACING - camera_position.y) * pixels_per_meter)
+							);
+						}
+					}
+
+
+					set_color(platform->renderer, monochrome(0.5f));
+					SDL_RenderDrawPoint
+					(
+						platform->renderer,
+						static_cast<i32>(WIN_RES.x / 2.0f + (x * WALL_SPACING - camera_position.x) * pixels_per_meter),
+						static_cast<i32>(WIN_RES.y / 2.0f - 1.0f - (y * WALL_SPACING - camera_position.y) * pixels_per_meter)
+					);
+				}
+			}
+
+			set_color(platform->renderer, { 0.5f, 0.25f, 0.25f, 1.0f });
+			draw_circle
+			(
+				platform->renderer,
+				vxx(WIN_RES / 2.0f + vf2 { (state->game.lucia_position.x - camera_position.x) * pixels_per_meter, -1.0f - (state->game.lucia_position.y - camera_position.y) * pixels_per_meter }),
+				5
+			);
+			set_color(platform->renderer, { 0.5f, 0.25f, 0.25f, 1.0f });
+			SDL_RenderDrawLine
+			(
+				platform->renderer,
+				static_cast<i32>(WIN_RES.x / 2.0f + (state->game.lucia_position.x - camera_position.x) * pixels_per_meter),
+				static_cast<i32>(WIN_RES.y / 2.0f - 1.0f - (state->game.lucia_position.y - camera_position.y) * pixels_per_meter),
+				static_cast<i32>(WIN_RES.x / 2.0f + (state->game.lucia_position.x + cosf(state->game.lucia_angle) * 3.0f - camera_position.x) * pixels_per_meter),
+				static_cast<i32>(WIN_RES.y / 2.0f - 1.0f - (state->game.lucia_position.y + sinf(state->game.lucia_angle) * 3.0f - camera_position.y) * pixels_per_meter)
+			);
+
+			const WallVoxelData* door_data = get_wall_voxel_data(state->game.door_wall_side.voxel);
+			vf2                  door_pos  = (state->game.door_wall_side.coordinates + (door_data->start + door_data->end) / 2.0f) * WALL_SPACING + (state->game.door_wall_side.is_antinormal ? -door_data->normal : door_data->normal);
+			set_color(platform->renderer, { 0.25f, 0.5f, 0.25f, 1.0f });
+			draw_circle
+			(
+				platform->renderer,
+				vxx(WIN_RES / 2.0f + vf2 { (door_pos.x - camera_position.x) * pixels_per_meter, -1.0f - (door_pos.y - camera_position.y) * pixels_per_meter }),
+				5
+			);
+#endif
 		} break;
 
 		case StateContext::end:

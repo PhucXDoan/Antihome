@@ -260,6 +260,20 @@ internal f32 rng(u32* seed, f32 start, f32 end)
 	return rng(seed) * (end - start) + start;
 }
 
+internal constexpr f32 rng_static(u32 seed)
+{
+	return RAND_TABLE[seed * seed % ARRAY_CAPACITY(RAND_TABLE)] / 65536.0f;
+}
+
+internal constexpr i32 rng_static(u32 seed, i32 start, i32 end)
+{
+	return static_cast<i32>(rng_static(seed) * (end - start) + start);
+}
+
+internal constexpr f32 rng_static(u32 seed, f32 start, f32 end)
+{
+	return rng_static(seed) * (end - start) + start;
+}
 internal bool32 ray_cast_line(f32* scalar, f32* portion, vf2 position, vf2 ray, vf2 start, vf2 end)
 {
 	*scalar = ((start.x - end.x) * (start.y - position.y) - (start.y - end.y) * (start.x - position.x)) / ((start.x - end.x) * ray.y - (start.y - end.y) * ray.x);
