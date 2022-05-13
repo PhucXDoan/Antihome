@@ -80,17 +80,23 @@ global constexpr struct { i32 slide_index; strlit text; } INTRO_DATA[] =
 		{ 6, "\"Ahu -`-`-`\"" }
 	};
 
-enum_loose (AudioChannel, u8)
+enum_loose (AudioChannel, i8)
 {
-	_0,
-	_1,
-	_2,
-	_3,
+	enum_start_region(RESERVED)
+		bg_0,
+		bg_1,
+		_2,
+		_3,
+	enum_end_region(RESERVED)
 
-	unreserved_4,
-	unreserved_5,
-	unreserved_6,
-	unreserved_7
+	enum_start_region(UNRESERVED)
+		_4,
+		_5,
+		_6,
+		_7,
+	enum_end_region(UNRESERVED)
+
+	CAPACITY
 };
 
 enum_loose (TitleMenuOption, u8)
@@ -216,6 +222,9 @@ struct State
 	FC_Font*     major_font;
 	FC_Font*     minor_font;
 	Mix_Chunk*   tiny_click;
+	Mix_Chunk*   text_type_sfx;
+
+	f32          reserved_channel_volumes[AudioChannel::RESERVED_COUNT];
 
 	u32          seed;
 	f32          time;
@@ -275,6 +284,8 @@ struct State
 		SDL_Texture*         lucia_normal;
 		SDL_Texture*         lucia_wounded;
 		SDL_Texture*         view_texture;
+		Mix_Chunk*           room_ambience;
+		Mix_Chunk*           room_ambience_quiet;
 
 		f32                  entering_keytime;
 		bool32               is_exiting;
@@ -863,6 +874,12 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 			state->game.lucia_normal  = IMG_LoadTexture(renderer, DATA_DIR "lucia_normal.png");
 			state->game.lucia_wounded = IMG_LoadTexture(renderer, DATA_DIR "lucia_wounded.png");
 			state->game.view_texture  = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_STREAMING, VIEW_RES.x, VIEW_RES.y);
+
+			state->game.room_ambience       = Mix_LoadWAV(DATA_DIR "room_ambience.wav");
+			state->game.room_ambience_quiet = Mix_LoadWAV(DATA_DIR "room_ambience_quiet.wav");
+
+			Mix_PlayChannel(+AudioChannel::bg_0, state->game.room_ambience      , -1);
+			Mix_PlayChannel(+AudioChannel::bg_1, state->game.room_ambience_quiet, -1);
 		} break;
 	}
 }
@@ -902,6 +919,9 @@ internal void boot_down_state(State* state)
 			SDL_DestroyTexture(state->game.lucia_normal);
 			SDL_DestroyTexture(state->game.lucia_wounded);
 			SDL_DestroyTexture(state->game.view_texture);
+
+			Mix_FreeChunk(state->game.room_ambience);
+			Mix_FreeChunk(state->game.room_ambience_quiet);
 		} break;
 	}
 }
@@ -941,7 +961,8 @@ extern "C" PROTOTYPE_BOOT_UP(boot_up)
 	state->minor_font = FC_CreateFont();
 	FC_LoadFont(state->minor_font, platform->renderer, DATA_DIR "Consolas.ttf", 10, FC_MakeColor(255, 255, 255, 255), TTF_STYLE_NORMAL);
 
-	state->tiny_click = Mix_LoadWAV(DATA_DIR "tiny_click.wav");
+	state->tiny_click    = Mix_LoadWAV(DATA_DIR "tiny_click.wav");
+	state->text_type_sfx = Mix_LoadWAV(DATA_DIR "text_type_sfx_0.wav");
 
 	boot_up_state(platform->renderer, state);
 }
@@ -955,6 +976,7 @@ extern "C" PROTOTYPE_BOOT_DOWN(boot_down)
 	FC_FreeFont(state->minor_font);
 
 	Mix_FreeChunk(state->tiny_click);
+	Mix_FreeChunk(state->text_type_sfx);
 
 	boot_down_state(state);
 }
@@ -966,8 +988,11 @@ extern "C" PROTOTYPE_UPDATE(update)
 	state->time                 += SECONDS_PER_UPDATE;
 	state->transient_arena.used  = 0;
 
-
-	Mix_Volume(-1, static_cast<i32>(MIX_MAX_VOLUME * state->master_volume));
+	Mix_Volume(-1, static_cast<i32>(MIX_MAX_VOLUME * state->master_volume)); // @TODO@ Remove frame delay.
+	FOR_ELEMS(it, state->reserved_channel_volumes)
+	{
+		Mix_Volume(+AudioChannel::RESERVED_START + it_index, static_cast<i32>(MIX_MAX_VOLUME * state->master_volume * *it));
+	}
 
 	switch (state->context)
 	{
@@ -1039,6 +1064,9 @@ extern "C" PROTOTYPE_UPDATE(update)
 					{
 						Mix_PlayChannel(-1, state->tiny_click, 0);
 						state->title_menu.option_index += option_index_delta;
+
+						settings.repeat_sfx_count   = 0;
+						settings.repeat_sfx_keytime = 0.0f;
 					}
 
 					if ((PRESSED(Input::space) || PRESSED(Input::enter)) && state->title_menu.option_index == +SettingOption::done)
@@ -1122,8 +1150,6 @@ extern "C" PROTOTYPE_UPDATE(update)
 							state->context = StateContext::game;
 							state->game    = {};
 							boot_up_state(platform->renderer, state);
-
-							state->seed = 486;
 
 							FOR_RANGE(MAP_DIM * MAP_DIM / 3)
 							{
@@ -1332,7 +1358,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 						if (intro.entering_keytime == 1.0f)
 						{
 							lambda iterate_text =
-								[&]()
+								[&](bool32 play_sound)
 								{
 									if (INTRO_DATA[intro.current_text_index].text[intro.next_char_index] != '\0')
 									{
@@ -1342,6 +1368,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 											intro.text[intro.current_text_length] = INTRO_DATA[intro.current_text_index].text[intro.next_char_index];
 											intro.current_text_length += 1;
 											intro.text[intro.current_text_length] = '\0';
+											Mix_PlayChannel(-1, state->text_type_sfx, 0);
 										}
 
 										intro.next_char_index += 1;
@@ -1354,7 +1381,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 							for (intro.next_char_keytime += SECONDS_PER_UPDATE / 0.05f; intro.next_char_keytime >= 1.0f; intro.next_char_keytime -= 1.0f)
 							{
-								iterate_text();
+								iterate_text(true);
 							}
 
 							if (PRESSED(Input::escape))
@@ -1380,7 +1407,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 								}
 								else
 								{
-									while (iterate_text());
+									while (iterate_text(false));
 								}
 							}
 						}
@@ -1391,6 +1418,9 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 		case StateContext::game:
 		{
+			state->reserved_channel_volumes[+AudioChannel::bg_0 - +AudioChannel::RESERVED_START] = 1.0f - state->game.ceiling_lights_deactivation_keytime;
+			state->reserved_channel_volumes[+AudioChannel::bg_1 - +AudioChannel::RESERVED_START] =        state->game.ceiling_lights_deactivation_keytime;
+
 			if (state->game.is_exiting)
 			{
 				state->game.exiting_keytime += SECONDS_PER_UPDATE / 1.5f;
