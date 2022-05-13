@@ -129,6 +129,49 @@ internal constexpr vf3 unpack_color(u32 pixel)
 		};
 }
 
+internal ImgRGBA init_img_rgba(strlit filepath)
+{
+	ImgRGBA img;
+
+	i32  iw;
+	i32  ih;
+	u32* stbimg = reinterpret_cast<u32*>(stbi_load(filepath, &iw, &ih, 0, STBI_rgb_alpha));
+	DEFER { stbi_image_free(stbimg); };
+	ASSERT(stbimg);
+
+	img.dim  = { iw, ih };
+	img.rgba = reinterpret_cast<vf4*>(malloc(img.dim.x * img.dim.y * sizeof(vf4)));
+
+	FOR_RANGE(y, img.dim.y)
+	{
+		FOR_RANGE(x, img.dim.x)
+		{
+			u32 pixel = *(stbimg + y * img.dim.x + x);
+			*(img.rgba + x * img.dim.y + (img.dim.y - 1 - y)) =
+				{
+					static_cast<f32>(pixel >>  0 & 0xFF) / 0xFF,
+					static_cast<f32>(pixel >>  8 & 0xFF) / 0xFF,
+					static_cast<f32>(pixel >> 16 & 0xFF) / 0xFF,
+					static_cast<f32>(pixel >> 24 & 0xFF) / 0xFF
+				};
+		}
+	}
+
+	return img;
+}
+
+internal void deinit_img_rgba(ImgRGBA* img)
+{
+	free(img->rgba);
+}
+
+internal vf4 img_color_at(ImgRGBA* img, vf2 uv)
+{
+	ASSERT(0.0f <= uv.x && uv.x <= 1.0f);
+	ASSERT(0.0f <= uv.y && uv.y <= 1.0f);
+	return img->rgba[static_cast<i32>(uv.x * (img->dim.x - 1.0f)) * img->dim.y + static_cast<i32>(uv.y * (img->dim.y - 1.0f))];
+}
+
 internal Mipmap init_mipmap(strlit file_path)
 {
 	Mipmap mipmap;
@@ -583,42 +626,6 @@ internal void blit_texture(SDL_Renderer* renderer, SDL_Texture* texture, vi2 pos
 {
 	SDL_Rect dst = { position.x, position.y, dimensions.x, dimensions.y };
 	SDL_RenderCopy(renderer, texture, 0, &dst);
-}
-
-internal ImgRGBA init_img_rgba(strlit filepath)
-{
-	ImgRGBA img;
-
-	i32  iw;
-	i32  ih;
-	u32* stbimg = reinterpret_cast<u32*>(stbi_load(filepath, &iw, &ih, 0, STBI_rgb_alpha));
-	DEFER { stbi_image_free(stbimg); };
-	ASSERT(stbimg);
-
-	img.dim  = { iw, ih };
-	img.rgba = reinterpret_cast<vf4*>(malloc(img.dim.x * img.dim.y * sizeof(vf4)));
-
-	FOR_RANGE(y, img.dim.y)
-	{
-		FOR_RANGE(x, img.dim.x)
-		{
-			u32 pixel = *(stbimg + y * img.dim.x + x);
-			*(img.rgba + x * img.dim.y + (img.dim.y - 1 - y)) =
-				{
-					static_cast<f32>(pixel >>  0 & 0xFF) / 0xFF,
-					static_cast<f32>(pixel >>  8 & 0xFF) / 0xFF,
-					static_cast<f32>(pixel >> 16 & 0xFF) / 0xFF,
-					static_cast<f32>(pixel >> 24 & 0xFF) / 0xFF
-				};
-		}
-	}
-
-	return img;
-}
-
-internal void deinit_img_rgba(ImgRGBA* img)
-{
-	free(img->rgba);
 }
 
 internal i32 iterate_repeated_movement(Platform* platform, Input negative_input, Input positive_input, f32* current_repeat_countdown, f32 repeat_threshold = 0.3f, f32 repeat_frequency = 0.1f)

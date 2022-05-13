@@ -132,6 +132,13 @@ flag_struct (WallVoxel, u8)
 	forward_slash = 1 << 3
 };
 
+struct WallSide
+{
+	vi2       coordinates;
+	WallVoxel voxel;
+	bool32    is_antinormal;
+};
+
 struct PathCoordinatesNode
 {
 	vi2                  coordinates;
@@ -203,12 +210,14 @@ struct State
 		Mipmap               wall;
 		Mipmap               floor;
 		Mipmap               ceiling;
-		Mipmap               door;
 		ImgRGBA              monster_img;
 		ImgRGBA              hand_img;
 		ImgRGBA              flashlight_on_img;
 		ImgRGBA              default_item_imgs[ItemType::ITEM_COUNT];
 		ImgRGBA              paper_imgs[ARRAY_CAPACITY(PAPER_DATA)];
+		ImgRGBA              door;
+		ImgRGBA              wall_left_arrow;
+		ImgRGBA              wall_right_arrow;
 		SDL_Texture*         lucia_haunted;
 		SDL_Texture*         lucia_healed;
 		SDL_Texture*         lucia_hit;
@@ -231,9 +240,8 @@ struct State
 		f32                  heart_rate_bpm;
 
 		WallVoxel            wall_voxels[MAP_DIM][MAP_DIM];
-		f32                  ceiling_lights_keytime;
-		vi2                  door_coordinates;
-		WallVoxel            door_wall_voxel;
+		f32                  ceiling_lights_deactivation_keytime;
+		WallSide             door_wall_side;
 
 		vf2                  lucia_velocity;
 		vf3                  lucia_position;
@@ -300,10 +308,10 @@ struct State
 
 global constexpr struct { WallVoxel voxel; vf2 start; vf2 end; vf2 normal; } WALL_VOXEL_DATA[] =
 	{
-		{ WallVoxel::left         , { 0.0f, 0.0f }, { 0.0f, 1.0f }, {     -1.0f,      0.0f } },
-		{ WallVoxel::bottom       , { 0.0f, 0.0f }, { 1.0f, 0.0f }, {      0.0f,      1.0f } },
-		{ WallVoxel::back_slash   , { 1.0f, 0.0f }, { 0.0f, 1.0f }, { -INVSQRT2, -INVSQRT2 } },
-		{ WallVoxel::forward_slash, { 0.0f, 0.0f }, { 1.0f, 1.0f }, { -INVSQRT2,  INVSQRT2 } }
+		{ WallVoxel::left         , { 0.0f, 0.0f }, { 0.0f, 1.0f }, {      1.0f,      0.0f } },
+		{ WallVoxel::bottom       , { 0.0f, 0.0f }, { 1.0f, 0.0f }, {      0.0f,     -1.0f } },
+		{ WallVoxel::back_slash   , { 1.0f, 0.0f }, { 0.0f, 1.0f }, {  INVSQRT2,  INVSQRT2 } },
+		{ WallVoxel::forward_slash, { 0.0f, 0.0f }, { 1.0f, 1.0f }, {  INVSQRT2, -INVSQRT2 } }
 	};
 
 internal ImgRGBA* get_corresponding_item_img(State* state, Item* item)
@@ -353,12 +361,8 @@ internal void draw_img(u32* view_pixels, ImgRGBA* img, vi2 position, i32 dimensi
 	{
 		FOR_RANGE(y, clamp(position.y, 0, VIEW_RES.y), clamp(position.y + dimension, 0, VIEW_RES.y))
 		{
-			vf4* rgba =
-				img->rgba
-					+ static_cast<i32>(static_cast<f32>(x - position.x) / dimension * img->dim.x) * img->dim.y
-					+ static_cast<i32>((1.0f - static_cast<f32>(y - position.y) / dimension) * (img->dim.y - 1.0f));
-
-			view_pixels[y * VIEW_RES.x + x] = pack_color(lerp(unpack_color(view_pixels[y * VIEW_RES.x + x]), rgba->xyz, rgba->w));
+			vf4 color = img_color_at(img, { static_cast<f32>(x - position.x) / dimension, (1.0f - static_cast<f32>(y - position.y) / dimension) });
+			view_pixels[y * VIEW_RES.x + x] = pack_color(lerp(unpack_color(view_pixels[y * VIEW_RES.x + x]), color.xyz, color.w));
 		}
 	}
 }
@@ -615,8 +619,8 @@ internal vf2 move(State* state, vf2 position, vf2 displacement)
 			};
 		vf2 t_max =
 			{
-				((step.x == -1 ? floorf : ceilf)(current_position.x / WALL_SPACING) * WALL_SPACING - current_position.x) / current_displacement.x,
-				((step.y == -1 ? floorf : ceilf)(current_position.y / WALL_SPACING) * WALL_SPACING - current_position.y) / current_displacement.y
+				((static_cast<i32>(current_position.x / WALL_SPACING) + (step.x == 1)) * WALL_SPACING - current_position.x) / current_displacement.x,
+				((static_cast<i32>(current_position.y / WALL_SPACING) + (step.y == 1)) * WALL_SPACING - current_position.y) / current_displacement.y
 			};
 		vf2 t_delta =
 			{
@@ -662,6 +666,18 @@ internal vf2 move(State* state, vf2 position, vf2 displacement)
 				break;
 			}
 
+			#if 1
+			if (t_max.x < t_max.y)
+			{
+				t_max.x       += t_delta.x;
+				coordinates.x  = mod(coordinates.x + step.x, MAP_DIM);
+			}
+			else
+			{
+				t_max.y       += t_delta.y;
+				coordinates.y  = mod(coordinates.y + step.y, MAP_DIM);
+			}
+			#else
 			if (t_max.x < t_max.y)
 			{
 				t_max.x       += t_delta.x;
@@ -672,6 +688,7 @@ internal vf2 move(State* state, vf2 position, vf2 displacement)
 				t_max.y       += t_delta.y;
 				coordinates.y += step.y;
 			}
+			#endif
 		}
 
 		if (closest_intersection.status == IntersectionStatus::none)
@@ -679,11 +696,16 @@ internal vf2 move(State* state, vf2 position, vf2 displacement)
 			break;
 		}
 
-		current_position = closest_intersection.position;
+		current_position     = closest_intersection.position;
+		current_position.x   = mod(current_position.x, MAP_DIM * WALL_SPACING);
+		current_position.y   = mod(current_position.y, MAP_DIM * WALL_SPACING);
 		current_displacement = dot(current_position + current_displacement - closest_intersection.position, rotate90(closest_intersection.normal)) * rotate90(closest_intersection.normal);
 	}
 
-	return current_position + current_displacement;
+	current_position   += current_displacement;
+	current_position.x  = mod(current_position.x, MAP_DIM * WALL_SPACING);
+	current_position.y  = mod(current_position.y, MAP_DIM * WALL_SPACING);
+	return current_position;
 }
 
 internal bool32 exists_clear_way(State* state, vf2 position, vf2 goal)
@@ -697,8 +719,8 @@ internal bool32 exists_clear_way(State* state, vf2 position, vf2 goal)
 		};
 	vf2 t_max =
 		{
-			((step.x == -1 ? floorf : ceilf)(position.x / WALL_SPACING) * WALL_SPACING - position.x) / ray.x,
-			((step.y == -1 ? floorf : ceilf)(position.y / WALL_SPACING) * WALL_SPACING - position.y) / ray.y
+			((static_cast<i32>(position.x / WALL_SPACING) + (step.x == 1)) * WALL_SPACING - position.x) / ray.x,
+			((static_cast<i32>(position.y / WALL_SPACING) + (step.y == 1)) * WALL_SPACING - position.y) / ray.y
 		};
 	vf2 t_delta =
 		{
@@ -735,6 +757,18 @@ internal bool32 exists_clear_way(State* state, vf2 position, vf2 goal)
 			return true;
 		}
 
+		#if 1
+		if (t_max.x < t_max.y)
+		{
+			t_max.x       += t_delta.x;
+			coordinates.x  = mod(coordinates.x + step.x, MAP_DIM);
+		}
+		else
+		{
+			t_max.y       += t_delta.y;
+			coordinates.y  = mod(coordinates.y + step.y, MAP_DIM);
+		}
+		#else
 		if (t_max.x < t_max.y)
 		{
 			t_max.x       += t_delta.x;
@@ -745,6 +779,7 @@ internal bool32 exists_clear_way(State* state, vf2 position, vf2 goal)
 			t_max.y       += t_delta.y;
 			coordinates.y += step.y;
 		}
+		#endif
 	}
 
 	return false;
@@ -764,7 +799,6 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 			state->game.wall              = init_mipmap(DATA_DIR "wall.png");
 			state->game.floor             = init_mipmap(DATA_DIR "floor.png");
 			state->game.ceiling           = init_mipmap(DATA_DIR "ceiling.png");
-			state->game.door              = init_mipmap(DATA_DIR "door.png");
 			state->game.monster_img       = init_img_rgba(DATA_DIR "monster.png");
 			state->game.hand_img          = init_img_rgba(DATA_DIR "hand.png");
 			state->game.flashlight_on_img = init_img_rgba(DATA_DIR "flashlight_on.png");
@@ -773,6 +807,10 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 			{
 				*it = init_img_rgba(PAPER_DATA[it_index].file_path);
 			}
+
+			state->game.door             = init_img_rgba(DATA_DIR "door.png");
+			state->game.wall_left_arrow  = init_img_rgba(DATA_DIR "streak_left_0.png");
+			state->game.wall_right_arrow = init_img_rgba(DATA_DIR "streak_right_0.png");
 
 			FOR_ELEMS(it, DEFAULT_ITEM_IMG_FILE_PATHS)
 			{
@@ -803,7 +841,6 @@ internal void boot_down_state(State* state)
 			deinit_mipmap(&state->game.wall);
 			deinit_mipmap(&state->game.floor);
 			deinit_mipmap(&state->game.ceiling);
-			deinit_mipmap(&state->game.door);
 			deinit_img_rgba(&state->game.monster_img);
 			deinit_img_rgba(&state->game.hand_img);
 			deinit_img_rgba(&state->game.flashlight_on_img);
@@ -814,6 +851,10 @@ internal void boot_down_state(State* state)
 			{
 				deinit_img_rgba(it);
 			}
+
+			deinit_img_rgba(&state->game.door);
+			deinit_img_rgba(&state->game.wall_left_arrow);
+			deinit_img_rgba(&state->game.wall_right_arrow);
 
 			SDL_DestroyTexture(state->game.lucia_haunted);
 			SDL_DestroyTexture(state->game.lucia_healed);
@@ -1119,8 +1160,9 @@ extern "C" PROTOTYPE_UPDATE(update)
 									door_spot_node = door_spot_node->next_node;
 								}
 
-								state->game.door_coordinates = door_spot_node->coordinates;
-								state->game.door_wall_voxel  = door_spot_node->wall_voxel;
+								state->game.door_wall_side.coordinates   = door_spot_node->coordinates;
+								state->game.door_wall_side.voxel         = door_spot_node->wall_voxel;
+								state->game.door_wall_side.is_antinormal = rng(&state->seed) < 0.5f;
 							}
 
 							state->game.lucia_position.xy = rng_open_position(state);
@@ -1419,7 +1461,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 									Item* dropped = allocate_item(state);
 									*dropped = *state->game.inventory_selected;
 									dropped->position = state->game.lucia_position;
-									dropped->velocity = polar(state->game.lucia_angle + rng(&state->seed, -0.5f, 0.5f) * 1.0f) * rng(&state->seed, 1.5f, 5.0f);
+									dropped->velocity = polar(state->game.lucia_angle + rng(&state->seed, -0.5f, 0.5f) * 1.0f) * rng(&state->seed, 2.5f, 6.0f);
 
 									state->game.inventory_selected->type = ItemType::null;
 
@@ -1498,18 +1540,20 @@ extern "C" PROTOTYPE_UPDATE(update)
 					}
 					else
 					{
+						state->game.paper_scalar_velocity += platform->scroll * 2.0f;
+						state->game.paper_scalar_velocity *= 0.5f;
+
 						if (HOLDING(Input::left_mouse))
 						{
-							state->game.paper_velocity = state->game.interacting_cursor_velocity;
+							state->game.paper_velocity        = state->game.interacting_cursor_velocity;
+							state->game.paper_scalar_velocity = 0.0f;
 						}
 						else
 						{
 							state->game.paper_velocity *= 0.5f;
 						}
 
-						state->game.paper_scalar_velocity += platform->scroll * 0.8f;
-						state->game.paper_scalar_velocity *= 0.5f;
-						state->game.paper_scalar           = state->game.paper_scalar + state->game.paper_scalar_velocity * state->game.paper_scalar * SECONDS_PER_UPDATE;
+						state->game.paper_scalar = state->game.paper_scalar + state->game.paper_scalar_velocity * state->game.paper_scalar * SECONDS_PER_UPDATE;
 
 						if (PAPER_DATA[state->game.paper_index].min_scalar > state->game.paper_scalar || state->game.paper_scalar > PAPER_DATA[state->game.paper_index].max_scalar)
 						{
@@ -1541,11 +1585,12 @@ extern "C" PROTOTYPE_UPDATE(update)
 				else
 				{
 					state->game.lucia_angle_velocity -= platform->cursor_delta.x * 0.01f / SECONDS_PER_UPDATE;
-					state->game.lucia_angle_velocity *= 0.4f;
-					state->game.lucia_angle           = mod(state->game.lucia_angle + state->game.lucia_angle_velocity * SECONDS_PER_UPDATE, TAU);
 				}
 
-				if (PRESSED(Input::space))
+				state->game.lucia_angle_velocity *= 0.4f;
+				state->game.lucia_angle           = mod(state->game.lucia_angle + state->game.lucia_angle_velocity * SECONDS_PER_UPDATE, TAU);
+
+				if (PRESSED(Input::space) || PRESSED(Input::left_mouse))
 				{
 					if (state->game.hand_hovered_item)
 					{
@@ -1878,20 +1923,23 @@ extern "C" PROTOTYPE_UPDATE(update)
 				vf3    hand_object_position = {};
 
 				state->game.hand_on_door = false;
-				if (+state->game.door_wall_voxel && !state->game.holding.paper)
+				if (+state->game.door_wall_side.voxel && !state->game.holding.paper)
 				{
 					FOR_ELEMS(it, WALL_VOXEL_DATA)
 					{
-						if (it->voxel == state->game.door_wall_voxel)
+						if (it->voxel == state->game.door_wall_side.voxel)
 						{
-							vf2 door_position = (state->game.door_coordinates + (it->start + it->end) / 2.0f) * WALL_SPACING;
+							vf2 door_position = (state->game.door_wall_side.coordinates + (it->start + it->end) / 2.0f) * WALL_SPACING;
 							vf2 ray_to_door   = ray_to_closest(state->game.lucia_position.xy, door_position);
 
-							if (dot(ray_to_door, it->normal) < 0.0f && norm_sq(ray_to_door) < 6.0f)
+							// @TODO@ Unstupify this.
+							vf2 normal = it->normal * (state->game.door_wall_side.is_antinormal ? -1.0f : 1.0f);
+
+							if (dot(ray_to_door, normal) < 0.0f && norm_sq(ray_to_door) < 6.0f)
 							{
 								state->game.hand_on_door = true;
 								exists_hand_object       = true;
-								hand_object_position     = vx3(door_position + it->normal * 0.25f, WALL_HEIGHT / 2.0f);
+								hand_object_position     = vx3(door_position + normal * 0.25f, WALL_HEIGHT / 2.0f);
 							}
 
 							break;
@@ -1900,16 +1948,22 @@ extern "C" PROTOTYPE_UPDATE(update)
 				}
 
 				state->game.hand_hovered_item = 0;
-				if (!state->game.hand_on_door && !state->game.holding.paper)
+				if (!state->game.hand_on_door && !state->game.inventory_visibility && !state->game.holding.paper)
 				{
-					f32 closest_distance = NAN;
+					f32 best_heuristic = 0.0f;
 					FOR_ELEMS(item, state->game.item_buffer, state->game.item_count)
 					{
-						f32 distance = norm(ray_to_closest(state->game.lucia_position.xy, item->position.xy));
-						if ((!state->game.hand_hovered_item && distance < 1.5f || closest_distance > distance) && exists_clear_way(state, state->game.lucia_position.xy, item->position.xy))
+						vf2 ray      = ray_to_closest(state->game.lucia_position.xy, item->position.xy);
+						f32 distance = norm(ray);
+
+						if (distance < 1.5f)
 						{
-							state->game.hand_hovered_item = item;
-							closest_distance              = distance;
+							f32 heuristic = 1.0f / (distance + 0.5f) + square(clamp(dot(ray / distance, polar(state->game.lucia_angle)), 0.0f, 1.0f));
+							if (best_heuristic <= heuristic)
+							{
+								best_heuristic                = heuristic;
+								state->game.hand_hovered_item = item;
+							}
 						}
 					}
 
@@ -1999,11 +2053,11 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 				if (CEILING_ACTIVATION)
 				{
-					state->game.ceiling_lights_keytime = clamp(state->game.ceiling_lights_keytime + SECONDS_PER_UPDATE / 1.0f, 0.0f, 1.0f);
+					state->game.ceiling_lights_deactivation_keytime = clamp(state->game.ceiling_lights_deactivation_keytime + SECONDS_PER_UPDATE / 1.0f, 0.0f, 1.0f);
 				}
 				else
 				{
-					state->game.ceiling_lights_keytime = clamp(state->game.ceiling_lights_keytime - SECONDS_PER_UPDATE / 0.5f, 0.0f, 1.0f);
+					state->game.ceiling_lights_deactivation_keytime = clamp(state->game.ceiling_lights_deactivation_keytime - SECONDS_PER_UPDATE / 0.5f, 0.0f, 1.0f);
 				}
 			}
 		} break;
@@ -2234,12 +2288,6 @@ extern "C" PROTOTYPE_RENDER(render)
 			i32  view_pitch_;
 			SDL_LockTexture(state->game.view_texture, 0, reinterpret_cast<void**>(&view_pixels), &view_pitch_);
 
-			constexpr f32 FLASHLIGHT_INNER_CUTOFF = 1.00f;
-			constexpr f32 FLASHLIGHT_OUTER_CUTOFF = 0.91f;
-			constexpr f32 FLASHLIGHT_STRENGTH     = 16.0f;
-			constexpr f32 AMBIENT_LIGHT_POW       = 4.0f;
-			constexpr f32 AMBIENT_LIGHT_RADIUS    = 8.0f;
-
 			FOR_RANGE(x, VIEW_RES.x)
 			{
 				#define PROFILE false
@@ -2361,107 +2409,156 @@ extern "C" PROTOTYPE_RENDER(render)
 				QueryPerformanceCounter(&DEBUG_WALL_FLOOR_CEILING_li0);
 				#endif
 
+				lambda shader =
+					[&](vf3 color, vf3 ray, vf3 normal, f32 distance)
+					{
+						constexpr f32 FLASHLIGHT_INNER_CUTOFF = 1.00f;
+						constexpr f32 FLASHLIGHT_OUTER_CUTOFF = 0.91f;
+
+						f32 flashlight_k =
+							clamp
+							(
+								clamp((dot(ray, state->game.flashlight_ray) - FLASHLIGHT_OUTER_CUTOFF) / (FLASHLIGHT_INNER_CUTOFF - FLASHLIGHT_OUTER_CUTOFF), 0.0f, 1.0f)
+									/ (square(distance) + 0.1f)
+									* 16.0f
+									* state->game.flashlight_activation,
+								0.0f,
+								1.0f
+							);
+
+						vf3 new_color =
+							color
+								* clamp
+									(
+										(
+											0.175f
+												- fabsf(dot(ray, normal)) * 0.01f
+												+ ((state->game.lucia_position.z + ray.z * distance) / WALL_HEIGHT + 0.95f) * 0.7f * (0.5f - 4.0f * cube(state->game.ceiling_lights_deactivation_keytime - 0.5f))
+										)
+											* clamp(1.0f - distance / lerp(48.0f, 10.0f, state->game.ceiling_lights_deactivation_keytime), 0.0f, 1.0f)
+											+ flashlight_k,
+										0.0f,
+										1.0f
+									)
+								+ vxx(powf(square(dot(ray, normal)), 64) * square(dot(ray, state->game.flashlight_ray)) * 0.4f * flashlight_k);
+
+						return vf3 { clamp(new_color.x, 0.0f, 1.0f), clamp(new_color.y, 0.0f, 1.0f), clamp(new_color.z, 0.0f, 1.0f) };
+					};
+
+				ImgRGBA* overlay_img           = 0;
+				vf2      overlay_uv_position   = { 0.0f, 0.0f };
+				vf2      overlay_uv_dimensions = { 0.0f, 0.0f };
+
+				constexpr f32 ALIGNED_SPAN = 0.5f;
+				constexpr f32 SLASH_SPAN   = ALIGNED_SPAN / SQRT2;
+				if (wall_coordinates == state->game.door_wall_side.coordinates && wall_voxel == state->game.door_wall_side.voxel && dot(ray_horizontal, wall_normal) * (state->game.door_wall_side.is_antinormal ? -1.0f : 1.0f) < 0.0f)
+				{
+					if (+(state->game.door_wall_side.voxel & (WallVoxel::back_slash | WallVoxel::forward_slash)))
+					{
+						overlay_img           = &state->game.door;
+						overlay_uv_position   = { 0.5f - ALIGNED_SPAN / 2.0f, 0.0f };
+						overlay_uv_dimensions = { ALIGNED_SPAN, 1.0f };
+					}
+					else
+					{
+						overlay_img           = &state->game.door;
+						overlay_uv_position   = { 0.5f - SLASH_SPAN / 2.0f, 0.0f };
+						overlay_uv_dimensions = { SLASH_SPAN, 1.0f };
+					}
+				}
+				else
+				{
+					//i32 direction = -1.0f;
+
+					//if (direction < 0.0f)
+					//{
+					//}
+					//else if (direction > 0.0f)
+					//{
+					//}
+
+					if (dot(ray_horizontal, wall_normal) < 0.0f)
+					{
+						overlay_img = &state->game.wall_left_arrow;
+					}
+					//else
+					//{
+					//	overlay_img = &state->game.wall_right_arrow;
+					//}
+
+					overlay_uv_position   = { 0.0f, 0.0f };
+					overlay_uv_dimensions = { 1.0f, 1.0f };
+				}
+
+				if (!IN_RANGE(wall_portion, overlay_uv_position.x, overlay_uv_position.x + overlay_uv_dimensions.x))
+				{
+					overlay_img = 0;
+				}
+
 				FOR_RANGE(y, 0, VIEW_RES.y)
 				{
 					vf3 ray = normalize({ ray_horizontal.x, ray_horizontal.y, (y - VIEW_RES.y / 2.0f) * state->game.lucia_fov / HORT_TO_VERT_K });
 
-					f32     d;
-					vf2     uv;
-					vf3     n;
-					Mipmap* mm;
-
 					if (IN_RANGE(y, pixel_starting_y, pixel_ending_y))
 					{
-						uv = { wall_portion, static_cast<f32>(y - starting_y) / (ending_y - starting_y) };
-						d  = sqrtf(square(wall_distance) + square(uv.y * WALL_HEIGHT - state->game.lucia_position.z));
-						n  = vxx(wall_normal, 0.0f);
+						f32 y_portion = static_cast<f32>(y - starting_y) / (ending_y - starting_y);
+						f32 distance  = sqrtf(square(wall_distance) + square(y_portion * WALL_HEIGHT - state->game.lucia_position.z));
+						vf3 normal    = vxx(wall_normal, 0.0f);
 
+						vf4 overlay_color =
+							overlay_img && IN_RANGE(y_portion, overlay_uv_position.y, overlay_uv_position.y + overlay_uv_dimensions.y)
+								? img_color_at(overlay_img, { (wall_portion - overlay_uv_position.x) / overlay_uv_dimensions.x, (y_portion - overlay_uv_position.y) / overlay_uv_dimensions.y })
+								: vf4 { 0.0f, 0.0, 0.0f, 0.0f };
 
-						if (wall_coordinates == state->game.door_coordinates && wall_voxel == state->game.door_wall_voxel && dot(wall_normal, ray.xy) < 0)
-						{
-							constexpr f32 SLASH_SPAN   = 0.53f;
-							constexpr f32 ALIGNED_SPAN = 0.75f;
-							if (+(state->game.door_wall_voxel & (WallVoxel::back_slash | WallVoxel::forward_slash)))
-							{
-								if (fabs(wall_portion - 0.5f) < SLASH_SPAN / 2.0f)
-								{
-									uv.x = (uv.x - (0.5f - SLASH_SPAN / 2.0f)) / SLASH_SPAN;
-									mm   = &state->game.door;
-								}
-								else
-								{
-									mm = &state->game.wall;
-								}
-							}
-							else if (fabs(wall_portion - 0.5f) < ALIGNED_SPAN / 2.0f)
-							{
-								uv.x = (uv.x - (0.5f - ALIGNED_SPAN / 2.0f)) / ALIGNED_SPAN;
-								mm   = &state->game.door;
-							}
-							else
-							{
-								mm = &state->game.wall;
-							}
-						}
-						else
-						{
-							mm = &state->game.wall;
-						}
+						view_pixels[(VIEW_RES.y - 1 - y) * VIEW_RES.x + x] =
+							pack_color
+							(
+								shader
+								(
+									lerp
+									(
+										mipmap_color_at(&state->game.wall, distance / 4.0f + MIPMAP_LEVELS * square(1.0f - fabsf(dot(ray, normal))), { wall_portion, y_portion }),
+										overlay_color.xyz,
+										overlay_color.w
+									),
+									ray,
+									normal,
+									distance
+								)
+							);
+
+						view_inv_depth_buffer[x * VIEW_RES.y + y] = 1.0f / distance;
 					}
 					else if (fabs(ray.z) > 0.0001f)
 					{
+						f32     distance;
+						vf2     uv;
+						vf3     normal;
+						Mipmap* mipmap;
+
 						if (y < VIEW_RES.y / 2)
 						{
-							f32 zk = -state->game.lucia_position.z / ray.z;
-							uv   = state->game.lucia_position.xy + zk * ray.xy;
-							d    = sqrtf(square(zk) * 2.0f - square(state->game.lucia_position.z));
-							n    = { 0.0f, 0.0f, 1.0f };
-							mm   = &state->game.floor;
+							f32 zk   = -state->game.lucia_position.z / ray.z;
+							uv       = state->game.lucia_position.xy + zk * ray.xy;
+							distance = sqrtf(norm_sq(uv - state->game.lucia_position.xy) + square(state->game.lucia_position.z));
+							normal   = { 0.0f, 0.0f, 1.0f };
+							mipmap   = &state->game.floor;
 						}
 						else
 						{
-							f32 zk = (WALL_HEIGHT - state->game.lucia_position.z) / ray.z;
-							uv   = state->game.lucia_position.xy + zk * ray.xy;
-							d    = sqrtf(square(zk) * 2.0f - square(state->game.lucia_position.z));
-							n    = { 0.0f, 0.0f, -1.0f };
-							mm   = &state->game.ceiling;
+							f32 zk   = (WALL_HEIGHT - state->game.lucia_position.z) / ray.z;
+							uv       = state->game.lucia_position.xy + zk * ray.xy;
+							distance = sqrtf(norm_sq(uv - state->game.lucia_position.xy) + square(WALL_HEIGHT - state->game.lucia_position.z));
+							normal   = { 0.0f, 0.0f, -1.0f };
+							mipmap   = &state->game.ceiling;
 						}
 
 						uv.x = mod(uv.x / 4.0f, 1.0f);
 						uv.y = mod(uv.y / 4.0f, 1.0f);
+
+						view_pixels[(VIEW_RES.y - 1 - y) * VIEW_RES.x + x] = pack_color(shader(mipmap_color_at(mipmap, distance / 16.0f + MIPMAP_LEVELS * square(1.0f - fabsf(dot(ray, normal))), uv), ray, normal, distance));
+						view_inv_depth_buffer[x * VIEW_RES.y + y] = 1.0f / distance;
 					}
-					else
-					{
-						continue;
-					}
-
-					f32 flashlight_k =
-						clamp
-						(
-							clamp((dot(ray, state->game.flashlight_ray) - FLASHLIGHT_OUTER_CUTOFF) / (FLASHLIGHT_INNER_CUTOFF - FLASHLIGHT_OUTER_CUTOFF), 0.0f, 1.0f)
-								/ (square(d) + 0.1f)
-								* FLASHLIGHT_STRENGTH
-								* state->game.flashlight_activation,
-							0.0f,
-							1.0f
-						);
-
-					vf3 color =
-						mipmap_color_at(mm, d / 4.0f + MIPMAP_LEVELS * square(1.0f - fabsf(dot(ray, n))), uv)
-							* clamp
-								(
-									0.125f
-										- fabsf(dot(ray, n)) * 0.01f
-										+ ((state->game.lucia_position.z + ray.z * d) / WALL_HEIGHT + 0.95f) * 0.7f * (0.5f - 4.0f * cube(state->game.ceiling_lights_keytime - 0.5f))
-										+ flashlight_k
-										+ powf(clamp(1.0f - d / AMBIENT_LIGHT_RADIUS, 0.0f, 1.0f), AMBIENT_LIGHT_POW),
-									0.0f,
-									1.0f
-								)
-							+ vxx(powf(square(dot(ray, n)), 64) * square(dot(ray, state->game.flashlight_ray)) * 0.4f * flashlight_k);
-
-					view_pixels[(VIEW_RES.y - 1 - y) * VIEW_RES.x + x] = pack_color({ clamp(color.x, 0.0f, 1.0f), clamp(color.y, 0.0f, 1.0f), clamp(color.z, 0.0f, 1.0f) });
-					view_inv_depth_buffer[x * VIEW_RES.y + y] = 1.0f / d;
 				}
 
 				#if PROFILE
@@ -2559,12 +2656,9 @@ extern "C" PROTOTYPE_RENDER(render)
 
 					FOR_RANGE(y, scan_pixel_starting_y, scan_pixel_ending_y)
 					{
-						vf4* scan_pixel =
-							node->img->rgba
-								+ static_cast<i32>(node->portion * node->img->dim.x) * node->img->dim.y
-								+ static_cast<i32>((static_cast<f32>(y) - node->starting_y) / (node->ending_y - node->starting_y) * (node->img->dim.y - 1.0f));
+						vf4 scan_pixel = img_color_at(node->img, { node->portion, (static_cast<f32>(y) - node->starting_y) / (node->ending_y - node->starting_y) });
 
-						if (scan_pixel->w)
+						if (scan_pixel.w)
 						{
 							vf3 ray = normalize({ ray_horizontal.x, ray_horizontal.y, (y - VIEW_RES.y / 2.0f) * state->game.lucia_fov / HORT_TO_VERT_K });
 
@@ -2579,21 +2673,8 @@ extern "C" PROTOTYPE_RENDER(render)
 											lerp
 											(
 												unpack_color(view_pixels[y * VIEW_RES.x + x]),
-												scan_pixel->xyz
-													* clamp
-														(
-															0.125f
-																- fabsf(dot(ray.xy, node->normal)) * 0.01f
-																+ ((state->game.lucia_position.z + ray.z * node->distance) / WALL_HEIGHT + 0.95f) * 0.7f * (0.5f - 4.0f * cube(state->game.ceiling_lights_keytime - 0.5f))
-																+ clamp((dot(ray, state->game.flashlight_ray) - FLASHLIGHT_OUTER_CUTOFF) / (FLASHLIGHT_INNER_CUTOFF - FLASHLIGHT_OUTER_CUTOFF), 0.0f, 1.0f)
-																	/ (square(node->distance) + 0.1f)
-																	* FLASHLIGHT_STRENGTH
-																	* state->game.flashlight_activation
-																+ powf(clamp(1.0f - node->distance / AMBIENT_LIGHT_RADIUS, 0.0f, 1.0f), AMBIENT_LIGHT_POW),
-															0.0f,
-															1.0f
-														),
-												scan_pixel->w
+												shader(scan_pixel.xyz, ray, vx3(node->normal, 0.0f), node->distance),
+												scan_pixel.w
 											)
 										);
 								}
@@ -2627,12 +2708,8 @@ extern "C" PROTOTYPE_RENDER(render)
 				{
 					FOR_RANGE(y, clamp(paper_coordinates.y, 0, VIEW_RES.y), clamp(paper_coordinates.y + paper_dimensions.y, 0, VIEW_RES.y))
 					{
-						vf4* rgba =
-							state->game.paper_imgs[0].rgba
-								+ static_cast<i32>(static_cast<f32>(x - paper_coordinates.x) / paper_dimensions.x * state->game.paper_imgs[0].dim.x) * state->game.paper_imgs[0].dim.y
-								+ static_cast<i32>((1.0f - static_cast<f32>(y - paper_coordinates.y) / paper_dimensions.y) * (state->game.paper_imgs[0].dim.y - 1.0f));
-
-						view_pixels[y * VIEW_RES.x + x] = pack_color(lerp(unpack_color(view_pixels[y * VIEW_RES.x + x]), rgba->xyz, rgba->w));
+						vf4 color = img_color_at(&state->game.paper_imgs[0], { static_cast<f32>(x - paper_coordinates.x) / paper_dimensions.x, (1.0f - static_cast<f32>(y - paper_coordinates.y) / paper_dimensions.y) });
+						view_pixels[y * VIEW_RES.x + x] = pack_color(lerp(unpack_color(view_pixels[y * VIEW_RES.x + x]), color.xyz, color.w));
 					}
 				}
 			}
@@ -2774,6 +2851,20 @@ extern "C" PROTOTYPE_RENDER(render)
 			{
 				blackout = 1.0f - state->game.entering_keytime;
 			}
+
+			// @TEMP@
+			draw_text
+			(
+				platform->renderer,
+				state->minor_font,
+				{ 0.0f, 0.0f },
+				FC_ALIGN_LEFT,
+				1.0f,
+				{ 1.0f, 1.0f, 1.0f, 1.0f },
+				"%f %f\n",
+				state->game.lucia_position.x,
+				state->game.lucia_position.y
+			);
 		} break;
 
 		case StateContext::end:
