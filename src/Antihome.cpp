@@ -1,11 +1,46 @@
 /* @TODO@
-	- Varying Anomal types and behaviors
-	- Map display
-	- Sound effects
-	- Fleshed out screens
+	- Friday 2022-5-13:
+		- Audio
+		- Collision detection overhual.
 
-	- Handle disconnected initial and updated values
-	- Mouse controls
+	- Saturday 2022-5-14:
+		- Finished storyboard
+		- Flashlight overlay?
+		- Jounral entries and documents.
+
+	- Sunday 2022-5-15:
+		- End screen
+		- Title screen
+		- Transitions
+
+	- Monday 2022-5-16:
+		- Breaker mechanic
+		- Better randomization of items, doors, breakers, and RNG system.
+
+	- Tuesday 2022-5-17:
+		- Anomaly: Serpent
+		- Anomaly: Guardian Angel
+		- Anomaly: Walt
+		- Anomaly: Gape
+
+	- Wednesday 2022-5-18:
+		- Item: Satellite dish piece.
+		- Item: SNAV.
+		- Item: Drugs of varying effects.
+		- Item: First aid kit.
+		- Item: Radio.
+		- Item: 18V battery.
+		- Item: Eyedrops.
+		- Item: Night Vision Goggles.
+		- Item: Clipboard
+		- Item: Joint
+		- Item: Cowbell
+
+	- Thursday 2022-5-19:
+		- Bug hunting.
+		- Better input.
+		- Handle disconnected initial and updated values.
+		- Handle different resolutions.
 */
 
 // @NOTE@ Credits
@@ -45,7 +80,20 @@ global constexpr struct { i32 slide_index; strlit text; } INTRO_DATA[] =
 		{ 6, "\"Ahu -`-`-`\"" }
 	};
 
-enum_loose (TitleMenuOption, i32)
+enum_loose (AudioChannel, u8)
+{
+	_0,
+	_1,
+	_2,
+	_3,
+
+	unreserved_4,
+	unreserved_5,
+	unreserved_6,
+	unreserved_7
+};
+
+enum_loose (TitleMenuOption, u8)
 {
 	start,
 	settings,
@@ -62,7 +110,7 @@ global constexpr strlit TITLE_MENU_OPTIONS[TitleMenuOption::CAPACITY] =
 		"Exit"
 	};
 
-enum_loose (SettingOption, i32)
+enum_loose (SettingOption, u8)
 {
 	master_volume,
 	brightness,
@@ -77,7 +125,7 @@ global constexpr strlit SETTING_OPTIONS[SettingOption::CAPACITY] =
 		"Done"
 	};
 
-enum_loose (ItemType, i32)
+enum_loose (ItemType, u8)
 {
 	null,
 
@@ -145,14 +193,14 @@ struct PathCoordinatesNode
 	PathCoordinatesNode* next_node;
 };
 
-enum struct StateContext : u32
+enum struct StateContext : u8
 {
 	title_menu,
 	game,
 	end
 };
 
-enum struct TitleMenuContext : u32
+enum struct TitleMenuContext : u8
 {
 	title_menu,
 	intro,
@@ -167,6 +215,7 @@ struct State
 
 	FC_Font*     major_font;
 	FC_Font*     minor_font;
+	Mix_Chunk*   tiny_click;
 
 	u32          seed;
 	f32          time;
@@ -186,6 +235,8 @@ struct State
 
 		struct
 		{
+			f32 repeat_sfx_keytime;
+			i32 repeat_sfx_count;
 		} settings;
 
 		struct
@@ -681,7 +732,6 @@ internal vf2 move(State* state, vf2 position, vf2 displacement)
 				break;
 			}
 
-			#if 1
 			if (t_max.x < t_max.y)
 			{
 				t_max.x       += t_delta.x;
@@ -692,18 +742,6 @@ internal vf2 move(State* state, vf2 position, vf2 displacement)
 				t_max.y       += t_delta.y;
 				coordinates.y  = mod(coordinates.y + step.y, MAP_DIM);
 			}
-			#else
-			if (t_max.x < t_max.y)
-			{
-				t_max.x       += t_delta.x;
-				coordinates.x += step.x;
-			}
-			else
-			{
-				t_max.y       += t_delta.y;
-				coordinates.y += step.y;
-			}
-			#endif
 		}
 
 		if (closest_intersection.status == IntersectionStatus::none)
@@ -772,7 +810,6 @@ internal bool32 exists_clear_way(State* state, vf2 position, vf2 goal)
 			return true;
 		}
 
-		#if 1
 		if (t_max.x < t_max.y)
 		{
 			t_max.x       += t_delta.x;
@@ -783,18 +820,6 @@ internal bool32 exists_clear_way(State* state, vf2 position, vf2 goal)
 			t_max.y       += t_delta.y;
 			coordinates.y  = mod(coordinates.y + step.y, MAP_DIM);
 		}
-		#else
-		if (t_max.x < t_max.y)
-		{
-			t_max.x       += t_delta.x;
-			coordinates.x += step.x;
-		}
-		else
-		{
-			t_max.y       += t_delta.y;
-			coordinates.y += step.y;
-		}
-		#endif
 	}
 
 	return false;
@@ -901,6 +926,8 @@ extern "C" PROTOTYPE_INITIALIZE(initialize)
 
 	SDL_SetRelativeMouseMode(SDL_TRUE);
 	SDL_RenderSetLogicalSize(platform->renderer, WIN_RES.x, WIN_RES.y);
+
+	Mix_ReserveChannels(4);
 }
 
 extern "C" PROTOTYPE_BOOT_UP(boot_up)
@@ -914,6 +941,8 @@ extern "C" PROTOTYPE_BOOT_UP(boot_up)
 	state->minor_font = FC_CreateFont();
 	FC_LoadFont(state->minor_font, platform->renderer, DATA_DIR "Consolas.ttf", 10, FC_MakeColor(255, 255, 255, 255), TTF_STYLE_NORMAL);
 
+	state->tiny_click = Mix_LoadWAV(DATA_DIR "tiny_click.wav");
+
 	boot_up_state(platform->renderer, state);
 }
 
@@ -925,6 +954,8 @@ extern "C" PROTOTYPE_BOOT_DOWN(boot_down)
 	FC_FreeFont(state->major_font);
 	FC_FreeFont(state->minor_font);
 
+	Mix_FreeChunk(state->tiny_click);
+
 	boot_down_state(state);
 }
 
@@ -934,6 +965,9 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 	state->time                 += SECONDS_PER_UPDATE;
 	state->transient_arena.used  = 0;
+
+
+	Mix_Volume(-1, static_cast<i32>(MIX_MAX_VOLUME * state->master_volume));
 
 	switch (state->context)
 	{
@@ -946,11 +980,16 @@ extern "C" PROTOTYPE_UPDATE(update)
 					state->title_menu.option_index_repeated_movement_countdown -= SECONDS_PER_UPDATE;
 
 					// @TODO@ Compatable with arrows.
-					state->title_menu.option_index += iterate_repeated_movement(platform, Input::w, Input::s, &state->title_menu.option_index_repeated_movement_countdown);
-					state->title_menu.option_index  = clamp(state->title_menu.option_index, 0, +TitleMenuOption::CAPACITY - 1);
+					i32 option_index_delta = iterate_repeated_movement(platform, Input::w, Input::s, &state->title_menu.option_index_repeated_movement_countdown);
+					if (option_index_delta && IN_RANGE(state->title_menu.option_index + option_index_delta, 0, +TitleMenuOption::CAPACITY))
+					{
+						Mix_PlayChannel(-1, state->tiny_click, 0);
+						state->title_menu.option_index += option_index_delta;
+					}
 
 					if (PRESSED(Input::space) || PRESSED(Input::enter))
 					{
+						Mix_PlayChannel(-1, state->tiny_click, 0);
 						switch (state->title_menu.option_index)
 						{
 							case TitleMenuOption::start:
@@ -990,14 +1029,22 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 				case TitleMenuContext::settings:
 				{
+					aliasing settings = state->title_menu.settings;
+
 					state->title_menu.option_index_repeated_movement_countdown -= SECONDS_PER_UPDATE;
 
 					// @TODO@ Compatable with arrows.
-					state->title_menu.option_index += iterate_repeated_movement(platform, Input::w, Input::s, &state->title_menu.option_index_repeated_movement_countdown);
-					state->title_menu.option_index  = clamp(state->title_menu.option_index, 0, +SettingOption::CAPACITY - 1);
+					i32 option_index_delta = iterate_repeated_movement(platform, Input::w, Input::s, &state->title_menu.option_index_repeated_movement_countdown);
+					if (option_index_delta && IN_RANGE(state->title_menu.option_index + option_index_delta, 0, +SettingOption::CAPACITY))
+					{
+						Mix_PlayChannel(-1, state->tiny_click, 0);
+						state->title_menu.option_index += option_index_delta;
+					}
 
 					if ((PRESSED(Input::space) || PRESSED(Input::enter)) && state->title_menu.option_index == +SettingOption::done)
 					{
+						Mix_PlayChannel(-1, state->tiny_click, 0);
+
 						state->title_menu.context                          = TitleMenuContext::title_menu;
 						state->title_menu.option_index                     = +TitleMenuOption::settings;
 						state->title_menu.option_cursor_interpolated_index = static_cast<f32>(TitleMenuOption::settings);
@@ -1012,6 +1059,24 @@ extern "C" PROTOTYPE_UPDATE(update)
 							f32 delta = 0.0f;
 							if (HOLDING(Input::a)) { delta -= 1.0f; }
 							if (HOLDING(Input::d)) { delta += 1.0f; }
+
+							if (delta)
+							{
+								settings.repeat_sfx_count = 2;
+							}
+
+							if (settings.repeat_sfx_count || settings.repeat_sfx_keytime)
+							{
+								settings.repeat_sfx_keytime = clamp(settings.repeat_sfx_keytime - SECONDS_PER_UPDATE / 0.5f, 0.0f, 1.0f);
+
+								if (settings.repeat_sfx_count && settings.repeat_sfx_keytime == 0.0f)
+								{
+									Mix_PlayChannel(-1, state->tiny_click, 0);
+									settings.repeat_sfx_count   -= 1;
+									settings.repeat_sfx_keytime  = 1.0f;
+								}
+							}
+
 							state->master_volume += delta * 0.5f * SECONDS_PER_UPDATE;
 							state->master_volume  = clamp(state->master_volume, 0.0f, 1.0f);
 						} break;
@@ -1033,9 +1098,12 @@ extern "C" PROTOTYPE_UPDATE(update)
 				{
 					if (PRESSED(Input::space) || PRESSED(Input::enter))
 					{
+						Mix_PlayChannel(-1, state->tiny_click, 0);
+
 						state->title_menu.context                          = TitleMenuContext::title_menu;
 						state->title_menu.option_index                     = +TitleMenuOption::credits;
 						state->title_menu.option_cursor_interpolated_index = static_cast<f32>(TitleMenuOption::credits);
+
 						return UpdateCode::resume;
 					}
 				} break;
@@ -2013,7 +2081,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 				if (state->game.holding.flashlight)
 				{
-					state->game.holding.flashlight->flashlight.power = clamp(state->game.holding.flashlight->flashlight.power - SECONDS_PER_UPDATE / 60.0f, 0.0f, 1.0f);
+					state->game.holding.flashlight->flashlight.power = clamp(state->game.holding.flashlight->flashlight.power - SECONDS_PER_UPDATE / 150.0f, 0.0f, 1.0f);
 					state->game.flashlight_activation                = dampen(state->game.flashlight_activation, sinf(TAU / 4.0f * (1.0f - powf(1.0f - state->game.holding.flashlight->flashlight.power, 16.0f))), 25.0f, SECONDS_PER_UPDATE);
 
 					if (state->game.holding.flashlight->flashlight.power == 0.0f)
@@ -2278,6 +2346,20 @@ extern "C" PROTOTYPE_RENDER(render)
 					{ 1.0f, 1.0f, 0.2f, 1.0f },
 					">"
 				);
+
+				// @TEMP@
+				draw_text
+				(
+					platform->renderer,
+					state->minor_font,
+					{ 0.0f, 0.0f },
+					FC_ALIGN_LEFT,
+					1.0f,
+					{ 1.0f, 1.0f, 1.0f, 1.0f },
+					"%d %f\n",
+					state->title_menu.settings.repeat_sfx_count,
+					state->title_menu.settings.repeat_sfx_keytime
+				);
 			}
 			else if (state->title_menu.context == TitleMenuContext::credits)
 			{
@@ -2305,7 +2387,7 @@ extern "C" PROTOTYPE_RENDER(render)
 
 		case StateContext::game:
 		{
-#if 0
+#if 1
 			f32* view_inv_depth_buffer = memory_arena_push<f32>(&state->transient_arena, VIEW_RES.x * VIEW_RES.y);
 
 			set_color(platform->renderer, { 0.05f, 0.1f, 0.15f, 1.0f });
