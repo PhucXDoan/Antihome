@@ -1,8 +1,4 @@
 /* @TODO@
-	- Friday 2022-5-13:
-		- Audio
-		- Collision detection overhual.
-
 	- Saturday 2022-5-14:
 		- Finished storyboard
 		- Flashlight overlay?
@@ -688,96 +684,65 @@ internal vf2 rng_open_position(State* state)
 
 internal vf2 move(State* state, vf2 position, vf2 displacement)
 {
-	Intersection closest_intersection;
-	closest_intersection.status   = IntersectionStatus::none;
-	closest_intersection.position = { NAN, NAN };
-	closest_intersection.normal   = { NAN, NAN };
-	closest_intersection.distance = NAN;
-
-	vf2 current_displacement = displacement;
 	vf2 current_position     = position;
+	vf2 current_displacement = displacement;
 	FOR_RANGE(4)
 	{
-		vi2 step =
-			{
-				current_displacement.x < 0.0f ? -1 : 1,
-				current_displacement.y < 0.0f ? -1 : 1
-			};
-		vf2 t_max =
-			{
-				((static_cast<i32>(current_position.x / WALL_SPACING) + (step.x == 1)) * WALL_SPACING - current_position.x) / current_displacement.x,
-				((static_cast<i32>(current_position.y / WALL_SPACING) + (step.y == 1)) * WALL_SPACING - current_position.y) / current_displacement.y
-			};
-		vf2 t_delta =
-			{
-				step.x / current_displacement.x * WALL_SPACING,
-				step.y / current_displacement.y * WALL_SPACING
-			};
-		vi2 coordinates =
-			{
-				static_cast<i32>(floorf(current_position.x / WALL_SPACING)),
-				static_cast<i32>(floorf(current_position.y / WALL_SPACING))
-			};
+		CollisionData data;
+		data.exists       = false;
+		data.inside       = false;
+		data.displacement = { NAN, NAN };
+		data.normal       = { NAN, NAN };
 
-		FOR_RANGE(MAXIMUM(fabsf(current_displacement.x), fabsf(current_displacement.y)) / WALL_SPACING + 1)
+		// @TODO@ Make this smarter.
+		FOR_RANGE(y, static_cast<i32>(floorf(position.y / WALL_SPACING) + min(ceilf(current_displacement.y / WALL_SPACING), 0.0f) - 2.0f), floorf(position.y / WALL_SPACING) + max(floor(current_displacement.y / WALL_SPACING), 0.0f) + 2.0f)
 		{
-			FOR_ELEMS(voxel_data, WALL_VOXEL_DATA)
+			FOR_RANGE(x, static_cast<i32>(floorf(position.x / WALL_SPACING) + min(ceilf(current_displacement.x / WALL_SPACING), 0.0f) - 2.0f), floorf(position.x / WALL_SPACING) + max(floor(current_displacement.x / WALL_SPACING), 0.0f) + 2.0f)
 			{
-				if (+(*get_wall_voxel(state, coordinates) & voxel_data->voxel))
+				FOR_ELEMS(voxel_data, WALL_VOXEL_DATA)
 				{
-					Intersection intersection =
-						intersect_thick_line_segment
-						(
-							current_position,
-							current_displacement,
-							(coordinates + voxel_data->start) * WALL_SPACING,
-							(coordinates + voxel_data->end  ) * WALL_SPACING,
-							WALL_THICKNESS
-						);
-
-					if
-					(
-						closest_intersection.status == IntersectionStatus::none    ||
-						intersection.status         == IntersectionStatus::outside &&  closest_intersection.status == IntersectionStatus::outside && intersection.distance < closest_intersection.distance ||
-						intersection.status         == IntersectionStatus::inside  && (closest_intersection.status == IntersectionStatus::outside || intersection.distance > closest_intersection.distance)
-					)
+					if (+(*get_wall_voxel(state, { x, y }) & voxel_data->voxel))
 					{
-						closest_intersection = intersection;
+						data =
+							prioritize_collision
+							(
+								data,
+								collide_pill
+								(
+									current_position,
+									current_displacement,
+									(vi2 { x, y } + voxel_data->start) * WALL_SPACING,
+									(vi2 { x, y } + voxel_data->end  ) * WALL_SPACING,
+									WALL_THICKNESS
+								)
+							);
 					}
 				}
-			}
 
-			if (closest_intersection.status != IntersectionStatus::none)
-			{
-				break;
-			}
-
-			if (t_max.x < t_max.y)
-			{
-				t_max.x       += t_delta.x;
-				coordinates.x  = mod(coordinates.x + step.x, MAP_DIM);
-			}
-			else
-			{
-				t_max.y       += t_delta.y;
-				coordinates.y  = mod(coordinates.y + step.y, MAP_DIM);
+				if (data.exists)
+				{
+					goto COLLISION;
+				}
 			}
 		}
 
-		if (closest_intersection.status == IntersectionStatus::none)
+
+		if (data.exists)
 		{
-			break;
+			COLLISION:
+			current_position     += data.displacement;
+			current_position.x    = mod(current_position.x, MAP_DIM * WALL_SPACING);
+			current_position.y    = mod(current_position.y, MAP_DIM * WALL_SPACING);
+			current_displacement  = dot(displacement - data.displacement, rotate90(data.normal)) * rotate90(data.normal);
 		}
-
-		current_position     = closest_intersection.position;
-		current_position.x   = mod(current_position.x, MAP_DIM * WALL_SPACING);
-		current_position.y   = mod(current_position.y, MAP_DIM * WALL_SPACING);
-		current_displacement = dot(current_position + current_displacement - closest_intersection.position, rotate90(closest_intersection.normal)) * rotate90(closest_intersection.normal);
+		else
+		{
+			current_position   += current_displacement;
+			current_position.x  = mod(current_position.x, MAP_DIM * WALL_SPACING);
+			current_position.y  = mod(current_position.y, MAP_DIM * WALL_SPACING);
+			return current_position;
+		}
 	}
-
-	current_position   += current_displacement;
-	current_position.x  = mod(current_position.x, MAP_DIM * WALL_SPACING);
-	current_position.y  = mod(current_position.y, MAP_DIM * WALL_SPACING);
 	return current_position;
 }
 
@@ -1819,7 +1784,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 				FOR_ELEMS(it, state->game.item_buffer, state->game.item_count)
 				{
 					it->velocity    *= 0.9f;
-					it->position.xy  = move(state, it->position.xy, it->velocity * SECONDS_PER_UPDATE);
+					it->position.xy  = move(state, it->position.xy, it->velocity * SECONDS_PER_UPDATE);// @TEMP@
 					it->position.z   = lerp(0.15f, state->game.lucia_position.z, clamp(1.0f - norm_sq(ray_to_closest(state->game.lucia_position.xy, it->position.xy)) / 36.0f, 0.0f, 1.0f)) + sinf(state->time * 3.0f) * 0.025f;
 					it->normal       = polar(state->time * 0.7f);
 				}
@@ -2662,7 +2627,7 @@ extern "C" PROTOTYPE_RENDER(render)
 								* clamp
 									(
 										(
-											0.175f
+											0.22f
 												- fabsf(dot(ray, normal)) * 0.01f
 												+ ((state->game.lucia_position.z + ray.z * distance) / WALL_HEIGHT + 0.95f) * 0.7f * (0.5f - 4.0f * cube(state->game.ceiling_lights_deactivation_keytime - 0.5f))
 										)
@@ -3045,6 +3010,101 @@ extern "C" PROTOTYPE_RENDER(render)
 				"%f %f\n",
 				state->game.lucia_position.x,
 				state->game.lucia_position.y
+			);
+#elif 1
+			set_color(platform->renderer, monochrome(0.0f));
+			SDL_RenderClear(platform->renderer);
+
+			vf2 camera_position  = state->game.lucia_position.xy;
+			f32 pixels_per_meter = 64.0f;
+
+			set_color(platform->renderer, monochrome(0.1f));
+			draw_filled_rect
+			(
+				platform->renderer,
+				vxx(WIN_RES / 2.0f + vf2 { -camera_position.x * pixels_per_meter, - 1.0f + (camera_position.y - MAP_DIM * WALL_SPACING) * pixels_per_meter }),
+				vxx(vf2 { MAP_DIM * WALL_SPACING, MAP_DIM * WALL_SPACING } * pixels_per_meter)
+			);
+
+			FOR_RANGE(y, MAP_DIM)
+			{
+				FOR_RANGE(x, MAP_DIM)
+				{
+					FOR_ELEMS(it, WALL_VOXEL_DATA)
+					{
+						if (+(state->game.wall_voxels[y][x] & it->voxel))
+						{
+							vf2 start_pos = vf2 { (x + it->start.x) * WALL_SPACING, (y + it->start.y) * WALL_SPACING } - camera_position;
+							vf2 end_pos   = vf2 { (x + it->end.x  ) * WALL_SPACING, (y + it->end.y  ) * WALL_SPACING } - camera_position;
+
+							set_color(platform->renderer, monochrome(0.75f));
+							SDL_RenderDrawLine
+							(
+								platform->renderer,
+								static_cast<i32>(WIN_RES.x / 2.0f + start_pos.x * pixels_per_meter), static_cast<i32>(WIN_RES.y / 2.0f - 1.0f - start_pos.y * pixels_per_meter),
+								static_cast<i32>(WIN_RES.x / 2.0f + end_pos.x   * pixels_per_meter), static_cast<i32>(WIN_RES.y / 2.0f - 1.0f - end_pos.y   * pixels_per_meter)
+							);
+
+							set_color(platform->renderer, { 0.5f, 0.5f, 0.25f, 1.0f });
+							draw_circle(platform->renderer, { static_cast<i32>(WIN_RES.x / 2.0f + start_pos.x * pixels_per_meter), static_cast<i32>(WIN_RES.y / 2.0f - 1.0f - start_pos.y * pixels_per_meter) }, static_cast<i32>(WALL_THICKNESS * pixels_per_meter));
+							draw_circle(platform->renderer, { static_cast<i32>(WIN_RES.x / 2.0f + end_pos.x   * pixels_per_meter), static_cast<i32>(WIN_RES.y / 2.0f - 1.0f - end_pos.y   * pixels_per_meter) }, static_cast<i32>(WALL_THICKNESS * pixels_per_meter));
+
+							start_pos = vf2 { (x + it->start.x) * WALL_SPACING, (y + it->start.y) * WALL_SPACING } - it->normal * WALL_THICKNESS - camera_position;
+							end_pos   = vf2 { (x + it->end.x  ) * WALL_SPACING, (y + it->end.y  ) * WALL_SPACING } - it->normal * WALL_THICKNESS - camera_position;
+							SDL_RenderDrawLine
+							(
+								platform->renderer,
+								static_cast<i32>(WIN_RES.x / 2.0f + start_pos.x * pixels_per_meter), static_cast<i32>(WIN_RES.y / 2.0f - 1.0f - start_pos.y * pixels_per_meter),
+								static_cast<i32>(WIN_RES.x / 2.0f + end_pos.x   * pixels_per_meter), static_cast<i32>(WIN_RES.y / 2.0f - 1.0f - end_pos.y   * pixels_per_meter)
+							);
+
+							start_pos = vf2 { (x + it->start.x) * WALL_SPACING, (y + it->start.y) * WALL_SPACING } + it->normal * WALL_THICKNESS - camera_position;
+							end_pos   = vf2 { (x + it->end.x  ) * WALL_SPACING, (y + it->end.y  ) * WALL_SPACING } + it->normal * WALL_THICKNESS - camera_position;
+							SDL_RenderDrawLine
+							(
+								platform->renderer,
+								static_cast<i32>(WIN_RES.x / 2.0f + start_pos.x * pixels_per_meter), static_cast<i32>(WIN_RES.y / 2.0f - 1.0f - start_pos.y * pixels_per_meter),
+								static_cast<i32>(WIN_RES.x / 2.0f + end_pos.x   * pixels_per_meter), static_cast<i32>(WIN_RES.y / 2.0f - 1.0f - end_pos.y   * pixels_per_meter)
+							);
+						}
+					}
+
+
+					set_color(platform->renderer, monochrome(0.5f));
+					SDL_RenderDrawPoint
+					(
+						platform->renderer,
+						static_cast<i32>(WIN_RES.x / 2.0f + (x * WALL_SPACING - camera_position.x) * pixels_per_meter),
+						static_cast<i32>(WIN_RES.y / 2.0f - 1.0f - (y * WALL_SPACING - camera_position.y) * pixels_per_meter)
+					);
+				}
+			}
+
+			set_color(platform->renderer, { 0.5f, 0.25f, 0.25f, 1.0f });
+			draw_circle
+			(
+				platform->renderer,
+				vxx(WIN_RES / 2.0f + vf2 { (state->game.lucia_position.x - camera_position.x) * pixels_per_meter, -1.0f - (state->game.lucia_position.y - camera_position.y) * pixels_per_meter }),
+				5
+			);
+			set_color(platform->renderer, { 0.5f, 0.25f, 0.25f, 1.0f });
+			SDL_RenderDrawLine
+			(
+				platform->renderer,
+				static_cast<i32>(WIN_RES.x / 2.0f + (state->game.lucia_position.x - camera_position.x) * pixels_per_meter),
+				static_cast<i32>(WIN_RES.y / 2.0f - 1.0f - (state->game.lucia_position.y - camera_position.y) * pixels_per_meter),
+				static_cast<i32>(WIN_RES.x / 2.0f + (state->game.lucia_position.x + cosf(state->game.lucia_angle) * 3.0f - camera_position.x) * pixels_per_meter),
+				static_cast<i32>(WIN_RES.y / 2.0f - 1.0f - (state->game.lucia_position.y + sinf(state->game.lucia_angle) * 3.0f - camera_position.y) * pixels_per_meter)
+			);
+
+			const WallVoxelData* door_data = get_wall_voxel_data(state->game.door_wall_side.voxel);
+			vf2                  door_pos  = (state->game.door_wall_side.coordinates + (door_data->start + door_data->end) / 2.0f) * WALL_SPACING + (state->game.door_wall_side.is_antinormal ? -door_data->normal : door_data->normal);
+			set_color(platform->renderer, { 0.25f, 0.5f, 0.25f, 1.0f });
+			draw_circle
+			(
+				platform->renderer,
+				vxx(WIN_RES / 2.0f + vf2 { (door_pos.x - camera_position.x) * pixels_per_meter, -1.0f - (door_pos.y - camera_position.y) * pixels_per_meter }),
+				5
 			);
 #else
 			set_color(platform->renderer, monochrome(0.0f));

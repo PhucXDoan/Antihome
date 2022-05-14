@@ -45,21 +45,6 @@ global constexpr u16 RAND_TABLE[] =
 		0x517b, 0xf57b, 0xacac, 0x5be7, 0x5bb9, 0x6cc2, 0xbd39, 0xdb17, 0x4be8, 0x4eea, 0xeffb, 0x13ed, 0x2391, 0x0b62, 0xd9eb, 0x7b5f
 	};
 
-enum struct IntersectionStatus : u32
-{
-	none,
-	outside,
-	inside
-};
-
-struct Intersection
-{
-	IntersectionStatus status;
-	vf2                position;
-	vf2                normal;
-	f32                distance;
-};
-
 struct ImgRGBA
 {
 	vi2  dim;
@@ -80,8 +65,15 @@ struct Mipmap
 	RGB* data;
 };
 
+template <typename TYPE>
+i32 sign(TYPE x)
+{
+	return (static_cast<TYPE>(0) < x) - (x < static_cast<TYPE>(0));
+}
+
 internal constexpr vf2 conjugate(vf2 v) { return {  v.x, -v.y }; }
 internal constexpr vf2 rotate90(vf2 v)  { return { -v.y,  v.x }; }
+internal vf2 rotate(vf2 v, f32 angle)  { return { v.x * cosf(angle) - v.y * sinf(angle), v.x * sinf(angle) + v.y * cosf(angle) }; }
 
 internal constexpr f32 square(f32 x) { return x * x; }
 internal constexpr f32 cube(f32 x) { return x * x * x; }
@@ -121,11 +113,6 @@ internal i32 mod(i32 x, i32 m) { return (x % m + m) % m; }
 internal f32 mod(f32 x, f32 m) { f32 y = fmodf(x, m); return y < 0.0f ? y + m : y; }
 
 internal vf2 polar(f32 angle) { return { cosf(angle), sinf(angle) }; }
-
-internal vf2 rotate(vf2 v, f32 angle)
-{
-	return { v.x * cosf(angle) - v.y * sinf(angle), v.x * sinf(angle) + v.y * cosf(angle) };
-}
 
 internal constexpr u32 pack_color(vf3 color)
 {
@@ -352,145 +339,172 @@ bool32 is_line_segment_intersecting(vf2 p1, vf2 q1, vf2 p2, vf2 q2)
 		|| o4 == Orientation::collinear && is_point_on_line_segment(p2, q1, q2);
 }
 
-internal bool32 ray_cast_plane(f32* scalar, vf2* portion, vf3 position, vf3 ray, vf3 plane_origin, vf3 plane_dx, vf3 plane_dy)
+struct CollisionData
 {
-	__m128 mx = _mm_setr_ps(plane_dx.y, plane_dx.z, plane_dx.x, 0.0f);
-	__m128 my = _mm_setr_ps(plane_dy.z, plane_dy.x, plane_dy.y, 0.0f);
-	__m128 ma =
-		_mm_sub_ps
-		(
-			_mm_mul_ps(mx, my),
-			_mm_mul_ps
-			(
-				_mm_setr_ps(plane_dy.y, plane_dx.x, plane_dx.y, 0.0f),
-				_mm_setr_ps(plane_dx.z, plane_dy.z, plane_dy.x, 0.0f)
-			)
-		);
+	bool16 exists;
+	bool16 inside;
+	vf2    displacement;
+	vf2    normal;
+};
 
-	__m128 mb = _mm_mul_ps(ma, _mm_setr_ps(ray.x, ray.y, ray.z, 0.0f));
-	mb = _mm_hadd_ps(mb, mb);
-
-	f32 det = _mm_cvtss_f32(_mm_hadd_ps(mb, mb));
-	__m128 mv  =
-		_mm_sub_ps
-		(
-			_mm_setr_ps(plane_origin.x, plane_origin.y, plane_origin.z, 0.0f),
-			_mm_setr_ps(position.x, position.y, position.z, 0.0f)
-		);
-
-	mb = _mm_mul_ps(ma, mv);
-	mb = _mm_hadd_ps(mb, mb);
-	*scalar = _mm_cvtss_f32(_mm_hadd_ps(mb, mb)) / det;
-
-	if (*scalar >= 0.0f)
+internal CollisionData prioritize_collision(CollisionData a, CollisionData b)
+{
+	if (a.exists)
 	{
-		__m128 mr0 = _mm_setr_ps(ray.y, ray.z, ray.x, 0.0f);
-		__m128 mr1 = _mm_setr_ps(ray.z, ray.x, ray.y, 0.0f);
-
-		ma =
-			_mm_mul_ps
-			(
-				_mm_sub_ps
-				(
-					_mm_mul_ps(mr0, my),
-					_mm_mul_ps(mr1, _mm_setr_ps(plane_dy.y, plane_dy.z, plane_dy.x, 0.0f))
-				),
-				mv
-			);
-
-		ma = _mm_hadd_ps(ma, ma);
-		portion->x = _mm_cvtss_f32(_mm_hadd_ps(ma, ma)) / det;
-
-		ma =
-			_mm_mul_ps
-			(
-				_mm_sub_ps
-				(
-					_mm_mul_ps(mr1, mx),
-					_mm_mul_ps(mr0, _mm_setr_ps(plane_dx.z, plane_dx.x, plane_dx.y, 0.0f))
-				),
-				mv
-			);
-
-		ma = _mm_hadd_ps(ma, ma);
-		portion->y = _mm_cvtss_f32(_mm_hadd_ps(ma, ma)) / det;
-
-		return true;
+		if (b.exists && norm(a.displacement) * (a.inside ? 1.0f : -1.0f) < norm(b.displacement) * (b.inside ? 1.0f : -1.0f))
+		{
+			return b;
+		}
+		else
+		{
+			return a;
+		}
 	}
 	else
 	{
-		return false;
+		return b;
 	}
 }
 
-internal Intersection intersect_thick_line_segment(vf2 position, vf2 ray, vf2 start, vf2 end, f32 thickness)
+internal CollisionData collide_thick_line(vf2 position, vf2 ray, vf2 start, vf2 end, f32 padding)
 {
-	vf2 dir        = normalize(end - start);
-	vf2 vertices[] =
-		{
-			start + (-dir + vf2 {  dir.y, -dir.x }) * thickness,
-			end   + ( dir + vf2 {  dir.y, -dir.x }) * thickness,
-			end   + ( dir + vf2 { -dir.y,  dir.x }) * thickness,
-			start + (-dir + vf2 { -dir.y,  dir.x }) * thickness
-		};
+	vf2 n  = normalize(rotate90(end - start));
+	f32 d0 = dot(start + n * padding - position, n);
+	f32 d1 = dot(start - n * padding - position, n);
 
-	Intersection closest_intersection;
-	closest_intersection.status   = IntersectionStatus::none;
-	closest_intersection.position = { NAN, NAN };
-	closest_intersection.normal   = { NAN, NAN };
-	closest_intersection.distance = NAN;
+	constexpr f32 EPSILON = 0.001f;
+	if (fabsf(d0) <= EPSILON) { d0 = 0.0f; }
+	if (fabsf(d1) <= EPSILON) { d1 = 0.0f; }
 
-	vf2 current_dir = dir;
-	FOR_RANGE(i, 4)
+	if (sign(d0) == sign(d1))
 	{
-		refering u = vertices[i];
-		refering v = vertices[(i + 1) % 4];
-		vf2      n = { current_dir.y, -current_dir.x };
+		f32 den = (end.y - start.y) * ray.x - (end.x - start.x) * ray.y;
+		f32 k0  = ((end.x - start.x) * (position.y - start.y - n.y * padding) - (end.y - start.y) * (position.x - start.x - n.x * padding)) / den;
+		f32 k1  = ((end.x - start.x) * (position.y - start.y + n.y * padding) - (end.y - start.y) * (position.x - start.x + n.x * padding)) / den;
 
-		Intersection intersection;
-		intersection.status   = IntersectionStatus::none;
-		intersection.position = { NAN, NAN };
-		intersection.normal   = { NAN, NAN };
-		intersection.distance = NAN;
-
-		if (closest_intersection.status != IntersectionStatus::inside && dot(position - u, n) >= 0.0f)
+		if (k0 < k1)
 		{
-			if (dot(ray, n) < 0.0f)
+			if (0.0f < k0 && k0 <= 1.0f)
 			{
-				f32 denom = ray.x * (u.y - v.y) - ray.y * (u.x - v.x);
-				if (fabs(denom) > 0.001f)
-				{
-					intersection.position = (ray * (u.y * v.x - u.x * v.y) + (ray.x * position.y - ray.y * position.x) * (u - v)) / denom;
-					intersection.distance = norm(intersection.position - position);
-
-					if (IN_RANGE(dot(intersection.position - u, current_dir), 0.0f, norm(u - v)) && intersection.distance < norm(ray))
-					{
-						intersection.status = IntersectionStatus::outside;
-					}
-				}
+				CollisionData data;
+				data.exists       = true;
+				data.inside       = false;
+				data.displacement = k0 * ray;
+				data.normal       = n;
+				return data;
+			}
+			else
+			{
+				CollisionData data;
+				data.exists = false;
+				return data;
 			}
 		}
-		else if (IN_RANGE(dot(position - u, -n), 0.0f, thickness))
+		else if (0.0f < k1 && k1 <= 1.0f)
 		{
-			intersection.position = dot(position - u, current_dir) * current_dir + u;
+			CollisionData data;
+			data.exists       = true;
+			data.inside       = false;
+			data.displacement = k1 * ray;
+			data.normal       = -n;
+			return data;
+		}
+		else
+		{
+			CollisionData data;
+			data.exists = false;
+			return data;
+		}
+	}
+	else if (d0 == 0.0f && dot(ray, n) >= 0.0f || d1 == 0.0f && dot(ray, n) <= 0.0f)
+	{
+		CollisionData data;
+		data.exists = false;
+		return data;
+	}
+	else if (fabsf(d0) < fabsf(d1))
+	{
+		CollisionData data;
+		data.exists       = true;
+		data.inside       = true;
+		data.displacement = d0 * n;
+		data.normal       = n;
+		return data;
+	}
+	else
+	{
+		CollisionData data;
+		data.exists       = true;
+		data.inside       = true;
+		data.displacement = d1 * n;
+		data.normal       = -n;
+		return data;
+	}
+}
 
-			if (IN_RANGE(dot(intersection.position - u, current_dir), 0.0f, norm(u - v)))
+internal CollisionData collide_circle(vf2 position, vf2 ray, vf2 center, f32 radius)
+{
+	f32 norm_sq_ray  = norm_sq(ray);
+	f32 discriminant = norm_sq_ray * radius * radius - square(ray.x * (position.y - center.y) - ray.y * (position.x - center.x));
+
+	if (discriminant <= 0.0f)
+	{
+		CollisionData data;
+		data.exists = false;
+		return data;
+	}
+	else
+	{
+		f32 k0 = (dot(center - position, ray) - sqrtf(discriminant)) / norm_sq_ray;
+		f32 k1 = (dot(center - position, ray) + sqrtf(discriminant)) / norm_sq_ray;
+
+		if (k0 < 0.0f && k1 < 0.0f || dot(position - center, ray) >= 0.0f)
+		{
+			CollisionData data;
+			data.exists = false;
+			return data;
+		}
+		else if (sign(k0) == sign(k1))
+		{
+			if (min(k0, k1) <= 1.0f)
 			{
-				intersection.status   = IntersectionStatus::inside;
-				intersection.distance = norm(intersection.position - position);
+				CollisionData data;
+				data.exists       = true;
+				data.inside       = false;
+				data.displacement = min(k0, k1) * ray;
+				data.normal       = normalize(position + data.displacement - center);
+				return data;
+			}
+			else
+			{
+				CollisionData data;
+				data.exists = false;
+				return data;
 			}
 		}
-
-		if (intersection.status != IntersectionStatus::none && (closest_intersection.status == IntersectionStatus::none || intersection.distance < closest_intersection.distance))
+		else
 		{
-			closest_intersection        = intersection;
-			closest_intersection.normal = n;
+			CollisionData data;
+			data.exists       = true;
+			data.inside       = true;
+			data.displacement = normalize(position - center) * radius + center - position;
+			data.normal       = data.displacement + position - center;
+			return data;
 		}
+	}
+}
 
-		current_dir = { -current_dir.y, current_dir.x };
+internal CollisionData collide_pill(vf2 position, vf2 ray, vf2 start, vf2 end, f32 padding)
+{
+	CollisionData data = collide_thick_line(position, ray, start, end, padding);
+
+	if (data.exists)
+	{
+		f32 portion = dot(position + data.displacement - start, (end - start) / norm_sq(end - start));
+		data.exists = 0.0f <= portion && portion <= 1.0f;
 	}
 
-	return closest_intersection;
+	return prioritize_collision(prioritize_collision(data, collide_circle(position, ray, start, padding)), collide_circle(position, ray, end, padding));
 }
 
 internal void set_color(SDL_Renderer* renderer, vf3 color)
