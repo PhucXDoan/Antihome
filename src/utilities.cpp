@@ -45,7 +45,7 @@ global constexpr u16 RAND_TABLE[] =
 		0x517b, 0xf57b, 0xacac, 0x5be7, 0x5bb9, 0x6cc2, 0xbd39, 0xdb17, 0x4be8, 0x4eea, 0xeffb, 0x13ed, 0x2391, 0x0b62, 0xd9eb, 0x7b5f
 	};
 
-struct ImgRGBA
+struct Img
 {
 	vi2  dim;
 	vf4* rgba;
@@ -132,9 +132,9 @@ internal constexpr vf3 unpack_color(u32 pixel)
 		};
 }
 
-internal ImgRGBA init_img_rgba(strlit filepath)
+internal Img init_img(strlit filepath)
 {
-	ImgRGBA img;
+	Img img;
 
 	i32  iw;
 	i32  ih;
@@ -163,12 +163,12 @@ internal ImgRGBA init_img_rgba(strlit filepath)
 	return img;
 }
 
-internal void deinit_img_rgba(ImgRGBA* img)
+internal void deinit_img(Img* img)
 {
 	free(img->rgba);
 }
 
-internal vf4 img_color_at(ImgRGBA* img, vf2 uv)
+internal vf4 img_color_at(Img* img, vf2 uv)
 {
 	ASSERT(0.0f <= uv.x && uv.x <= 1.0f);
 	ASSERT(0.0f <= uv.y && uv.y <= 1.0f);

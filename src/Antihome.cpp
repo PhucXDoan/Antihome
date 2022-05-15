@@ -91,7 +91,7 @@ global constexpr vi2 VIEW_RES          = vxx(vf2 { 1.0f, 0.5f } * (WIN_RES.x - P
 global constexpr vi2 HUD_RES           = { WIN_RES.x - PADDING * 2, WIN_RES.y - VIEW_RES.y - PADDING * 3 };
 global constexpr f32 HORT_TO_VERT_K    = 0.927295218f * VIEW_RES.x;
 global constexpr f32 WALL_HEIGHT       = 2.7432f;
-global constexpr f32 WALL_THICKNESS    = 0.25f;
+global constexpr f32 WALL_THICKNESS    = 0.4f;
 global constexpr f32 LUCIA_HEIGHT      = 1.4986f;
 global constexpr i32 MAP_DIM           = 32;
 global constexpr f32 WALL_SPACING      = 3.0f;
@@ -115,10 +115,10 @@ enum_loose (AudioChannel, i8)
 	unreserved = -1,
 
 	enum_start_region(RESERVED)
-		bg_0,
-		bg_1,
-		_2,
-		_3,
+		r0,
+		r1,
+		r2,
+		r3,
 	enum_end_region(RESERVED)
 	enum_start_region(UNRESERVED)
 		_4,
@@ -127,6 +127,30 @@ enum_loose (AudioChannel, i8)
 		_7,
 	enum_end_region(UNRESERVED)
 };
+
+global constexpr strlit WALK_STEP_WAV_FILE_PATHS[] =
+	{
+		DATA_DIR "audio/step_0.wav",
+		DATA_DIR "audio/step_1.wav",
+		DATA_DIR "audio/step_2.wav",
+		DATA_DIR "audio/step_3.wav",
+		DATA_DIR "audio/step_4.wav",
+		DATA_DIR "audio/step_5.wav",
+		DATA_DIR "audio/step_6.wav",
+		DATA_DIR "audio/step_7.wav"
+	};
+
+global constexpr strlit RUN_STEP_WAV_FILE_PATHS[] =
+	{
+		DATA_DIR "audio/run_0.wav",
+		DATA_DIR "audio/run_1.wav",
+		DATA_DIR "audio/run_2.wav",
+		DATA_DIR "audio/run_3.wav",
+		DATA_DIR "audio/run_4.wav",
+		DATA_DIR "audio/run_5.wav",
+		DATA_DIR "audio/run_6.wav",
+		DATA_DIR "audio/run_7.wav"
+	};
 
 enum_loose (TitleMenuOption, u8)
 {
@@ -190,14 +214,6 @@ global constexpr struct { f32 min_scalar; f32 max_scalar; strlit file_path; } PA
 		{ 0.2f, 0.8f, DATA_DIR "terry_entry_4.png" }
 	};
 
-global constexpr strlit FOOTSTEP_WAV_FILE_PATHS[] =
-	{
-		DATA_DIR "debug_0.wav",
-		DATA_DIR "debug_1.wav",
-		DATA_DIR "debug_2.wav",
-		DATA_DIR "debug_3.wav"
-	};
-
 struct Item
 {
 	ItemType  type;
@@ -256,12 +272,27 @@ struct State
 	MemoryArena  long_term_arena;
 	MemoryArena  transient_arena;
 
-	FC_Font*     major_font;
-	FC_Font*     minor_font;
-	Mix_Chunk*   tiny_click;
-	Mix_Chunk*   text_type_sfx;
+	union
+	{
+		struct
+		{
+			FC_Font* major;
+			FC_Font* minor;
+		} font;
 
-	f32          reserved_channel_volumes[AudioChannel::RESERVED_COUNT];
+		FC_Font* fonts[sizeof(font) / sizeof(FC_Font*)];
+	};
+
+	union
+	{
+		struct
+		{
+			Mix_Chunk* click;
+			Mix_Chunk* text_type;
+		} audio;
+
+		Mix_Chunk* audios[sizeof(audio) / sizeof(Mix_Chunk*)];
+	};
 
 	u32          seed;
 	f32          time;
@@ -304,26 +335,64 @@ struct State
 
 	struct
 	{
-		Mipmap               wall;
-		Mipmap               floor;
-		Mipmap               ceiling;
-		ImgRGBA              monster_img;
-		ImgRGBA              hand_img;
-		ImgRGBA              flashlight_on_img;
-		ImgRGBA              default_item_imgs[ItemType::ITEM_COUNT];
-		ImgRGBA              paper_imgs[ARRAY_CAPACITY(PAPER_DATA)];
-		ImgRGBA              door;
-		ImgRGBA              wall_left_arrow;
-		ImgRGBA              wall_right_arrow;
-		SDL_Texture*         lucia_haunted;
-		SDL_Texture*         lucia_healed;
-		SDL_Texture*         lucia_hit;
-		SDL_Texture*         lucia_normal;
-		SDL_Texture*         lucia_wounded;
-		SDL_Texture*         view_texture;
-		Mix_Chunk*           room_ambience;
-		Mix_Chunk*           room_ambience_quiet;
-		Mix_Chunk*           footstep_sfxs[ARRAY_CAPACITY(FOOTSTEP_WAV_FILE_PATHS)];
+		union
+		{
+			struct
+			{
+				Mipmap wall;
+				Mipmap floor;
+				Mipmap ceiling;
+			} mipmap;
+
+			Mipmap mipmaps[sizeof(mipmap) / sizeof(Mipmap)];
+		};
+
+		union
+		{
+			struct
+			{
+				Img monster;
+				Img hand;
+				Img flashlight_on;
+				Img door;
+				Img wall_left_arrow;
+				Img wall_right_arrow;
+				Img default_items[ItemType::ITEM_COUNT];
+				Img papers[ARRAY_CAPACITY(PAPER_DATA)];
+			} img;
+
+			Img imgs[sizeof(img) / sizeof(Img)];
+		};
+
+		union
+		{
+			struct
+			{
+				SDL_Texture* lucia_haunted;
+				SDL_Texture* lucia_healed;
+				SDL_Texture* lucia_hit;
+				SDL_Texture* lucia_normal;
+				SDL_Texture* lucia_wounded;
+				SDL_Texture* view;
+			} texture;
+
+			SDL_Texture* textures[sizeof(texture) / sizeof(SDL_Texture*)];
+		};
+
+		union
+		{
+			struct
+			{
+				Mix_Chunk* eletronical;
+				Mix_Chunk* pick_up_paper;
+				Mix_Chunk* pick_up_heavy;
+				Mix_Chunk* switch_toggle;
+				Mix_Chunk* walk_steps[ARRAY_CAPACITY(WALK_STEP_WAV_FILE_PATHS)];
+				Mix_Chunk* run_steps [ARRAY_CAPACITY(RUN_STEP_WAV_FILE_PATHS)];
+			} audio;
+
+			Mix_Chunk* audios[sizeof(audio) / sizeof(Mix_Chunk*)];
+		};
 
 		f32                  entering_keytime;
 		bool32               is_exiting;
@@ -352,7 +421,6 @@ struct State
 		f32                  lucia_stamina;
 		f32                  lucia_sprint_keytime;
 		bool32               lucia_out_of_breath;
-		f32                  lucia_step_keytime;
 
 		PathCoordinatesNode* monster_path;
 		vi2                  monster_path_goal;
@@ -430,7 +498,7 @@ internal const WallVoxelData* get_wall_voxel_data(WallVoxel voxel)
 	return 0;
 }
 
-internal ImgRGBA* get_corresponding_item_img(State* state, Item* item)
+internal Img* get_corresponding_item_img(State* state, Item* item)
 {
 	switch (item->type)
 	{
@@ -443,12 +511,12 @@ internal ImgRGBA* get_corresponding_item_img(State* state, Item* item)
 		{
 			if (state->game.holding.flashlight == item)
 			{
-				return &state->game.flashlight_on_img;
+				return &state->game.img.flashlight_on;
 			}
 		} break;
 	}
 
-	return &state->game.default_item_imgs[+item->type - +ItemType::ITEM_START];
+	return &state->game.img.default_items[+item->type - +ItemType::ITEM_START];
 }
 
 internal bool32 check_combine(Item** out_a, ItemType a_type, Item** out_b, ItemType b_type, Item* fst, Item* snd)
@@ -471,7 +539,7 @@ internal bool32 check_combine(Item** out_a, ItemType a_type, Item** out_b, ItemT
 	}
 }
 
-internal void draw_img(u32* view_pixels, ImgRGBA* img, vi2 position, i32 dimension)
+internal void draw_img(u32* view_pixels, Img* img, vi2 position, i32 dimension)
 {
 	FOR_RANGE(x, clamp(position.x, 0, VIEW_RES.x), clamp(position.x + dimension, 0, VIEW_RES.x))
 	{
@@ -483,7 +551,7 @@ internal void draw_img(u32* view_pixels, ImgRGBA* img, vi2 position, i32 dimensi
 	}
 }
 
-internal void draw_img_box(u32* view_pixels, ImgRGBA* img, vf3 border_color, vi2 position, i32 dimension)
+internal void draw_img_box(u32* view_pixels, Img* img, vf3 border_color, vi2 position, i32 dimension)
 {
 	constexpr u32 BG = pack_color({ 0.2f, 0.2f, 0.2f });
 
@@ -855,45 +923,55 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 
 		case StateContext::game:
 		{
-			state->game.wall              = init_mipmap(DATA_DIR "wall.png");
-			state->game.floor             = init_mipmap(DATA_DIR "floor.png");
-			state->game.ceiling           = init_mipmap(DATA_DIR "ceiling.png");
-			state->game.monster_img       = init_img_rgba(DATA_DIR "monster.png");
-			state->game.hand_img          = init_img_rgba(DATA_DIR "hand.png");
-			state->game.flashlight_on_img = init_img_rgba(DATA_DIR "flashlight_on.png");
+			state->game.mipmap.wall    = init_mipmap(DATA_DIR "wall.png");
+			state->game.mipmap.floor   = init_mipmap(DATA_DIR "floor.png");
+			state->game.mipmap.ceiling = init_mipmap(DATA_DIR "ceiling.png");
 
-			FOR_ELEMS(it, state->game.paper_imgs)
-			{
-				*it = init_img_rgba(PAPER_DATA[it_index].file_path);
-			}
-
-			state->game.door             = init_img_rgba(DATA_DIR "door.png");
-			state->game.wall_left_arrow  = init_img_rgba(DATA_DIR "streak_left_0.png");
-			state->game.wall_right_arrow = init_img_rgba(DATA_DIR "streak_right_0.png");
+			state->game.img.monster          = init_img(DATA_DIR "monster.png");
+			state->game.img.hand             = init_img(DATA_DIR "hand.png");
+			state->game.img.flashlight_on    = init_img(DATA_DIR "flashlight_on.png");
+			state->game.img.door             = init_img(DATA_DIR "door.png");
+			state->game.img.wall_left_arrow  = init_img(DATA_DIR "streak_left_0.png");
+			state->game.img.wall_right_arrow = init_img(DATA_DIR "streak_right_0.png");
 
 			FOR_ELEMS(it, DEFAULT_ITEM_IMG_FILE_PATHS)
 			{
-				state->game.default_item_imgs[it_index] = init_img_rgba(*it);
+				state->game.img.default_items[it_index] = init_img(*it);
 			}
 
-			state->game.lucia_haunted = IMG_LoadTexture(renderer, DATA_DIR "lucia_haunted.png");
-			state->game.lucia_healed  = IMG_LoadTexture(renderer, DATA_DIR "lucia_healed.png");
-			state->game.lucia_hit     = IMG_LoadTexture(renderer, DATA_DIR "lucia_hit.png");
-			state->game.lucia_normal  = IMG_LoadTexture(renderer, DATA_DIR "lucia_normal.png");
-			state->game.lucia_wounded = IMG_LoadTexture(renderer, DATA_DIR "lucia_wounded.png");
-			state->game.view_texture  = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_STREAMING, VIEW_RES.x, VIEW_RES.y);
-
-			state->game.room_ambience       = Mix_LoadWAV(DATA_DIR "room_ambience.wav");
-			state->game.room_ambience_quiet = Mix_LoadWAV(DATA_DIR "room_ambience_quiet.wav");
-
-			FOR_ELEMS(it, state->game.footstep_sfxs)
+			FOR_ELEMS(it, state->game.img.papers)
 			{
-				*it = Mix_LoadWAV(FOOTSTEP_WAV_FILE_PATHS[it_index]);
-				// ASSERT(*it); // @TEMP@
+				*it = init_img(PAPER_DATA[it_index].file_path);
 			}
 
-			Mix_PlayChannel(+AudioChannel::bg_0 - +AudioChannel::RESERVED_START, state->game.room_ambience      , -1);
-			Mix_PlayChannel(+AudioChannel::bg_1 - +AudioChannel::RESERVED_START, state->game.room_ambience_quiet, -1);
+			state->game.texture.lucia_haunted = IMG_LoadTexture(renderer, DATA_DIR "lucia_haunted.png");
+			state->game.texture.lucia_healed  = IMG_LoadTexture(renderer, DATA_DIR "lucia_healed.png");
+			state->game.texture.lucia_hit     = IMG_LoadTexture(renderer, DATA_DIR "lucia_hit.png");
+			state->game.texture.lucia_normal  = IMG_LoadTexture(renderer, DATA_DIR "lucia_normal.png");
+			state->game.texture.lucia_wounded = IMG_LoadTexture(renderer, DATA_DIR "lucia_wounded.png");
+			state->game.texture.view          = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_STREAMING, VIEW_RES.x, VIEW_RES.y);
+
+			state->game.audio.eletronical   = Mix_LoadWAV(DATA_DIR "audio/eletronical.wav");
+			state->game.audio.switch_toggle = Mix_LoadWAV(DATA_DIR "audio/switch_toggle.wav");
+			state->game.audio.pick_up_paper = Mix_LoadWAV(DATA_DIR "audio/pick_up_paper.wav");
+			state->game.audio.pick_up_heavy = Mix_LoadWAV(DATA_DIR "audio/pick_up_heavy.wav");
+
+			FOR_ELEMS(it, state->game.audio.walk_steps)
+			{
+				*it = Mix_LoadWAV(WALK_STEP_WAV_FILE_PATHS[it_index]);
+			}
+
+			FOR_ELEMS(it, state->game.audio.run_steps)
+			{
+				*it = Mix_LoadWAV(RUN_STEP_WAV_FILE_PATHS[it_index]);
+			}
+
+			#if DEBUG
+			FOR_ELEMS(it, state->game.audios)
+			{
+				ASSERT(*it);
+			}
+			#endif
 		} break;
 	}
 }
@@ -909,33 +987,25 @@ internal void boot_down_state(State* state)
 
 		case StateContext::game:
 		{
-			deinit_mipmap(&state->game.wall);
-			deinit_mipmap(&state->game.floor);
-			deinit_mipmap(&state->game.ceiling);
-			deinit_img_rgba(&state->game.monster_img);
-			deinit_img_rgba(&state->game.hand_img);
-			deinit_img_rgba(&state->game.flashlight_on_img);
-
-			deinit_img_rgba(&state->game.paper_imgs[0]);
-
-			FOR_ELEMS(it, state->game.default_item_imgs)
+			FOR_ELEMS(it, state->game.mipmaps)
 			{
-				deinit_img_rgba(it);
+				deinit_mipmap(it);
 			}
 
-			deinit_img_rgba(&state->game.door);
-			deinit_img_rgba(&state->game.wall_left_arrow);
-			deinit_img_rgba(&state->game.wall_right_arrow);
+			FOR_ELEMS(it, state->game.imgs)
+			{
+				deinit_img(it);
+			}
 
-			SDL_DestroyTexture(state->game.lucia_haunted);
-			SDL_DestroyTexture(state->game.lucia_healed);
-			SDL_DestroyTexture(state->game.lucia_hit);
-			SDL_DestroyTexture(state->game.lucia_normal);
-			SDL_DestroyTexture(state->game.lucia_wounded);
-			SDL_DestroyTexture(state->game.view_texture);
+			FOR_ELEMS(it, state->game.textures)
+			{
+				SDL_DestroyTexture(*it);
+			}
 
-			Mix_FreeChunk(state->game.room_ambience);
-			Mix_FreeChunk(state->game.room_ambience_quiet);
+			FOR_ELEMS(it, state->game.audios)
+			{
+				Mix_FreeChunk(*it);
+			}
 		} break;
 	}
 }
@@ -961,7 +1031,8 @@ extern "C" PROTOTYPE_INITIALIZE(initialize)
 	SDL_SetRelativeMouseMode(SDL_TRUE);
 	SDL_RenderSetLogicalSize(platform->renderer, WIN_RES.x, WIN_RES.y);
 
-	Mix_ReserveChannels(4);
+	static_assert(+AudioChannel::RESERVED_START == 0);
+	Mix_ReserveChannels(+AudioChannel::RESERVED_COUNT);
 }
 
 extern "C" PROTOTYPE_BOOT_UP(boot_up)
@@ -969,14 +1040,21 @@ extern "C" PROTOTYPE_BOOT_UP(boot_up)
 	ASSERT(sizeof(State) <= platform->memory_capacity);
 	State* state = reinterpret_cast<State*>(platform->memory);
 
-	state->major_font = FC_CreateFont();
-	FC_LoadFont(state->major_font, platform->renderer, DATA_DIR "Consolas.ttf", 32, FC_MakeColor(255, 255, 255, 255), TTF_STYLE_NORMAL);
+	state->font.major = FC_CreateFont();
+	FC_LoadFont(state->font.major, platform->renderer, DATA_DIR "Consolas.ttf", 32, FC_MakeColor(255, 255, 255, 255), TTF_STYLE_NORMAL);
 
-	state->minor_font = FC_CreateFont();
-	FC_LoadFont(state->minor_font, platform->renderer, DATA_DIR "Consolas.ttf", 10, FC_MakeColor(255, 255, 255, 255), TTF_STYLE_NORMAL);
+	state->font.minor = FC_CreateFont();
+	FC_LoadFont(state->font.minor, platform->renderer, DATA_DIR "Consolas.ttf", 10, FC_MakeColor(255, 255, 255, 255), TTF_STYLE_NORMAL);
 
-	state->tiny_click    = Mix_LoadWAV(DATA_DIR "tiny_click.wav");
-	state->text_type_sfx = Mix_LoadWAV(DATA_DIR "text_type_sfx_0.wav");
+	state->audio.click     = Mix_LoadWAV(DATA_DIR "audio/click.wav");
+	state->audio.text_type = Mix_LoadWAV(DATA_DIR "audio/text_type.wav");
+
+	#if DEBUG
+	FOR_ELEMS(it, state->audios)
+	{
+		ASSERT(*it);
+	}
+	#endif
 
 	boot_up_state(platform->renderer, state);
 }
@@ -986,11 +1064,15 @@ extern "C" PROTOTYPE_BOOT_DOWN(boot_down)
 	ASSERT(sizeof(State) <= platform->memory_capacity);
 	State* state = reinterpret_cast<State*>(platform->memory);
 
-	FC_FreeFont(state->major_font);
-	FC_FreeFont(state->minor_font);
+	FOR_ELEMS(it, state->fonts)
+	{
+		FC_FreeFont(*it);
+	}
 
-	Mix_FreeChunk(state->tiny_click);
-	Mix_FreeChunk(state->text_type_sfx);
+	FOR_ELEMS(it, state->audios)
+	{
+		Mix_FreeChunk(*it);
+	}
 
 	boot_down_state(state);
 }
@@ -1002,11 +1084,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 	state->time                 += SECONDS_PER_UPDATE;
 	state->transient_arena.used  = 0;
 
-	Mix_Volume(-1, static_cast<i32>(MIX_MAX_VOLUME * state->master_volume)); // @TODO@ Remove frame delay.
-	FOR_ELEMS(it, state->reserved_channel_volumes)
-	{
-		Mix_Volume(+AudioChannel::RESERVED_START + it_index, static_cast<i32>(MIX_MAX_VOLUME * state->master_volume * *it));
-	}
+	Mix_Volume(-1, static_cast<i32>(MIX_MAX_VOLUME * state->master_volume));
 
 	switch (state->context)
 	{
@@ -1022,13 +1100,13 @@ extern "C" PROTOTYPE_UPDATE(update)
 					i32 option_index_delta = iterate_repeated_movement(platform, Input::w, Input::s, &state->title_menu.option_index_repeated_movement_countdown);
 					if (option_index_delta && IN_RANGE(state->title_menu.option_index + option_index_delta, 0, +TitleMenuOption::CAPACITY))
 					{
-						Mix_PlayChannel(-1, state->tiny_click, 0);
+						Mix_PlayChannel(+AudioChannel::unreserved, state->audio.click, 0);
 						state->title_menu.option_index += option_index_delta;
 					}
 
 					if (PRESSED(Input::space) || PRESSED(Input::enter))
 					{
-						Mix_PlayChannel(-1, state->tiny_click, 0);
+						Mix_PlayChannel(+AudioChannel::unreserved, state->audio.click, 0);
 						switch (state->title_menu.option_index)
 						{
 							case TitleMenuOption::start:
@@ -1076,7 +1154,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 					i32 option_index_delta = iterate_repeated_movement(platform, Input::w, Input::s, &state->title_menu.option_index_repeated_movement_countdown);
 					if (option_index_delta && IN_RANGE(state->title_menu.option_index + option_index_delta, 0, +SettingOption::CAPACITY))
 					{
-						Mix_PlayChannel(-1, state->tiny_click, 0);
+						Mix_PlayChannel(+AudioChannel::unreserved, state->audio.click, 0);
 						state->title_menu.option_index += option_index_delta;
 
 						settings.repeat_sfx_count   = 0;
@@ -1085,7 +1163,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 					if ((PRESSED(Input::space) || PRESSED(Input::enter)) && state->title_menu.option_index == +SettingOption::done)
 					{
-						Mix_PlayChannel(-1, state->tiny_click, 0);
+						Mix_PlayChannel(+AudioChannel::unreserved, state->audio.click, 0);
 
 						state->title_menu.context                          = TitleMenuContext::title_menu;
 						state->title_menu.option_index                     = +TitleMenuOption::settings;
@@ -1113,7 +1191,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 								if (settings.repeat_sfx_count && settings.repeat_sfx_keytime == 0.0f)
 								{
-									Mix_PlayChannel(-1, state->tiny_click, 0);
+									Mix_PlayChannel(+AudioChannel::unreserved, state->audio.click, 0);
 									settings.repeat_sfx_count   -= 1;
 									settings.repeat_sfx_keytime  = 1.0f;
 								}
@@ -1140,7 +1218,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 				{
 					if (PRESSED(Input::space) || PRESSED(Input::enter))
 					{
-						Mix_PlayChannel(-1, state->tiny_click, 0);
+						Mix_PlayChannel(+AudioChannel::unreserved, state->audio.click, 0);
 
 						state->title_menu.context                          = TitleMenuContext::title_menu;
 						state->title_menu.option_index                     = +TitleMenuOption::credits;
@@ -1382,7 +1460,11 @@ extern "C" PROTOTYPE_UPDATE(update)
 											intro.text[intro.current_text_length] = INTRO_DATA[intro.current_text_index].text[intro.next_char_index];
 											intro.current_text_length += 1;
 											intro.text[intro.current_text_length] = '\0';
-											Mix_PlayChannel(-1, state->text_type_sfx, 0);
+
+											if (play_sound)
+											{
+												Mix_PlayChannel(+AudioChannel::unreserved, state->audio.text_type, 0);
+											}
 										}
 
 										intro.next_char_index += 1;
@@ -1432,9 +1514,6 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 		case StateContext::game:
 		{
-			state->reserved_channel_volumes[+AudioChannel::bg_0 - +AudioChannel::RESERVED_START] = 1.0f - state->game.ceiling_lights_deactivation_keytime;
-			state->reserved_channel_volumes[+AudioChannel::bg_1 - +AudioChannel::RESERVED_START] =        state->game.ceiling_lights_deactivation_keytime;
-
 			if (state->game.is_exiting)
 			{
 				state->game.exiting_keytime += SECONDS_PER_UPDATE / 1.5f;
@@ -1565,6 +1644,8 @@ extern "C" PROTOTYPE_UPDATE(update)
 															if (check_combine(&battery, ItemType::battery, &flashlight, ItemType::flashlight, &state->game.inventory[y][x], state->game.inventory_selected))
 															{
 																combined = true;
+
+																Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.eletronical, 0);
 																state->game.notification_message = "(You replaced the batteries in the flashlight.)";
 																state->game.notification_keytime = 1.0f;
 
@@ -1633,6 +1714,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 									case ItemType::paper:
 									{
+										Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.pick_up_paper, 0);
 										state->game.holding.paper         = state->game.inventory_selected;
 										state->game.paper_velocity        = { 0.0f, 0.0f };
 										state->game.paper_delta_position  = { 0.0f, 0.0f };
@@ -1643,6 +1725,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 									case ItemType::flashlight:
 									{
+										Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.switch_toggle, 0);
 										if (state->game.inventory_selected == state->game.holding.flashlight)
 										{
 											state->game.holding.flashlight = 0;
@@ -1673,10 +1756,10 @@ extern "C" PROTOTYPE_UPDATE(update)
 					(
 						PRESSED(Input::left_mouse) &&
 						(
-							state->game.interacting_cursor.x < VIEW_RES.x / 2.0f + (state->game.paper_delta_position.x - state->game.paper_imgs[state->game.paper_index].dim.x / 2.0f) * state->game.paper_scalar ||
-							state->game.interacting_cursor.x > VIEW_RES.x / 2.0f + (state->game.paper_delta_position.x + state->game.paper_imgs[state->game.paper_index].dim.x / 2.0f) * state->game.paper_scalar ||
-							state->game.interacting_cursor.y < VIEW_RES.y / 2.0f + (state->game.paper_delta_position.y - state->game.paper_imgs[state->game.paper_index].dim.y / 2.0f) * state->game.paper_scalar ||
-							state->game.interacting_cursor.y > VIEW_RES.y / 2.0f + (state->game.paper_delta_position.y + state->game.paper_imgs[state->game.paper_index].dim.y / 2.0f) * state->game.paper_scalar
+							state->game.interacting_cursor.x < VIEW_RES.x / 2.0f + (state->game.paper_delta_position.x - state->game.img.papers[state->game.paper_index].dim.x / 2.0f) * state->game.paper_scalar ||
+							state->game.interacting_cursor.x > VIEW_RES.x / 2.0f + (state->game.paper_delta_position.x + state->game.img.papers[state->game.paper_index].dim.x / 2.0f) * state->game.paper_scalar ||
+							state->game.interacting_cursor.y < VIEW_RES.y / 2.0f + (state->game.paper_delta_position.y - state->game.img.papers[state->game.paper_index].dim.y / 2.0f) * state->game.paper_scalar ||
+							state->game.interacting_cursor.y > VIEW_RES.y / 2.0f + (state->game.paper_delta_position.y + state->game.img.papers[state->game.paper_index].dim.y / 2.0f) * state->game.paper_scalar
 						)
 					)
 					{
@@ -1710,8 +1793,8 @@ extern "C" PROTOTYPE_UPDATE(update)
 						constexpr f32 PAPER_MARGIN = 25.0f;
 						vf2 region =
 							vf2 {
-								(VIEW_RES.x + state->game.paper_imgs[state->game.paper_index].dim.x * state->game.paper_scalar) / 2.0f - PAPER_MARGIN,
-								(VIEW_RES.y + state->game.paper_imgs[state->game.paper_index].dim.y * state->game.paper_scalar) / 2.0f - PAPER_MARGIN
+								(VIEW_RES.x + state->game.img.papers[state->game.paper_index].dim.x * state->game.paper_scalar) / 2.0f - PAPER_MARGIN,
+								(VIEW_RES.y + state->game.img.papers[state->game.paper_index].dim.y * state->game.paper_scalar) / 2.0f - PAPER_MARGIN
 							} / state->game.paper_scalar;
 
 						if (fabsf(state->game.paper_delta_position.x) > region.x)
@@ -1750,6 +1833,24 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 						if (open_space)
 						{
+							switch (state->game.hand_hovered_item->type)
+							{
+								case ItemType::paper:
+								{
+									Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.pick_up_paper, 0);
+								} break;
+
+								case ItemType::battery:
+								{
+									Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.eletronical, 0);
+								} break;
+
+								default:
+								{
+									Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.pick_up_heavy, 0);
+								} break;
+							}
+
 							*open_space = *state->game.hand_hovered_item;
 							deallocate_item(state, state->game.hand_hovered_item);
 							state->game.hand_hovered_item = 0;
@@ -1817,22 +1918,32 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 				FOR_ELEMS(it, state->game.item_buffer, state->game.item_count)
 				{
-					it->velocity    *= 0.9f;
-					it->position.xy  = move(state, it->position.xy, it->velocity * SECONDS_PER_UPDATE);// @TEMP@
-					it->position.z   = lerp(0.15f, state->game.lucia_position.z, clamp(1.0f - norm_sq(ray_to_closest(state->game.lucia_position.xy, it->position.xy)) / 36.0f, 0.0f, 1.0f)) + sinf(state->time * 3.0f) * 0.025f;
-					it->normal       = polar(state->time * 0.7f);
+					it->velocity *= 0.9f;
+					if (+it->velocity)
+					{
+						it->position.xy = move(state, it->position.xy, it->velocity * SECONDS_PER_UPDATE);
+					}
+					it->position.z = lerp(0.15f, state->game.lucia_position.z, clamp(1.0f - norm_sq(ray_to_closest(state->game.lucia_position.xy, it->position.xy)) / 36.0f, 0.0f, 1.0f)) + sinf(state->time * 3.0f) * 0.025f;
+					it->normal     = polar(state->time * 0.7f);
 				}
 
 				state->game.lucia_position.xy = move(state, state->game.lucia_position.xy, state->game.lucia_velocity * SECONDS_PER_UPDATE);
 				state->game.lucia_position.x  = mod(state->game.lucia_position.x, MAP_DIM * WALL_SPACING);
 				state->game.lucia_position.y  = mod(state->game.lucia_position.y, MAP_DIM * WALL_SPACING);
-				state->game.lucia_position.z  = LUCIA_HEIGHT + 0.1f * (cosf(state->game.lucia_head_bob_keytime * TAU) - 1.0f);
 
-				state->game.lucia_step_keytime += SECONDS_PER_UPDATE * norm(state->game.lucia_velocity) / 2.75f; // @TODO@ Make this sync with head bob?
-				if (state->game.lucia_step_keytime >= 1.0f)
+				f32 old_z = state->game.lucia_position.z;
+				state->game.lucia_position.z = LUCIA_HEIGHT + 0.1f * (cosf(state->game.lucia_head_bob_keytime * TAU) - 1.0f);
+
+				if (+wasd && old_z > LUCIA_HEIGHT - 0.175f && state->game.lucia_position.z < LUCIA_HEIGHT - 0.175f)
 				{
-					state->game.lucia_step_keytime = 0.0f;
-					Mix_PlayChannel(+AudioChannel::unreserved, state->game.footstep_sfxs[rng(&state->seed, 0, ARRAY_CAPACITY(state->game.footstep_sfxs))], 0);
+					Mix_PlayChannel
+					(
+						+AudioChannel::unreserved,
+						+wasd && HOLDING(Input::shift) && !state->game.lucia_out_of_breath
+							? state->game.audio.run_steps [rng(&state->seed, 0, ARRAY_CAPACITY(state->game.audio.run_steps ))]
+							: state->game.audio.walk_steps[rng(&state->seed, 0, ARRAY_CAPACITY(state->game.audio.walk_steps))],
+						0
+					);
 				}
 
 				state->game.lucia_head_bob_keytime = mod(state->game.lucia_head_bob_keytime + 0.001f + 0.35f * norm(state->game.lucia_velocity) * SECONDS_PER_UPDATE, 1.0f);
@@ -2252,7 +2363,7 @@ extern "C" PROTOTYPE_RENDER(render)
 				draw_text
 				(
 					platform->renderer,
-					state->major_font,
+					state->font.major,
 					{ WIN_RES.x * 0.05f, WIN_RES.y * 0.05f },
 					FC_ALIGN_LEFT,
 					1.0f,
@@ -2276,7 +2387,7 @@ extern "C" PROTOTYPE_RENDER(render)
 					draw_text
 					(
 						platform->renderer,
-						state->major_font,
+						state->font.major,
 						{ WIN_RES.x * 0.08f, WIN_RES.y * (0.3f + it_index * OPTION_SPACING) },
 						FC_ALIGN_LEFT,
 						OPTION_SCALAR,
@@ -2292,7 +2403,7 @@ extern "C" PROTOTYPE_RENDER(render)
 				draw_text
 				(
 					platform->renderer,
-					state->major_font,
+					state->font.major,
 					{ WIN_RES.x * 0.07f, WIN_RES.y * (0.3f + state->title_menu.option_cursor_interpolated_index * OPTION_SPACING) },
 					FC_ALIGN_RIGHT,
 					OPTION_SCALAR,
@@ -2316,7 +2427,7 @@ extern "C" PROTOTYPE_RENDER(render)
 				draw_text
 				(
 					platform->renderer,
-					state->major_font,
+					state->font.major,
 					{ WIN_RES.x * 0.5f, WIN_RES.y * 0.25f },
 					FC_ALIGN_CENTER,
 					1.0f,
@@ -2329,7 +2440,7 @@ extern "C" PROTOTYPE_RENDER(render)
 				draw_boxed_text
 				(
 					platform->renderer,
-					state->minor_font,
+					state->font.minor,
 					{ PADDING + TEXT_PADDING, WIN_RES.y - PADDING - HUD_RES.y + TEXT_PADDING },
 					HUD_RES - vi2 { TEXT_PADDING, TEXT_PADDING } * 2,
 					FC_ALIGN_LEFT,
@@ -2358,7 +2469,7 @@ extern "C" PROTOTYPE_RENDER(render)
 					draw_text
 					(
 						platform->renderer,
-						state->major_font,
+						state->font.major,
 						{ WIN_RES.x * 0.1f, WIN_RES.y * (0.37f + it_index * OPTION_SPACING) },
 						FC_ALIGN_LEFT,
 						OPTION_SCALAR,
@@ -2380,7 +2491,7 @@ extern "C" PROTOTYPE_RENDER(render)
 
 					if (slider_value)
 					{
-						f32 baseline = FC_GetBaseline(state->major_font) * OPTION_SCALAR;
+						f32 baseline = FC_GetBaseline(state->font.major) * OPTION_SCALAR;
 						set_color(platform->renderer, { 1.0f, 1.0f, 1.0f, 1.0f });
 						draw_line(platform->renderer, vxx(vf2 { WIN_RES.x * 0.5f, WIN_RES.y * (0.37f + it_index * OPTION_SPACING) + baseline / 2.0f }), vxx(vf2 { WIN_RES.x * 0.9f, WIN_RES.y * (0.37f + it_index * OPTION_SPACING) + baseline / 2.0f }));
 						draw_filled_circle(platform->renderer, vxx(vf2 { WIN_RES.x * lerp(0.5f, 0.9f, *slider_value), WIN_RES.y * (0.37f + it_index * OPTION_SPACING) + baseline / 2.0f }), 5);
@@ -2390,7 +2501,7 @@ extern "C" PROTOTYPE_RENDER(render)
 				draw_text
 				(
 					platform->renderer,
-					state->major_font,
+					state->font.major,
 					{ WIN_RES.x * 0.09f, WIN_RES.y * (0.37f + state->title_menu.option_cursor_interpolated_index * OPTION_SPACING) },
 					FC_ALIGN_RIGHT,
 					OPTION_SCALAR,
@@ -2402,7 +2513,7 @@ extern "C" PROTOTYPE_RENDER(render)
 				draw_text
 				(
 					platform->renderer,
-					state->minor_font,
+					state->font.minor,
 					{ 0.0f, 0.0f },
 					FC_ALIGN_LEFT,
 					1.0f,
@@ -2425,7 +2536,7 @@ extern "C" PROTOTYPE_RENDER(render)
 					draw_text
 					(
 						platform->renderer,
-						state->major_font,
+						state->font.major,
 						{ WIN_RES.x * 0.1f, WIN_RES.y * (0.37f + it_index * 0.12f) },
 						FC_ALIGN_LEFT,
 						0.3f,
@@ -2449,7 +2560,7 @@ extern "C" PROTOTYPE_RENDER(render)
 
 			u32* view_pixels;
 			i32  view_pitch_;
-			SDL_LockTexture(state->game.view_texture, 0, reinterpret_cast<void**>(&view_pixels), &view_pitch_);
+			SDL_LockTexture(state->game.texture.view, 0, reinterpret_cast<void**>(&view_pixels), &view_pitch_);
 
 			FOR_RANGE(x, VIEW_RES.x)
 			{
@@ -2542,13 +2653,13 @@ extern "C" PROTOTYPE_RENDER(render)
 				wall_coordinates.x = mod(wall_coordinates.x, MAP_DIM);
 				wall_coordinates.y = mod(wall_coordinates.y, MAP_DIM);
 
-				i32      starting_y            = 0;
-				i32      ending_y              = 0;
-				i32      pixel_starting_y      = 0;
-				i32      pixel_ending_y        = 0;
-				ImgRGBA* overlay_img           = 0;
-				vf2      overlay_uv_position   = { 0.0f, 0.0f };
-				vf2      overlay_uv_dimensions = { 0.0f, 0.0f };
+				i32  starting_y            = 0;
+				i32  ending_y              = 0;
+				i32  pixel_starting_y      = 0;
+				i32  pixel_ending_y        = 0;
+				Img* overlay_img           = 0;
+				vf2  overlay_uv_position   = { 0.0f, 0.0f };
+				vf2  overlay_uv_dimensions = { 0.0f, 0.0f };
 
 				if (wall_exists)
 				{
@@ -2563,13 +2674,13 @@ extern "C" PROTOTYPE_RENDER(render)
 					{
 						if (+(state->game.door_wall_side.voxel & (WallVoxel::back_slash | WallVoxel::forward_slash)))
 						{
-							overlay_img           = &state->game.door;
+							overlay_img           = &state->game.img.door;
 							overlay_uv_position   = { 0.5f - SLASH_SPAN / 2.0f, 0.0f };
 							overlay_uv_dimensions = { SLASH_SPAN, 1.0f };
 						}
 						else
 						{
-							overlay_img           = &state->game.door;
+							overlay_img           = &state->game.img.door;
 							overlay_uv_position   = { 0.5f - ALIGNED_SPAN / 2.0f, 0.0f };
 							overlay_uv_dimensions = { ALIGNED_SPAN, 1.0f };
 						}
@@ -2603,11 +2714,11 @@ extern "C" PROTOTYPE_RENDER(render)
 						{
 							if (direction < -THRESHOLD)
 							{
-								overlay_img = &state->game.wall_left_arrow;
+								overlay_img = &state->game.img.wall_left_arrow;
 							}
 							else if (direction > THRESHOLD)
 							{
-								overlay_img = &state->game.wall_right_arrow;
+								overlay_img = &state->game.img.wall_right_arrow;
 							}
 						}
 
@@ -2697,7 +2808,7 @@ extern "C" PROTOTYPE_RENDER(render)
 								(
 									lerp
 									(
-										mipmap_color_at(&state->game.wall, distance / 4.0f + MIPMAP_LEVELS * square(1.0f - fabsf(dot(ray, normal))), { wall_portion, y_portion }),
+										mipmap_color_at(&state->game.mipmap.wall, distance / 4.0f + MIPMAP_LEVELS * square(1.0f - fabsf(dot(ray, normal))), { wall_portion, y_portion }),
 										overlay_color.xyz,
 										overlay_color.w
 									),
@@ -2722,7 +2833,7 @@ extern "C" PROTOTYPE_RENDER(render)
 							uv       = state->game.lucia_position.xy + zk * ray.xy;
 							distance = sqrtf(norm_sq(uv - state->game.lucia_position.xy) + square(state->game.lucia_position.z));
 							normal   = { 0.0f, 0.0f, 1.0f };
-							mipmap   = &state->game.floor;
+							mipmap   = &state->game.mipmap.floor;
 						}
 						else
 						{
@@ -2730,7 +2841,7 @@ extern "C" PROTOTYPE_RENDER(render)
 							uv       = state->game.lucia_position.xy + zk * ray.xy;
 							distance = sqrtf(norm_sq(uv - state->game.lucia_position.xy) + square(WALL_HEIGHT - state->game.lucia_position.z));
 							normal   = { 0.0f, 0.0f, -1.0f };
-							mipmap   = &state->game.ceiling;
+							mipmap   = &state->game.mipmap.ceiling;
 						}
 
 						uv.x = mod(uv.x / 4.0f, 1.0f);
@@ -2761,7 +2872,7 @@ extern "C" PROTOTYPE_RENDER(render)
 
 				struct RenderScanNode
 				{
-					ImgRGBA*        img;
+					Img*            img;
 					vf3             position;
 					vf2             normal;
 					f32             distance;
@@ -2775,7 +2886,7 @@ extern "C" PROTOTYPE_RENDER(render)
 				memory_arena_checkpoint(&state->transient_arena);
 
 				lambda intersect =
-					[&](ImgRGBA* img, vf3 position, vf2 normal, vf2 dimensions)
+					[&](Img* img, vf3 position, vf2 normal, vf2 dimensions)
 					{
 						f32 distance;
 						f32 portion;
@@ -2816,16 +2927,16 @@ extern "C" PROTOTYPE_RENDER(render)
 				{
 					vf3 offset = vi3 { i % 3 - 1, i / 3 - 1, 0 } * MAP_DIM * WALL_SPACING;
 
-					intersect(&state->game.monster_img, offset + state->game.monster_position, state->game.monster_normal, { 1.0f, 1.0f });
+					intersect(&state->game.img.monster, offset + state->game.monster_position, state->game.monster_normal, { 1.0f, 1.0f });
 
 					if (state->game.hand_hovered_item || state->game.hand_on_door)
 					{
-						intersect(&state->game.hand_img, offset + state->game.hand_position, state->game.hand_normal, { 0.05f, 0.05f });
+						intersect(&state->game.img.hand, offset + state->game.hand_position, state->game.hand_normal, { 0.05f, 0.05f });
 					}
 
 					FOR_ELEMS(item, state->game.item_buffer, state->game.item_count)
 					{
-						intersect(&state->game.default_item_imgs[+item->type - +ItemType::ITEM_START], offset + item->position, item->normal, { 0.25f, 0.25f });
+						intersect(&state->game.img.default_items[+item->type - +ItemType::ITEM_START], offset + item->position, item->normal, { 0.25f, 0.25f });
 					}
 				}
 
@@ -2879,16 +2990,14 @@ extern "C" PROTOTYPE_RENDER(render)
 
 			if (state->game.holding.paper)
 			{
-				ImgRGBA* paper_img = &state->game.paper_imgs[0];
-
-				vi2 paper_dimensions  = vxx(paper_img->dim * state->game.paper_scalar);
-				vi2 paper_coordinates = vxx(VIEW_RES / 2.0f + (conjugate(state->game.paper_delta_position) - paper_img->dim / 2.0f) * state->game.paper_scalar);
+				vi2 paper_dimensions  = vxx(state->game.img.papers[state->game.paper_index].dim * state->game.paper_scalar);
+				vi2 paper_coordinates = vxx(VIEW_RES / 2.0f + (conjugate(state->game.paper_delta_position) - state->game.img.papers[state->game.paper_index].dim / 2.0f) * state->game.paper_scalar);
 
 				FOR_RANGE(x, clamp(paper_coordinates.x, 0, VIEW_RES.x), clamp(paper_coordinates.x + paper_dimensions.x, 0, VIEW_RES.x))
 				{
 					FOR_RANGE(y, clamp(paper_coordinates.y, 0, VIEW_RES.y), clamp(paper_coordinates.y + paper_dimensions.y, 0, VIEW_RES.y))
 					{
-						vf4 color = img_color_at(&state->game.paper_imgs[0], { static_cast<f32>(x - paper_coordinates.x) / paper_dimensions.x, (1.0f - static_cast<f32>(y - paper_coordinates.y) / paper_dimensions.y) });
+						vf4 color = img_color_at(&state->game.img.papers[state->game.paper_index], { static_cast<f32>(x - paper_coordinates.x) / paper_dimensions.x, (1.0f - static_cast<f32>(y - paper_coordinates.y) / paper_dimensions.y) });
 						view_pixels[y * VIEW_RES.x + x] = pack_color(lerp(unpack_color(view_pixels[y * VIEW_RES.x + x]), color.xyz, color.w));
 					}
 				}
@@ -2927,18 +3036,18 @@ extern "C" PROTOTYPE_RENDER(render)
 			if (state->game.inventory_visibility || state->game.holding.paper)
 			{
 				i32 cursor_dim = HOLDING(Input::left_mouse) ? 10 : 15;
-				draw_img(view_pixels, &state->game.hand_img, vxx(vf2 { state->game.interacting_cursor.x - cursor_dim / 2.0f, VIEW_RES.y - 1.0f - state->game.interacting_cursor.y - cursor_dim / 2.0f }), cursor_dim);
+				draw_img(view_pixels, &state->game.img.hand, vxx(vf2 { state->game.interacting_cursor.x - cursor_dim / 2.0f, VIEW_RES.y - 1.0f - state->game.interacting_cursor.y - cursor_dim / 2.0f }), cursor_dim);
 			}
 
-			SDL_UnlockTexture(state->game.view_texture);
-			blit_texture(platform->renderer, state->game.view_texture, { PADDING, PADDING }, VIEW_RES);
+			SDL_UnlockTexture(state->game.texture.view);
+			blit_texture(platform->renderer, state->game.texture.view, { PADDING, PADDING }, VIEW_RES);
 
 			if (state->game.notification_keytime)
 			{
 				draw_text
 				(
 					platform->renderer,
-					state->major_font,
+					state->font.major,
 					{ WIN_RES.x * 0.5f, PADDING + VIEW_RES.y * 0.8f },
 					FC_ALIGN_CENTER,
 					0.175f,
@@ -2954,7 +3063,7 @@ extern "C" PROTOTYPE_RENDER(render)
 			blit_texture
 			(
 				platform->renderer,
-				state->game.lucia_normal,
+				state->game.texture.lucia_normal,
 				{ (WIN_RES.x - HUD_RES.y) / 2, WIN_RES.y - 1 - PADDING - HUD_RES.y },
 				{ HUD_RES.y, HUD_RES.y }
 			);
@@ -3036,7 +3145,7 @@ extern "C" PROTOTYPE_RENDER(render)
 			draw_text
 			(
 				platform->renderer,
-				state->minor_font,
+				state->font.minor,
 				{ 0.0f, 0.0f },
 				FC_ALIGN_LEFT,
 				1.0f,
@@ -3243,7 +3352,7 @@ extern "C" PROTOTYPE_RENDER(render)
 			draw_text
 			(
 				platform->renderer,
-				state->major_font,
+				state->font.major,
 				{ WIN_RES.x * 0.5f, WIN_RES.y * 0.5f },
 				FC_ALIGN_CENTER,
 				1.0f,
