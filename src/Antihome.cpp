@@ -1,42 +1,76 @@
 /* @TODO@
-	- Saturday 2022-5-14:
-		- Finished storyboard
-		- Flashlight overlay?
-		- Jounral entries and documents.
-
 	- Sunday 2022-5-15:
-		- End screen
-		- Title screen
-		- Transitions
+		- Add the new sounds in.
+		- Add journal entries to be picked up in.
 
 	- Monday 2022-5-16:
-		- Breaker mechanic
-		- Better randomization of items, doors, breakers, and RNG system.
+		- Revised title menu.
+			- Vintage look.
+			- Settings window.
+			- Terminal prompt of debrief.
 
 	- Tuesday 2022-5-17:
-		- Anomaly: Serpent
-		- Anomaly: Guardian Angel
-		- Anomaly: Walt
-		- Anomaly: Gape
+		- Breaker mechanic.
+		- Better randomization of items, doors, breakers, and RNG system.
+		- Text for inventory.
 
 	- Wednesday 2022-5-18:
-		- Item: Satellite dish piece.
-		- Item: SNAV.
-		- Item: Drugs of varying effects.
-		- Item: First aid kit.
-		- Item: Radio.
-		- Item: 18V battery.
-		- Item: Eyedrops.
-		- Item: Night Vision Goggles.
-		- Item: Clipboard
-		- Item: Joint
-		- Item: Cowbell
+		- Anomaly: Serpent.
+			- Multiple sprites in a row chasing player.
+			- Constant hissing sound.
+		- Anomaly: Guardian Angel.
+			- Glows.
+			- Moves rigidly.
+			- Flapping noises when moving.
 
 	- Thursday 2022-5-19:
-		- Bug hunting.
-		- Better input.
-		- Handle disconnected initial and updated values.
-		- Handle different resolutions.
+
+	- Friday 2022-5-20:
+
+	- Saturday 2022-5-21:
+
+	- Sunday 2022-5-22:
+
+	- Monday 2022-5-23:
+
+	- Tuesday 2022-5-24:
+
+	- Wednesday 2022-5-25:
+
+	- Thursday 2022-5-26:
+
+	- Friday 2022-5-27:
+
+	- Saturday 2022-5-28:
+
+	- Sunday 2022-5-29:
+
+	- Monday 2022-5-30:
+
+	- Tuesday 2022-5-31:
+
+	- Wednesday 2022-6-1:
+
+	- Thursday 2022-6-2:
+
+	- Friday 2022-6-3:
+
+	* Items:
+		* Satellite dish piece
+		* SNAV
+		* Drugs of varying effects
+		* First aid kit
+		* Radio
+		* 18V battery
+		* Eyedrops
+		* Night Vision Goggles
+		* Clipboard
+		* Joint
+		* Cowbell
+
+	* Better input.
+	* Handle disconnected initial and updated values.
+	* Handle different resolutions.
 */
 
 // @NOTE@ Credits
@@ -153,7 +187,7 @@ global constexpr f32 ITEM_SPAWN_WEIGHTS[ItemType::ITEM_COUNT] =
 
 global constexpr struct { f32 min_scalar; f32 max_scalar; strlit file_path; } PAPER_DATA[] =
 	{
-		{ 0.15f, 0.75f, DATA_DIR "document.png" }
+		{ 0.2f, 0.8f, DATA_DIR "terry_entry_4.png" }
 	};
 
 global constexpr strlit FOOTSTEP_WAV_FILE_PATHS[] =
@@ -855,7 +889,7 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 			FOR_ELEMS(it, state->game.footstep_sfxs)
 			{
 				*it = Mix_LoadWAV(FOOTSTEP_WAV_FILE_PATHS[it_index]);
-				ASSERT(*it);
+				// ASSERT(*it); // @TEMP@
 			}
 
 			Mix_PlayChannel(+AudioChannel::bg_0 - +AudioChannel::RESERVED_START, state->game.room_ambience      , -1);
