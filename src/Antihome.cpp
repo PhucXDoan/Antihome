@@ -61,7 +61,7 @@
 		* Drugs of varying effects
 		* First aid kit
 		* Radio
-		* 18V battery
+		* Military grade batteries
 		* Eyedrops
 		* Night Vision Goggles
 		* Clipboard
@@ -85,18 +85,20 @@
 #include "platform.h"
 #include "utilities.cpp"
 
-global constexpr vi2 WIN_RES           = WIN_DIM / 3; // @TODO@ This affects text.
-global constexpr i32 PADDING           = 5;
-global constexpr vi2 VIEW_RES          = vxx(vf2 { 1.0f, 0.5f } * (WIN_RES.x - PADDING * 2.0f));
-global constexpr vi2 HUD_RES           = { WIN_RES.x - PADDING * 2, WIN_RES.y - VIEW_RES.y - PADDING * 3 };
-global constexpr f32 HORT_TO_VERT_K    = 0.927295218f * VIEW_RES.x;
-global constexpr f32 WALL_HEIGHT       = 2.7432f;
-global constexpr f32 WALL_THICKNESS    = 0.4f;
-global constexpr f32 LUCIA_HEIGHT      = 1.4986f;
-global constexpr i32 MAP_DIM           = 32;
-global constexpr f32 WALL_SPACING      = 3.0f;
-global constexpr i32 INVENTORY_DIM     = 30;
-global constexpr i32 INVENTORY_PADDING = 5;
+global constexpr vi2 WIN_RES               = WIN_DIM / 3; // @TODO@ This affects text.
+global constexpr i32 PADDING               = 5;
+global constexpr vi2 VIEW_RES              = vxx(vf2 { 1.0f, 0.5f } * (WIN_RES.x - PADDING * 2.0f));
+global constexpr vi2 HUD_RES               = { WIN_RES.x - PADDING * 2, WIN_RES.y - VIEW_RES.y - PADDING * 3 };
+global constexpr f32 HORT_TO_VERT_K        = 0.927295218f * VIEW_RES.x;
+global constexpr f32 WALL_HEIGHT           = 2.7432f;
+global constexpr f32 WALL_THICKNESS        = 0.4f;
+global constexpr f32 LUCIA_HEIGHT          = 1.4986f;
+global constexpr i32 MAP_DIM               = 32;
+global constexpr f32 WALL_SPACING          = 3.0f;
+global constexpr i32 INVENTORY_DIM         = 30;
+global constexpr i32 INVENTORY_PADDING     = 5;
+global constexpr f32 CREEPY_SOUND_MIN_TIME = 15.0f;
+global constexpr f32 CREEPY_SOUND_MAX_TIME = 90.0f;
 
 global constexpr struct { i32 slide_index; strlit text; } INTRO_DATA[] =
 	{
@@ -152,6 +154,18 @@ global constexpr strlit RUN_STEP_WAV_FILE_PATHS[] =
 		DATA_DIR "audio/run_7.wav"
 	};
 
+global constexpr strlit CREEPY_SOUND_WAV_FILE_PATHS[] =
+	{
+		DATA_DIR "audio/creepy_sound_0.wav",
+		DATA_DIR "audio/creepy_sound_1.wav",
+		DATA_DIR "audio/creepy_sound_2.wav",
+		DATA_DIR "audio/creepy_sound_3.wav",
+		DATA_DIR "audio/creepy_sound_4.wav",
+		DATA_DIR "audio/creepy_sound_5.wav",
+		DATA_DIR "audio/creepy_sound_6.wav",
+		DATA_DIR "audio/creepy_sound_7.wav"
+	};
+
 enum_loose (TitleMenuOption, u8)
 {
 	start,
@@ -189,7 +203,7 @@ enum_loose (ItemType, u8)
 	null,
 
 	enum_start_region(ITEM)
-		battery,
+		batteries,
 		paper,
 		flashlight,
 	enum_end_region(ITEM)
@@ -197,7 +211,7 @@ enum_loose (ItemType, u8)
 
 global constexpr strlit DEFAULT_ITEM_IMG_FILE_PATHS[ItemType::ITEM_COUNT] =
 	{
-		DATA_DIR "battery.png",
+		DATA_DIR "batteries.png",
 		DATA_DIR "paper.png",
 		DATA_DIR "flashlight_off.png"
 	};
@@ -383,12 +397,18 @@ struct State
 		{
 			struct
 			{
+				Mix_Chunk* drone;
+				Mix_Chunk* drone_low;
+				Mix_Chunk* drone_off;
+				Mix_Chunk* drone_on;
+				Mix_Chunk* blackout;
 				Mix_Chunk* eletronical;
 				Mix_Chunk* pick_up_paper;
 				Mix_Chunk* pick_up_heavy;
 				Mix_Chunk* switch_toggle;
-				Mix_Chunk* walk_steps[ARRAY_CAPACITY(WALK_STEP_WAV_FILE_PATHS)];
-				Mix_Chunk* run_steps [ARRAY_CAPACITY(RUN_STEP_WAV_FILE_PATHS)];
+				Mix_Chunk* walk_steps   [ARRAY_CAPACITY(WALK_STEP_WAV_FILE_PATHS)];
+				Mix_Chunk* run_steps    [ARRAY_CAPACITY(RUN_STEP_WAV_FILE_PATHS)];
+				Mix_Chunk* creepy_sounds[ARRAY_CAPACITY(CREEPY_SOUND_WAV_FILE_PATHS)];
 			} audio;
 
 			Mix_Chunk* audios[sizeof(audio) / sizeof(Mix_Chunk*)];
@@ -409,8 +429,10 @@ struct State
 		f32                  heart_rate_bpm;
 
 		WallVoxel            wall_voxels[MAP_DIM][MAP_DIM];
-		f32                  ceiling_lights_deactivation_keytime;
 		WallSide             door_wall_side;
+		f32                  creepy_sound_countdown;
+		bool32               blacked_out;
+		f32                  ceiling_lights_keytime;
 
 		vf2                  lucia_velocity;
 		vf3                  lucia_position;
@@ -951,6 +973,11 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 			state->game.texture.lucia_wounded = IMG_LoadTexture(renderer, DATA_DIR "lucia_wounded.png");
 			state->game.texture.view          = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_STREAMING, VIEW_RES.x, VIEW_RES.y);
 
+			state->game.audio.drone         = Mix_LoadWAV(DATA_DIR "audio/drone.wav");
+			state->game.audio.drone_low     = Mix_LoadWAV(DATA_DIR "audio/drone_low.wav");
+			state->game.audio.drone_off     = Mix_LoadWAV(DATA_DIR "audio/drone_off.wav");
+			state->game.audio.drone_on      = Mix_LoadWAV(DATA_DIR "audio/drone_on.wav");
+			state->game.audio.blackout      = Mix_LoadWAV(DATA_DIR "audio/blackout.wav");
 			state->game.audio.eletronical   = Mix_LoadWAV(DATA_DIR "audio/eletronical.wav");
 			state->game.audio.switch_toggle = Mix_LoadWAV(DATA_DIR "audio/switch_toggle.wav");
 			state->game.audio.pick_up_paper = Mix_LoadWAV(DATA_DIR "audio/pick_up_paper.wav");
@@ -966,12 +993,24 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 				*it = Mix_LoadWAV(RUN_STEP_WAV_FILE_PATHS[it_index]);
 			}
 
+			FOR_ELEMS(it, state->game.audio.creepy_sounds)
+			{
+				*it = Mix_LoadWAV(CREEPY_SOUND_WAV_FILE_PATHS[it_index]);
+			}
+
 			#if DEBUG
 			FOR_ELEMS(it, state->game.audios)
 			{
 				ASSERT(*it);
 			}
 			#endif
+
+			Mix_VolumeChunk(state->game.audio.drone, 0);
+			Mix_PlayChannel(+AudioChannel::r0, state->game.audio.drone, -1);
+
+			Mix_VolumeChunk(state->game.audio.drone_low, 0);
+			Mix_PlayChannel(+AudioChannel::r1, state->game.audio.drone_low, -1);
+
 		} break;
 	}
 }
@@ -1383,6 +1422,8 @@ extern "C" PROTOTYPE_UPDATE(update)
 								state->game.door_wall_side.is_antinormal = rng(&state->seed) < 0.5f;
 							}
 
+							state->game.creepy_sound_countdown = rng(&state->seed, CREEPY_SOUND_MIN_TIME, CREEPY_SOUND_MAX_TIME);
+
 							state->game.lucia_position.xy = rng_open_position(state);
 							state->game.lucia_position.z  = LUCIA_HEIGHT;
 							state->game.lucia_fov         = TAU / 3.0f;
@@ -1530,7 +1571,20 @@ extern "C" PROTOTYPE_UPDATE(update)
 			}
 			else
 			{
+				Mix_VolumeChunk(state->game.audio.drone    , static_cast<i32>(MIX_MAX_VOLUME *         state->game.ceiling_lights_keytime ));
+				Mix_VolumeChunk(state->game.audio.drone_low, static_cast<i32>(MIX_MAX_VOLUME * (1.0f - state->game.ceiling_lights_keytime)));
+
 				state->game.entering_keytime = clamp(state->game.entering_keytime + SECONDS_PER_UPDATE / 1.0f, 0.0f, 1.0f);
+
+				if (state->game.blacked_out)
+				{
+					state->game.creepy_sound_countdown -= SECONDS_PER_UPDATE;
+					if (state->game.creepy_sound_countdown <= 0.0f)
+					{
+						Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.creepy_sounds[rng(&state->seed, 0, ARRAY_CAPACITY(state->game.audio.creepy_sounds))], 0);
+						state->game.creepy_sound_countdown = rng(&state->seed, CREEPY_SOUND_MIN_TIME, CREEPY_SOUND_MAX_TIME);
+					}
+				}
 
 				if (PRESSED(Input::tab))
 				{
@@ -1639,9 +1693,9 @@ extern "C" PROTOTYPE_UPDATE(update)
 														Item   combined_result = {};
 
 														{
-															Item* battery;
+															Item* batteries;
 															Item* flashlight;
-															if (check_combine(&battery, ItemType::battery, &flashlight, ItemType::flashlight, &state->game.inventory[y][x], state->game.inventory_selected))
+															if (check_combine(&batteries, ItemType::batteries, &flashlight, ItemType::flashlight, &state->game.inventory[y][x], state->game.inventory_selected))
 															{
 																combined = true;
 
@@ -1706,7 +1760,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 								switch (state->game.inventory_selected->type)
 								{
-									case ItemType::battery:
+									case ItemType::batteries:
 									{
 										state->game.notification_message = "\"Some batteries. They feel cheap.\"";
 										state->game.notification_keytime = 1.0f;
@@ -1840,7 +1894,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 									Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.pick_up_paper, 0);
 								} break;
 
-								case ItemType::battery:
+								case ItemType::batteries:
 								{
 									Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.eletronical, 0);
 								} break;
@@ -2303,19 +2357,28 @@ extern "C" PROTOTYPE_UPDATE(update)
 					}
 				}
 
-				persist bool32 CEILING_ACTIVATION = false; // @TEMP@
-				if (PRESSED(Input::left))
+				if (PRESSED(Input::left)) // @TEMP@
 				{
-					CEILING_ACTIVATION = !CEILING_ACTIVATION;
+					state->game.blacked_out = !state->game.blacked_out;
+
+					if (state->game.blacked_out)
+					{
+						Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.drone_on, 0);
+					}
+					else
+					{
+						Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.drone_off, 0);
+						Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.blackout, 0);
+					}
 				}
 
-				if (CEILING_ACTIVATION)
+				if (state->game.blacked_out)
 				{
-					state->game.ceiling_lights_deactivation_keytime = clamp(state->game.ceiling_lights_deactivation_keytime + SECONDS_PER_UPDATE / 1.0f, 0.0f, 1.0f);
+					state->game.ceiling_lights_keytime = clamp(state->game.ceiling_lights_keytime + SECONDS_PER_UPDATE / 2.0f, 0.0f, 1.0f);
 				}
 				else
 				{
-					state->game.ceiling_lights_deactivation_keytime = clamp(state->game.ceiling_lights_deactivation_keytime - SECONDS_PER_UPDATE / 0.5f, 0.0f, 1.0f);
+					state->game.ceiling_lights_keytime = clamp(state->game.ceiling_lights_keytime - SECONDS_PER_UPDATE / 1.0f, 0.0f, 1.0f);
 				}
 			}
 		} break;
@@ -2710,7 +2773,7 @@ extern "C" PROTOTYPE_RENDER(render)
 							direction *= -1.0f;
 						}
 
-						if (rng_static((wall_coordinates.x + wall_coordinates.y) * 317 + wall_coordinates.y * 171 + (dot(ray_horizontal, wall_normal) < 0.0f ? 72 : 24)) < 0.2f)
+						if (rng_static((wall_coordinates.x + wall_coordinates.y) * 317 + wall_coordinates.y * 171 + (dot(ray_horizontal, wall_normal) < 0.0f ? 72 : 24)) < 0.15f)
 						{
 							if (direction < -THRESHOLD)
 							{
@@ -2767,6 +2830,8 @@ extern "C" PROTOTYPE_RENDER(render)
 								1.0f
 							);
 
+						f32 ceiling_lights_t = 0.5f - 4.0f * cube(0.5f - state->game.ceiling_lights_keytime);
+
 						vf3 new_color =
 							color
 								* clamp
@@ -2774,9 +2839,9 @@ extern "C" PROTOTYPE_RENDER(render)
 										(
 											0.22f
 												- fabsf(dot(ray, normal)) * 0.01f
-												+ ((state->game.lucia_position.z + ray.z * distance) / WALL_HEIGHT + 0.95f) * 0.7f * (0.5f - 4.0f * cube(state->game.ceiling_lights_deactivation_keytime - 0.5f))
+												+ ((state->game.lucia_position.z + ray.z * distance) / WALL_HEIGHT + 0.95f) * 0.7f * ceiling_lights_t
 										)
-											* clamp(1.0f - distance / lerp(48.0f, 10.0f, state->game.ceiling_lights_deactivation_keytime), 0.0f, 1.0f)
+											* clamp(1.0f - distance / lerp(10.0f, 48.0f, ceiling_lights_t), 0.0f, 1.0f)
 											+ flashlight_k,
 										0.0f,
 										1.0f
@@ -3150,9 +3215,8 @@ extern "C" PROTOTYPE_RENDER(render)
 				FC_ALIGN_LEFT,
 				1.0f,
 				{ 1.0f, 1.0f, 1.0f, 1.0f },
-				"%f %f\n",
-				state->game.lucia_position.x,
-				state->game.lucia_position.y
+				"%f\n",
+				state->game.creepy_sound_countdown
 			);
 #elif 1
 			set_color(platform->renderer, monochrome(0.0f));
