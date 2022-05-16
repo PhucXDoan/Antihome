@@ -69,7 +69,7 @@ struct Platform
 #define PROTOTYPE_INITIALIZE(NAME) void NAME(Platform* platform)
 typedef PROTOTYPE_INITIALIZE(PrototypeInitialize);
 
-#define PROTOTYPE_BOOT_UP(NAME) void NAME(Platform* platform)
+#define PROTOTYPE_BOOT_UP(NAME) void NAME(Platform* platform, SDL_Window* window)
 typedef PROTOTYPE_BOOT_UP(PrototypeBootUp);
 
 #define PROTOTYPE_BOOT_DOWN(NAME) void NAME(Platform* platform)

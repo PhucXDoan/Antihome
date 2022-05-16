@@ -81,6 +81,12 @@ global constexpr i32 INVENTORY_PADDING     = 5;
 global constexpr f32 CREEPY_SOUND_MIN_TIME = 15.0f;
 global constexpr f32 CREEPY_SOUND_MAX_TIME = 90.0f;
 
+global constexpr i32 TERMINAL_ICON_DIM     = 25;
+global constexpr i32 TERMINAL_ICON_PADDING = 15;
+global constexpr vi2 TERMINAL_SETTINGS_POSITION         = { TERMINAL_ICON_PADDING, WIN_RES.y - (TERMINAL_ICON_PADDING + TERMINAL_ICON_DIM)     };
+global constexpr vi2 TERMINAL_CREDITS_POSITION          = { TERMINAL_ICON_PADDING, WIN_RES.y - (TERMINAL_ICON_PADDING + TERMINAL_ICON_DIM) * 2 };
+global constexpr vi2 TERMINAL_ANTIHOME_PROGRAM_POSITION = { TERMINAL_ICON_PADDING, WIN_RES.y - (TERMINAL_ICON_PADDING + TERMINAL_ICON_DIM) * 3 };
+
 global constexpr struct { i32 slide_index; strlit text; } INTRO_DATA[] =
 	{
 		{ 0, "\"The subject of our debrief goes by the name of Lucia.```````````````` As always,```````` exposition will be the appetizer of the night.\"" },
@@ -324,35 +330,62 @@ struct State
 
 	struct
 	{
-		SDL_Texture*     background;
-
-		TitleMenuContext context;
-
-		i32              option_index;
-		f32              option_index_repeated_movement_countdown;
-		f32              option_cursor_interpolated_index;
-
-		struct
+		union
 		{
-			f32 repeat_sfx_keytime;
-			i32 repeat_sfx_count;
-		} settings;
+			struct
+			{
+				Img cursor;
+				Img power_button;
+				Img gear;
+				Img text_file;
+				Img antihome_program;
+			} img;
 
-		struct
-		{
-		} credits;
+			Img imgs[sizeof(img) / sizeof(Img)];
+		};
 
-		struct
+		union
 		{
-			f32    entering_keytime;
-			bool32 is_exiting;
-			f32    exiting_keytime;
-			char   text[256];
-			i32    current_text_index;
-			i32    current_text_length;
-			i32    next_char_index;
-			f32    next_char_keytime;
-		} intro;
+			struct
+			{
+				SDL_Texture* terminal;
+			} texture;
+
+			SDL_Texture* textures[sizeof(texture) / sizeof(SDL_Texture*)];
+		};
+
+		vf2 cursor_velocity;
+		vf2 cursor;
+
+		//SDL_Texture*     background;
+
+		//TitleMenuContext context;
+
+		//i32              option_index;
+		//f32              option_index_repeated_movement_countdown;
+		//f32              option_cursor_interpolated_index;
+
+		//struct
+		//{
+		//	f32 repeat_sfx_keytime;
+		//	i32 repeat_sfx_count;
+		//} settings;
+
+		//struct
+		//{
+		//} credits;
+
+		//struct
+		//{
+		//	f32    entering_keytime;
+		//	bool32 is_exiting;
+		//	f32    exiting_keytime;
+		//	char   text[256];
+		//	i32    current_text_index;
+		//	i32    current_text_length;
+		//	i32    next_char_index;
+		//	f32    next_char_keytime;
+		//} intro;
 	} title_menu;
 
 	struct
@@ -576,14 +609,14 @@ internal void draw_img(u32* view_pixels, Img* img, vi2 position, i32 dimension)
 		FOR_RANGE(y, clamp(position.y, 0, VIEW_RES.y), clamp(position.y + dimension, 0, VIEW_RES.y))
 		{
 			vf4 color = img_color_at(img, { static_cast<f32>(x - position.x) / dimension, (1.0f - static_cast<f32>(y - position.y) / dimension) });
-			view_pixels[y * VIEW_RES.x + x] = pack_color(lerp(unpack_color(view_pixels[y * VIEW_RES.x + x]), color.xyz, color.w));
+			view_pixels[y * VIEW_RES.x + x] = pack_color(lerp(unpack_color(view_pixels[y * VIEW_RES.x + x]).xyz, color.xyz, color.w));
 		}
 	}
 }
 
 internal void draw_img_box(u32* view_pixels, Img* img, vf3 border_color, vi2 position, i32 dimension)
 {
-	constexpr u32 BG = pack_color({ 0.2f, 0.2f, 0.2f });
+	constexpr u32 BG = pack_color({ 0.2f, 0.2f, 0.2f, 1.0f });
 
 	u32 border = pack_color(border_color);
 
@@ -952,7 +985,14 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 	{
 		case StateContext::title_menu:
 		{
-			state->title_menu.background = IMG_LoadTexture(renderer, DATA_DIR "title_menu.png");
+			state->title_menu.img.cursor           = init_img(DATA_DIR "cursor.png");
+			state->title_menu.img.power_button     = init_img(DATA_DIR "terminal_power_button.png");
+			state->title_menu.img.gear             = init_img(DATA_DIR "gear.png");
+			state->title_menu.img.text_file        = init_img(DATA_DIR "text_file.png");
+			state->title_menu.img.antihome_program = init_img(DATA_DIR "antihome_program.png");
+
+			state->title_menu.texture.terminal = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_STREAMING, WIN_RES.x, WIN_RES.y);
+			SDL_SetTextureBlendMode(state->title_menu.texture.terminal, SDL_BLENDMODE_BLEND);
 		} break;
 
 		case StateContext::game:
@@ -1033,7 +1073,15 @@ internal void boot_down_state(State* state)
 	{
 		case StateContext::title_menu:
 		{
-			SDL_DestroyTexture(state->title_menu.background);
+			FOR_ELEMS(it, state->game.imgs)
+			{
+				deinit_img(it);
+			}
+
+			FOR_ELEMS(it, state->game.textures)
+			{
+				SDL_DestroyTexture(*it);
+			}
 		} break;
 
 		case StateContext::game:
@@ -1079,6 +1127,8 @@ extern "C" PROTOTYPE_INITIALIZE(initialize)
 	state->master_volume = 0.5f;
 	state->brightness    = 0.75f;
 
+	state->title_menu.cursor = WIN_RES / 2.0f;
+
 	SDL_SetRelativeMouseMode(SDL_TRUE);
 	SDL_RenderSetLogicalSize(platform->renderer, WIN_RES.x, WIN_RES.y);
 
@@ -1108,6 +1158,12 @@ extern "C" PROTOTYPE_BOOT_UP(boot_up)
 	#endif
 
 	boot_up_state(platform->renderer, state);
+
+	{
+		SDL_Surface* icon = SDL_LoadBMP(DATA_DIR "antihome_icon.bmp");
+		SDL_SetWindowIcon(window, icon);
+		SDL_FreeSurface(icon);
+	}
 }
 
 extern "C" PROTOTYPE_BOOT_DOWN(boot_down)
@@ -1141,438 +1197,455 @@ extern "C" PROTOTYPE_UPDATE(update)
 	{
 		case StateContext::title_menu:
 		{
-			switch (state->title_menu.context)
+			state->title_menu.cursor_velocity += platform->cursor_delta * 15.0f;
+			state->title_menu.cursor_velocity *= 0.4f;
+			state->title_menu.cursor          += state->title_menu.cursor_velocity * SECONDS_PER_UPDATE;
+
+			constexpr f32 CURSOR_PADDING = 2.0f;
+			if (state->title_menu.cursor.x < CURSOR_PADDING || state->title_menu.cursor.x > WIN_RES.x - CURSOR_PADDING)
 			{
-				case TitleMenuContext::title_menu:
-				{
-					state->title_menu.option_index_repeated_movement_countdown -= SECONDS_PER_UPDATE;
-
-					// @TODO@ Compatable with arrows.
-					i32 option_index_delta = iterate_repeated_movement(platform, Input::w, Input::s, &state->title_menu.option_index_repeated_movement_countdown);
-					if (option_index_delta && IN_RANGE(state->title_menu.option_index + option_index_delta, 0, +TitleMenuOption::CAPACITY))
-					{
-						Mix_PlayChannel(+AudioChannel::unreserved, state->audio.click, 0);
-						state->title_menu.option_index += option_index_delta;
-					}
-
-					if (PRESSED(Input::space) || PRESSED(Input::enter))
-					{
-						Mix_PlayChannel(+AudioChannel::unreserved, state->audio.click, 0);
-						switch (state->title_menu.option_index)
-						{
-							case TitleMenuOption::start:
-							{
-								state->title_menu.context = TitleMenuContext::intro;
-								state->title_menu.intro   = {};
-							} break;
-
-							case TitleMenuOption::settings:
-							{
-								state->title_menu.context                                  = TitleMenuContext::settings;
-								state->title_menu.settings                                 = {};
-								state->title_menu.option_index                             = 0;
-								state->title_menu.option_index_repeated_movement_countdown = 0.0f;
-								state->title_menu.option_cursor_interpolated_index         = 0.0f;
-
-								return UpdateCode::resume;
-							} break;
-
-							case TitleMenuOption::credits:
-							{
-								state->title_menu.context = TitleMenuContext::credits;
-								state->title_menu.credits = {};
-
-								return UpdateCode::resume;
-							} break;
-
-							case TitleMenuOption::exit:
-							{
-								return UpdateCode::terminate;
-							} break;
-						}
-					}
-
-					state->title_menu.option_cursor_interpolated_index = dampen(state->title_menu.option_cursor_interpolated_index, static_cast<f32>(state->title_menu.option_index), 8.0f, SECONDS_PER_UPDATE);
-				} break;
-
-				case TitleMenuContext::settings:
-				{
-					aliasing settings = state->title_menu.settings;
-
-					state->title_menu.option_index_repeated_movement_countdown -= SECONDS_PER_UPDATE;
-
-					// @TODO@ Compatable with arrows.
-					i32 option_index_delta = iterate_repeated_movement(platform, Input::w, Input::s, &state->title_menu.option_index_repeated_movement_countdown);
-					if (option_index_delta && IN_RANGE(state->title_menu.option_index + option_index_delta, 0, +SettingOption::CAPACITY))
-					{
-						Mix_PlayChannel(+AudioChannel::unreserved, state->audio.click, 0);
-						state->title_menu.option_index += option_index_delta;
-
-						settings.repeat_sfx_count   = 0;
-						settings.repeat_sfx_keytime = 0.0f;
-					}
-
-					if ((PRESSED(Input::space) || PRESSED(Input::enter)) && state->title_menu.option_index == +SettingOption::done)
-					{
-						Mix_PlayChannel(+AudioChannel::unreserved, state->audio.click, 0);
-
-						state->title_menu.context                          = TitleMenuContext::title_menu;
-						state->title_menu.option_index                     = +TitleMenuOption::settings;
-						state->title_menu.option_cursor_interpolated_index = static_cast<f32>(TitleMenuOption::settings);
-
-						return UpdateCode::resume;
-					}
-
-					switch (state->title_menu.option_index)
-					{
-						case SettingOption::master_volume:
-						{
-							f32 delta = 0.0f;
-							if (HOLDING(Input::a)) { delta -= 1.0f; }
-							if (HOLDING(Input::d)) { delta += 1.0f; }
-
-							if (delta)
-							{
-								settings.repeat_sfx_count = 2;
-							}
-
-							if (settings.repeat_sfx_count || settings.repeat_sfx_keytime)
-							{
-								settings.repeat_sfx_keytime = clamp(settings.repeat_sfx_keytime - SECONDS_PER_UPDATE / 0.5f, 0.0f, 1.0f);
-
-								if (settings.repeat_sfx_count && settings.repeat_sfx_keytime == 0.0f)
-								{
-									Mix_PlayChannel(+AudioChannel::unreserved, state->audio.click, 0);
-									settings.repeat_sfx_count   -= 1;
-									settings.repeat_sfx_keytime  = 1.0f;
-								}
-							}
-
-							state->master_volume += delta * 0.5f * SECONDS_PER_UPDATE;
-							state->master_volume  = clamp(state->master_volume, 0.0f, 1.0f);
-						} break;
-
-						case SettingOption::brightness:
-						{
-							f32 delta = 0.0f;
-							if (HOLDING(Input::a)) { delta -= 1.0f; }
-							if (HOLDING(Input::d)) { delta += 1.0f; }
-							state->brightness += delta * 0.5f * SECONDS_PER_UPDATE;
-							state->brightness  = clamp(state->brightness, 0.0f, 1.0f);
-						} break;
-					}
-
-					state->title_menu.option_cursor_interpolated_index = dampen(state->title_menu.option_cursor_interpolated_index, static_cast<f32>(state->title_menu.option_index), 8.0f, SECONDS_PER_UPDATE);
-				} break;
-
-				case TitleMenuContext::credits:
-				{
-					if (PRESSED(Input::space) || PRESSED(Input::enter))
-					{
-						Mix_PlayChannel(+AudioChannel::unreserved, state->audio.click, 0);
-
-						state->title_menu.context                          = TitleMenuContext::title_menu;
-						state->title_menu.option_index                     = +TitleMenuOption::credits;
-						state->title_menu.option_cursor_interpolated_index = static_cast<f32>(TitleMenuOption::credits);
-
-						return UpdateCode::resume;
-					}
-				} break;
-
-				case TitleMenuContext::intro:
-				{
-					aliasing intro = state->title_menu.intro;
-
-					if (intro.is_exiting)
-					{
-						intro.exiting_keytime += SECONDS_PER_UPDATE / 0.75f;
-
-						if (intro.exiting_keytime >= 1.0f)
-						{
-							boot_down_state(state);
-							state->context = StateContext::game;
-							state->game    = {};
-							boot_up_state(platform->renderer, state);
-
-							FOR_RANGE(MAP_DIM * MAP_DIM / 3)
-							{
-								vi2 start_walk = { rng(&state->seed, 0, MAP_DIM), rng(&state->seed, 0, MAP_DIM) };
-
-								if
-								(
-									!+*get_wall_voxel(state, { start_walk.x, start_walk.y })
-									&& !+(*get_wall_voxel(state, { start_walk.x    , start_walk.y - 1 }) & WallVoxel::left  )
-									&& !+(*get_wall_voxel(state, { start_walk.x - 1, start_walk.y     }) & WallVoxel::bottom)
-								)
-								{
-									vi2 walk = { start_walk.x, start_walk.y };
-									FOR_RANGE(MAP_DIM)
-									{
-										switch (static_cast<i32>(rng(&state->seed) * 4.0f))
-										{
-											case 0:
-											{
-												if (!+*get_wall_voxel(state, walk + vi2 { -1, 0 }) && !+(*get_wall_voxel(state, walk + vi2 { -1, -1 }) & WallVoxel::left) && !+(*get_wall_voxel(state, walk + vi2 { -2, 0 }) & WallVoxel::bottom))
-												{
-													walk.x = mod(walk.x - 1, MAP_DIM);
-													*get_wall_voxel(state, walk) |= WallVoxel::bottom;
-												}
-											} break;
-
-											case 1:
-											{
-												if (!+*get_wall_voxel(state, walk + vi2 { 1, 0 }) && !+(*get_wall_voxel(state, walk) & WallVoxel::bottom) && !+(*get_wall_voxel(state, walk + vi2 { 1, -1 }) & WallVoxel::left))
-												{
-													*get_wall_voxel(state, walk) |= WallVoxel::bottom;
-													walk.x = mod(walk.x + 1, MAP_DIM);
-												}
-											} break;
-
-											case 2:
-											{
-												if (!+*get_wall_voxel(state, walk + vi2 { 0, -1 }) && !+(*get_wall_voxel(state, walk + vi2 { -1, -1 }) & WallVoxel::bottom) && !+(*get_wall_voxel(state, walk + vi2 { 0, -2 }) & WallVoxel::left))
-												{
-													walk.y = mod(walk.y - 1, MAP_DIM);
-													*get_wall_voxel(state, walk) |= WallVoxel::left;
-												}
-											} break;
-
-											case 3:
-											{
-												if (!+*get_wall_voxel(state, walk + vi2 { 0, 1 }) && !+(*get_wall_voxel(state, walk) & WallVoxel::left) && !+(*get_wall_voxel(state, walk + vi2 { -1, 1 }) & WallVoxel::bottom))
-												{
-													*get_wall_voxel(state, walk) |= WallVoxel::left;
-													walk.y = mod(walk.y + 1, MAP_DIM);
-												}
-											} break;
-										}
-
-										if
-										(
-											!(!+*get_wall_voxel(state, walk + vi2 { -1, 0 }) && !+(*get_wall_voxel(state, walk + vi2 { -1, -1 }) & WallVoxel::left) && !+(*get_wall_voxel(state, walk + vi2 { -2, 0 }) & WallVoxel::bottom)) &&
-											!(!+*get_wall_voxel(state, walk + vi2 { 1, 0 }) && !+(*get_wall_voxel(state, walk) & WallVoxel::bottom) && !+(*get_wall_voxel(state, walk + vi2 { 1, -1 }) & WallVoxel::left)) &&
-											!(!+*get_wall_voxel(state, walk + vi2 { 0, -1 }) && !+(*get_wall_voxel(state, walk + vi2 { -1, -1 }) & WallVoxel::bottom) && !+(*get_wall_voxel(state, walk + vi2 { 0, -2 }) & WallVoxel::left)) &&
-											!(!+*get_wall_voxel(state, walk + vi2 { 0, 1 }) && !+(*get_wall_voxel(state, walk) & WallVoxel::left) && !+(*get_wall_voxel(state, walk + vi2 { -1, 1 }) & WallVoxel::bottom))
-										)
-										{
-											break;
-										}
-									}
-								}
-							}
-
-							FOR_RANGE(y, MAP_DIM)
-							{
-								FOR_RANGE(x, MAP_DIM)
-								{
-									if (*get_wall_voxel(state, { x, y }) == (WallVoxel::left | WallVoxel::bottom) && rng(&state->seed) < 0.5f)
-									{
-										*get_wall_voxel(state, { x, y }) = WallVoxel::back_slash;
-									}
-									else if (+(*get_wall_voxel(state, { x + 1, y }) & WallVoxel::left) && +(*get_wall_voxel(state, { x, y + 1 }) & WallVoxel::bottom) && rng(&state->seed) < 0.5f)
-									{
-										*get_wall_voxel(state, { x + 1, y     }) &= ~WallVoxel::left;
-										*get_wall_voxel(state, { x    , y + 1 }) &= ~WallVoxel::bottom;
-										*get_wall_voxel(state, { x    , y     }) |= WallVoxel::back_slash;
-									}
-									else if (+(*get_wall_voxel(state, { x, y }) & WallVoxel::bottom) && *get_wall_voxel(state, { x + 1, y }) == WallVoxel::left && rng(&state->seed) < 0.5f)
-									{
-										*get_wall_voxel(state, { x    , y }) &= ~WallVoxel::bottom;
-										*get_wall_voxel(state, { x + 1, y }) &= ~WallVoxel::left;
-										*get_wall_voxel(state, { x    , y }) |=  WallVoxel::forward_slash;
-									}
-									else if (+(*get_wall_voxel(state, { x, y }) & WallVoxel::left) && *get_wall_voxel(state, { x, y + 1 }) == WallVoxel::bottom && rng(&state->seed) < 0.5f)
-									{
-										*get_wall_voxel(state, { x, y     }) &= ~WallVoxel::left;
-										*get_wall_voxel(state, { x, y + 1 }) &= ~WallVoxel::bottom;
-										*get_wall_voxel(state, { x, y     }) |=  WallVoxel::forward_slash;
-									}
-								}
-							}
-
-							{
-								memory_arena_checkpoint(&state->transient_arena);
-
-								struct DoorSpotNode
-								{
-									vi2           coordinates;
-									WallVoxel     wall_voxel;
-									DoorSpotNode* next_node;
-								};
-
-								DoorSpotNode* door_spot_node  = 0;
-								i32           door_spot_count = 0;
-
-								FOR_RANGE(y, MAP_DIM)
-								{
-									FOR_RANGE(x, MAP_DIM)
-									{
-										FOR_ELEMS(it, WALL_VOXEL_DATA)
-										{
-											if (+(state->game.wall_voxels[y][x] & it->voxel))
-											{
-												DoorSpotNode* node = memory_arena_push<DoorSpotNode>(&state->transient_arena);
-												node->coordinates  = { x, y };
-												node->wall_voxel   = it->voxel;
-												node->next_node    = door_spot_node;
-												door_spot_node     = node;
-												door_spot_count   += 1;
-											}
-										}
-									}
-								}
-
-								ASSERT(door_spot_node);
-
-								for (i32 i = rng(&state->seed, 0, door_spot_count); i; i -= 1)
-								{
-									door_spot_node = door_spot_node->next_node;
-								}
-
-								state->game.door_wall_side.coordinates   = door_spot_node->coordinates;
-								state->game.door_wall_side.voxel         = door_spot_node->wall_voxel;
-								state->game.door_wall_side.is_antinormal = rng(&state->seed) < 0.5f;
-							}
-
-							state->game.creepy_sound_countdown = rng(&state->seed, CREEPY_SOUND_MIN_TIME, CREEPY_SOUND_MAX_TIME);
-
-							state->game.lucia_position.xy = rng_open_position(state);
-							state->game.lucia_position.z  = LUCIA_HEIGHT;
-							state->game.lucia_fov         = TAU / 3.0f;
-							state->game.lucia_stamina     = 1.0f;
-
-							state->game.monster_position.xy = rng_open_position(state);
-
-							lambda create_item =
-								[&](ItemType type)
-								{
-									Item* item = allocate_item(state);
-									*item             = {};
-									item->type        = type;
-									item->position.xy = rng_open_position(state);
-									item->normal      = polar(state->time * 1.5f);
-
-									switch (type)
-									{
-										case ItemType::paper:
-										{
-											item->paper.index = rng(&state->seed, 0, ARRAY_CAPACITY(PAPER_DATA));
-										};
-									}
-								};
-
-							for (ItemType type = ItemType::ITEM_START; type != ItemType::ITEM_END; type = static_cast<ItemType>(+type + 1))
-							{
-								create_item(type);
-							}
-
-							FOR_RANGE(ARRAY_CAPACITY(state->game.item_buffer) - state->game.item_count)
-							{
-								f32 total_weights = 0.0f;
-								FOR_ELEMS(w, ITEM_SPAWN_WEIGHTS)
-								{
-									total_weights += *w;
-								}
-
-								f32 n = rng(&state->seed, 0.0f, total_weights);
-								i32 i = -1;
-								total_weights = 0.0f;
-								FOR_ELEMS(w, ITEM_SPAWN_WEIGHTS)
-								{
-									if (IN_RANGE(n - total_weights, 0.0f, *w))
-									{
-										i = w_index;
-										break;
-									}
-									else
-									{
-										total_weights += *w;
-									}
-								}
-
-								create_item(static_cast<ItemType>(+ItemType::ITEM_START + i));
-							}
-
-							return UpdateCode::resume;
-						}
-					}
-					else
-					{
-						if (intro.entering_keytime < 1.0f)
-						{
-							intro.entering_keytime += SECONDS_PER_UPDATE / 1.0f;
-
-							if (intro.entering_keytime >= 1.0f)
-							{
-								intro.entering_keytime = 1.0f;
-							}
-
-							state->title_menu.option_cursor_interpolated_index = dampen(state->title_menu.option_cursor_interpolated_index, static_cast<f32>(state->title_menu.option_index), 8.0f, SECONDS_PER_UPDATE);
-						}
-
-						if (intro.entering_keytime == 1.0f)
-						{
-							lambda iterate_text =
-								[&](bool32 play_sound)
-								{
-									if (INTRO_DATA[intro.current_text_index].text[intro.next_char_index] != '\0')
-									{
-										if (INTRO_DATA[intro.current_text_index].text[intro.next_char_index] != '`')
-										{
-											ASSERT(intro.current_text_length < ARRAY_CAPACITY(intro.text) - 1);
-											intro.text[intro.current_text_length] = INTRO_DATA[intro.current_text_index].text[intro.next_char_index];
-											intro.current_text_length += 1;
-											intro.text[intro.current_text_length] = '\0';
-
-											if (play_sound)
-											{
-												Mix_PlayChannel(+AudioChannel::unreserved, state->audio.text_type, 0);
-											}
-										}
-
-										intro.next_char_index += 1;
-
-										return INTRO_DATA[intro.current_text_index].text[intro.next_char_index] != '\0';
-									}
-
-									return false;
-								};
-
-							for (intro.next_char_keytime += SECONDS_PER_UPDATE / 0.05f; intro.next_char_keytime >= 1.0f; intro.next_char_keytime -= 1.0f)
-							{
-								iterate_text(true);
-							}
-
-							if (PRESSED(Input::escape))
-							{
-								intro.is_exiting = true;
-							}
-							else if (PRESSED(Input::space) || PRESSED(Input::enter))
-							{
-								if (INTRO_DATA[intro.current_text_index].text[intro.next_char_index] == '\0')
-								{
-									if (intro.current_text_index == ARRAY_CAPACITY(INTRO_DATA) - 1)
-									{
-										intro.is_exiting = true;
-									}
-									else
-									{
-										intro.next_char_keytime    = 0.0f;
-										intro.current_text_index  += 1;
-										intro.current_text_length  = 0;
-										intro.next_char_index      = 0;
-										intro.text[0]              = '\0';
-									}
-								}
-								else
-								{
-									while (iterate_text(false));
-								}
-							}
-						}
-					}
-				} break;
+				state->title_menu.cursor_velocity.x = 0.0f;
+				state->title_menu.cursor.x          = clamp(state->title_menu.cursor.x, CURSOR_PADDING, static_cast<f32>(WIN_RES.x - CURSOR_PADDING));
 			}
+
+			if (state->title_menu.cursor.y < CURSOR_PADDING || state->title_menu.cursor.y > WIN_RES.y - CURSOR_PADDING)
+			{
+				state->title_menu.cursor_velocity.y = 0.0f;
+				state->title_menu.cursor.y          = clamp(state->title_menu.cursor.y, CURSOR_PADDING, static_cast<f32>(WIN_RES.y - CURSOR_PADDING));
+			}
+
+		//	switch (state->title_menu.context)
+		//	{
+		//		case TitleMenuContext::title_menu:
+		//		{
+		//			state->title_menu.option_index_repeated_movement_countdown -= SECONDS_PER_UPDATE;
+
+		//			// @TODO@ Compatable with arrows.
+		//			i32 option_index_delta = iterate_repeated_movement(platform, Input::w, Input::s, &state->title_menu.option_index_repeated_movement_countdown);
+		//			if (option_index_delta && IN_RANGE(state->title_menu.option_index + option_index_delta, 0, +TitleMenuOption::CAPACITY))
+		//			{
+		//				Mix_PlayChannel(+AudioChannel::unreserved, state->audio.click, 0);
+		//				state->title_menu.option_index += option_index_delta;
+		//			}
+
+		//			if (PRESSED(Input::space) || PRESSED(Input::enter))
+		//			{
+		//				Mix_PlayChannel(+AudioChannel::unreserved, state->audio.click, 0);
+		//				switch (state->title_menu.option_index)
+		//				{
+		//					case TitleMenuOption::start:
+		//					{
+		//						state->title_menu.context = TitleMenuContext::intro;
+		//						state->title_menu.intro   = {};
+		//					} break;
+
+		//					case TitleMenuOption::settings:
+		//					{
+		//						state->title_menu.context                                  = TitleMenuContext::settings;
+		//						state->title_menu.settings                                 = {};
+		//						state->title_menu.option_index                             = 0;
+		//						state->title_menu.option_index_repeated_movement_countdown = 0.0f;
+		//						state->title_menu.option_cursor_interpolated_index         = 0.0f;
+
+		//						return UpdateCode::resume;
+		//					} break;
+
+		//					case TitleMenuOption::credits:
+		//					{
+		//						state->title_menu.context = TitleMenuContext::credits;
+		//						state->title_menu.credits = {};
+
+		//						return UpdateCode::resume;
+		//					} break;
+
+		//					case TitleMenuOption::exit:
+		//					{
+		//						return UpdateCode::terminate;
+		//					} break;
+		//				}
+		//			}
+
+		//			state->title_menu.option_cursor_interpolated_index = dampen(state->title_menu.option_cursor_interpolated_index, static_cast<f32>(state->title_menu.option_index), 8.0f, SECONDS_PER_UPDATE);
+		//		} break;
+
+		//		case TitleMenuContext::settings:
+		//		{
+		//			aliasing settings = state->title_menu.settings;
+
+		//			state->title_menu.option_index_repeated_movement_countdown -= SECONDS_PER_UPDATE;
+
+		//			// @TODO@ Compatable with arrows.
+		//			i32 option_index_delta = iterate_repeated_movement(platform, Input::w, Input::s, &state->title_menu.option_index_repeated_movement_countdown);
+		//			if (option_index_delta && IN_RANGE(state->title_menu.option_index + option_index_delta, 0, +SettingOption::CAPACITY))
+		//			{
+		//				Mix_PlayChannel(+AudioChannel::unreserved, state->audio.click, 0);
+		//				state->title_menu.option_index += option_index_delta;
+
+		//				settings.repeat_sfx_count   = 0;
+		//				settings.repeat_sfx_keytime = 0.0f;
+		//			}
+
+		//			if ((PRESSED(Input::space) || PRESSED(Input::enter)) && state->title_menu.option_index == +SettingOption::done)
+		//			{
+		//				Mix_PlayChannel(+AudioChannel::unreserved, state->audio.click, 0);
+
+		//				state->title_menu.context                          = TitleMenuContext::title_menu;
+		//				state->title_menu.option_index                     = +TitleMenuOption::settings;
+		//				state->title_menu.option_cursor_interpolated_index = static_cast<f32>(TitleMenuOption::settings);
+
+		//				return UpdateCode::resume;
+		//			}
+
+		//			switch (state->title_menu.option_index)
+		//			{
+		//				case SettingOption::master_volume:
+		//				{
+		//					f32 delta = 0.0f;
+		//					if (HOLDING(Input::a)) { delta -= 1.0f; }
+		//					if (HOLDING(Input::d)) { delta += 1.0f; }
+
+		//					if (delta)
+		//					{
+		//						settings.repeat_sfx_count = 2;
+		//					}
+
+		//					if (settings.repeat_sfx_count || settings.repeat_sfx_keytime)
+		//					{
+		//						settings.repeat_sfx_keytime = clamp(settings.repeat_sfx_keytime - SECONDS_PER_UPDATE / 0.5f, 0.0f, 1.0f);
+
+		//						if (settings.repeat_sfx_count && settings.repeat_sfx_keytime == 0.0f)
+		//						{
+		//							Mix_PlayChannel(+AudioChannel::unreserved, state->audio.click, 0);
+		//							settings.repeat_sfx_count   -= 1;
+		//							settings.repeat_sfx_keytime  = 1.0f;
+		//						}
+		//					}
+
+		//					state->master_volume += delta * 0.5f * SECONDS_PER_UPDATE;
+		//					state->master_volume  = clamp(state->master_volume, 0.0f, 1.0f);
+		//				} break;
+
+		//				case SettingOption::brightness:
+		//				{
+		//					f32 delta = 0.0f;
+		//					if (HOLDING(Input::a)) { delta -= 1.0f; }
+		//					if (HOLDING(Input::d)) { delta += 1.0f; }
+		//					state->brightness += delta * 0.5f * SECONDS_PER_UPDATE;
+		//					state->brightness  = clamp(state->brightness, 0.0f, 1.0f);
+		//				} break;
+		//			}
+
+		//			state->title_menu.option_cursor_interpolated_index = dampen(state->title_menu.option_cursor_interpolated_index, static_cast<f32>(state->title_menu.option_index), 8.0f, SECONDS_PER_UPDATE);
+		//		} break;
+
+		//		case TitleMenuContext::credits:
+		//		{
+		//			if (PRESSED(Input::space) || PRESSED(Input::enter))
+		//			{
+		//				Mix_PlayChannel(+AudioChannel::unreserved, state->audio.click, 0);
+
+		//				state->title_menu.context                          = TitleMenuContext::title_menu;
+		//				state->title_menu.option_index                     = +TitleMenuOption::credits;
+		//				state->title_menu.option_cursor_interpolated_index = static_cast<f32>(TitleMenuOption::credits);
+
+		//				return UpdateCode::resume;
+		//			}
+		//		} break;
+
+		//		case TitleMenuContext::intro:
+		//		{
+		//			aliasing intro = state->title_menu.intro;
+
+		//			if (intro.is_exiting)
+		//			{
+		//				intro.exiting_keytime += SECONDS_PER_UPDATE / 0.75f;
+
+		//				if (intro.exiting_keytime >= 1.0f)
+		//				{
+		//					boot_down_state(state);
+		//					state->context = StateContext::game;
+		//					state->game    = {};
+		//					boot_up_state(platform->renderer, state);
+
+		//					FOR_RANGE(MAP_DIM * MAP_DIM / 3)
+		//					{
+		//						vi2 start_walk = { rng(&state->seed, 0, MAP_DIM), rng(&state->seed, 0, MAP_DIM) };
+
+		//						if
+		//						(
+		//							!+*get_wall_voxel(state, { start_walk.x, start_walk.y })
+		//							&& !+(*get_wall_voxel(state, { start_walk.x    , start_walk.y - 1 }) & WallVoxel::left  )
+		//							&& !+(*get_wall_voxel(state, { start_walk.x - 1, start_walk.y     }) & WallVoxel::bottom)
+		//						)
+		//						{
+		//							vi2 walk = { start_walk.x, start_walk.y };
+		//							FOR_RANGE(MAP_DIM)
+		//							{
+		//								switch (static_cast<i32>(rng(&state->seed) * 4.0f))
+		//								{
+		//									case 0:
+		//									{
+		//										if (!+*get_wall_voxel(state, walk + vi2 { -1, 0 }) && !+(*get_wall_voxel(state, walk + vi2 { -1, -1 }) & WallVoxel::left) && !+(*get_wall_voxel(state, walk + vi2 { -2, 0 }) & WallVoxel::bottom))
+		//										{
+		//											walk.x = mod(walk.x - 1, MAP_DIM);
+		//											*get_wall_voxel(state, walk) |= WallVoxel::bottom;
+		//										}
+		//									} break;
+
+		//									case 1:
+		//									{
+		//										if (!+*get_wall_voxel(state, walk + vi2 { 1, 0 }) && !+(*get_wall_voxel(state, walk) & WallVoxel::bottom) && !+(*get_wall_voxel(state, walk + vi2 { 1, -1 }) & WallVoxel::left))
+		//										{
+		//											*get_wall_voxel(state, walk) |= WallVoxel::bottom;
+		//											walk.x = mod(walk.x + 1, MAP_DIM);
+		//										}
+		//									} break;
+
+		//									case 2:
+		//									{
+		//										if (!+*get_wall_voxel(state, walk + vi2 { 0, -1 }) && !+(*get_wall_voxel(state, walk + vi2 { -1, -1 }) & WallVoxel::bottom) && !+(*get_wall_voxel(state, walk + vi2 { 0, -2 }) & WallVoxel::left))
+		//										{
+		//											walk.y = mod(walk.y - 1, MAP_DIM);
+		//											*get_wall_voxel(state, walk) |= WallVoxel::left;
+		//										}
+		//									} break;
+
+		//									case 3:
+		//									{
+		//										if (!+*get_wall_voxel(state, walk + vi2 { 0, 1 }) && !+(*get_wall_voxel(state, walk) & WallVoxel::left) && !+(*get_wall_voxel(state, walk + vi2 { -1, 1 }) & WallVoxel::bottom))
+		//										{
+		//											*get_wall_voxel(state, walk) |= WallVoxel::left;
+		//											walk.y = mod(walk.y + 1, MAP_DIM);
+		//										}
+		//									} break;
+		//								}
+
+		//								if
+		//								(
+		//									!(!+*get_wall_voxel(state, walk + vi2 { -1, 0 }) && !+(*get_wall_voxel(state, walk + vi2 { -1, -1 }) & WallVoxel::left) && !+(*get_wall_voxel(state, walk + vi2 { -2, 0 }) & WallVoxel::bottom)) &&
+		//									!(!+*get_wall_voxel(state, walk + vi2 { 1, 0 }) && !+(*get_wall_voxel(state, walk) & WallVoxel::bottom) && !+(*get_wall_voxel(state, walk + vi2 { 1, -1 }) & WallVoxel::left)) &&
+		//									!(!+*get_wall_voxel(state, walk + vi2 { 0, -1 }) && !+(*get_wall_voxel(state, walk + vi2 { -1, -1 }) & WallVoxel::bottom) && !+(*get_wall_voxel(state, walk + vi2 { 0, -2 }) & WallVoxel::left)) &&
+		//									!(!+*get_wall_voxel(state, walk + vi2 { 0, 1 }) && !+(*get_wall_voxel(state, walk) & WallVoxel::left) && !+(*get_wall_voxel(state, walk + vi2 { -1, 1 }) & WallVoxel::bottom))
+		//								)
+		//								{
+		//									break;
+		//								}
+		//							}
+		//						}
+		//					}
+
+		//					FOR_RANGE(y, MAP_DIM)
+		//					{
+		//						FOR_RANGE(x, MAP_DIM)
+		//						{
+		//							if (*get_wall_voxel(state, { x, y }) == (WallVoxel::left | WallVoxel::bottom) && rng(&state->seed) < 0.5f)
+		//							{
+		//								*get_wall_voxel(state, { x, y }) = WallVoxel::back_slash;
+		//							}
+		//							else if (+(*get_wall_voxel(state, { x + 1, y }) & WallVoxel::left) && +(*get_wall_voxel(state, { x, y + 1 }) & WallVoxel::bottom) && rng(&state->seed) < 0.5f)
+		//							{
+		//								*get_wall_voxel(state, { x + 1, y     }) &= ~WallVoxel::left;
+		//								*get_wall_voxel(state, { x    , y + 1 }) &= ~WallVoxel::bottom;
+		//								*get_wall_voxel(state, { x    , y     }) |= WallVoxel::back_slash;
+		//							}
+		//							else if (+(*get_wall_voxel(state, { x, y }) & WallVoxel::bottom) && *get_wall_voxel(state, { x + 1, y }) == WallVoxel::left && rng(&state->seed) < 0.5f)
+		//							{
+		//								*get_wall_voxel(state, { x    , y }) &= ~WallVoxel::bottom;
+		//								*get_wall_voxel(state, { x + 1, y }) &= ~WallVoxel::left;
+		//								*get_wall_voxel(state, { x    , y }) |=  WallVoxel::forward_slash;
+		//							}
+		//							else if (+(*get_wall_voxel(state, { x, y }) & WallVoxel::left) && *get_wall_voxel(state, { x, y + 1 }) == WallVoxel::bottom && rng(&state->seed) < 0.5f)
+		//							{
+		//								*get_wall_voxel(state, { x, y     }) &= ~WallVoxel::left;
+		//								*get_wall_voxel(state, { x, y + 1 }) &= ~WallVoxel::bottom;
+		//								*get_wall_voxel(state, { x, y     }) |=  WallVoxel::forward_slash;
+		//							}
+		//						}
+		//					}
+
+		//					{
+		//						memory_arena_checkpoint(&state->transient_arena);
+
+		//						struct DoorSpotNode
+		//						{
+		//							vi2           coordinates;
+		//							WallVoxel     wall_voxel;
+		//							DoorSpotNode* next_node;
+		//						};
+
+		//						DoorSpotNode* door_spot_node  = 0;
+		//						i32           door_spot_count = 0;
+
+		//						FOR_RANGE(y, MAP_DIM)
+		//						{
+		//							FOR_RANGE(x, MAP_DIM)
+		//							{
+		//								FOR_ELEMS(it, WALL_VOXEL_DATA)
+		//								{
+		//									if (+(state->game.wall_voxels[y][x] & it->voxel))
+		//									{
+		//										DoorSpotNode* node = memory_arena_push<DoorSpotNode>(&state->transient_arena);
+		//										node->coordinates  = { x, y };
+		//										node->wall_voxel   = it->voxel;
+		//										node->next_node    = door_spot_node;
+		//										door_spot_node     = node;
+		//										door_spot_count   += 1;
+		//									}
+		//								}
+		//							}
+		//						}
+
+		//						ASSERT(door_spot_node);
+
+		//						for (i32 i = rng(&state->seed, 0, door_spot_count); i; i -= 1)
+		//						{
+		//							door_spot_node = door_spot_node->next_node;
+		//						}
+
+		//						state->game.door_wall_side.coordinates   = door_spot_node->coordinates;
+		//						state->game.door_wall_side.voxel         = door_spot_node->wall_voxel;
+		//						state->game.door_wall_side.is_antinormal = rng(&state->seed) < 0.5f;
+		//					}
+
+		//					state->game.creepy_sound_countdown = rng(&state->seed, CREEPY_SOUND_MIN_TIME, CREEPY_SOUND_MAX_TIME);
+
+		//					state->game.lucia_position.xy = rng_open_position(state);
+		//					state->game.lucia_position.z  = LUCIA_HEIGHT;
+		//					state->game.lucia_fov         = TAU / 3.0f;
+		//					state->game.lucia_stamina     = 1.0f;
+
+		//					state->game.monster_position.xy = rng_open_position(state);
+
+		//					lambda create_item =
+		//						[&](ItemType type)
+		//						{
+		//							Item* item = allocate_item(state);
+		//							*item             = {};
+		//							item->type        = type;
+		//							item->position.xy = rng_open_position(state);
+		//							item->normal      = polar(state->time * 1.5f);
+
+		//							switch (type)
+		//							{
+		//								case ItemType::paper:
+		//								{
+		//									item->paper.index = rng(&state->seed, 0, ARRAY_CAPACITY(PAPER_DATA));
+		//								};
+		//							}
+		//						};
+
+		//					for (ItemType type = ItemType::ITEM_START; type != ItemType::ITEM_END; type = static_cast<ItemType>(+type + 1))
+		//					{
+		//						create_item(type);
+		//					}
+
+		//					FOR_RANGE(ARRAY_CAPACITY(state->game.item_buffer) - state->game.item_count)
+		//					{
+		//						f32 total_weights = 0.0f;
+		//						FOR_ELEMS(w, ITEM_SPAWN_WEIGHTS)
+		//						{
+		//							total_weights += *w;
+		//						}
+
+		//						f32 n = rng(&state->seed, 0.0f, total_weights);
+		//						i32 i = -1;
+		//						total_weights = 0.0f;
+		//						FOR_ELEMS(w, ITEM_SPAWN_WEIGHTS)
+		//						{
+		//							if (IN_RANGE(n - total_weights, 0.0f, *w))
+		//							{
+		//								i = w_index;
+		//								break;
+		//							}
+		//							else
+		//							{
+		//								total_weights += *w;
+		//							}
+		//						}
+
+		//						create_item(static_cast<ItemType>(+ItemType::ITEM_START + i));
+		//					}
+
+		//					return UpdateCode::resume;
+		//				}
+		//			}
+		//			else
+		//			{
+		//				if (intro.entering_keytime < 1.0f)
+		//				{
+		//					intro.entering_keytime += SECONDS_PER_UPDATE / 1.0f;
+
+		//					if (intro.entering_keytime >= 1.0f)
+		//					{
+		//						intro.entering_keytime = 1.0f;
+		//					}
+
+		//					state->title_menu.option_cursor_interpolated_index = dampen(state->title_menu.option_cursor_interpolated_index, static_cast<f32>(state->title_menu.option_index), 8.0f, SECONDS_PER_UPDATE);
+		//				}
+
+		//				if (intro.entering_keytime == 1.0f)
+		//				{
+		//					lambda iterate_text =
+		//						[&](bool32 play_sound)
+		//						{
+		//							if (INTRO_DATA[intro.current_text_index].text[intro.next_char_index] != '\0')
+		//							{
+		//								if (INTRO_DATA[intro.current_text_index].text[intro.next_char_index] != '`')
+		//								{
+		//									ASSERT(intro.current_text_length < ARRAY_CAPACITY(intro.text) - 1);
+		//									intro.text[intro.current_text_length] = INTRO_DATA[intro.current_text_index].text[intro.next_char_index];
+		//									intro.current_text_length += 1;
+		//									intro.text[intro.current_text_length] = '\0';
+
+		//									if (play_sound)
+		//									{
+		//										Mix_PlayChannel(+AudioChannel::unreserved, state->audio.text_type, 0);
+		//									}
+		//								}
+
+		//								intro.next_char_index += 1;
+
+		//								return INTRO_DATA[intro.current_text_index].text[intro.next_char_index] != '\0';
+		//							}
+
+		//							return false;
+		//						};
+
+		//					for (intro.next_char_keytime += SECONDS_PER_UPDATE / 0.05f; intro.next_char_keytime >= 1.0f; intro.next_char_keytime -= 1.0f)
+		//					{
+		//						iterate_text(true);
+		//					}
+
+		//					if (PRESSED(Input::escape))
+		//					{
+		//						intro.is_exiting = true;
+		//					}
+		//					else if (PRESSED(Input::space) || PRESSED(Input::enter))
+		//					{
+		//						if (INTRO_DATA[intro.current_text_index].text[intro.next_char_index] == '\0')
+		//						{
+		//							if (intro.current_text_index == ARRAY_CAPACITY(INTRO_DATA) - 1)
+		//							{
+		//								intro.is_exiting = true;
+		//							}
+		//							else
+		//							{
+		//								intro.next_char_keytime    = 0.0f;
+		//								intro.current_text_index  += 1;
+		//								intro.current_text_length  = 0;
+		//								intro.next_char_index      = 0;
+		//								intro.text[0]              = '\0';
+		//							}
+		//						}
+		//						else
+		//						{
+		//							while (iterate_text(false));
+		//						}
+		//					}
+		//				}
+		//			}
+		//		} break;
+		//	}
 		} break;
 
 		case StateContext::game:
@@ -2426,10 +2499,10 @@ extern "C" PROTOTYPE_UPDATE(update)
 			{
 				if (PRESSED(Input::space))
 				{
-					boot_down_state(state);
-					state->context    = StateContext::title_menu;
-					state->title_menu = {};
-					boot_up_state(platform->renderer, state);
+					//boot_down_state(state);
+					//state->context    = StateContext::title_menu;
+					//state->title_menu = {};
+					//boot_up_state(platform->renderer, state);
 				}
 			}
 		} break;
@@ -2450,197 +2523,264 @@ extern "C" PROTOTYPE_RENDER(render)
 	{
 		case StateContext::title_menu:
 		{
-			if (state->title_menu.intro.entering_keytime < 0.5f)
-			{
-				set_color(platform->renderer, { 0.05f, 0.1f, 0.15f, 1.0f });
-				SDL_RenderClear(platform->renderer);
+			set_color(platform->renderer, { 0.003f, 0.51f, 0.5, 1.0f });
+			SDL_RenderClear(platform->renderer);
 
-				blit_texture(platform->renderer, state->title_menu.background, { 0, 0 }, WIN_RES);
-				draw_text
-				(
-					platform->renderer,
-					state->font.major,
-					{ WIN_RES.x * 0.05f, WIN_RES.y * 0.05f },
-					FC_ALIGN_LEFT,
-					1.0f,
-					{ 1.0f, 1.0f, 1.0f, 1.0f },
-					"Antihome"
-				);
-			}
-			else
-			{
-				set_color(platform->renderer, monochrome(0.0f));
-				SDL_RenderClear(platform->renderer);
-			}
+			constexpr i32 TASKBAR_HEIGHT = 20;
+			set_color(platform->renderer, monochrome(0.3f));
+			draw_filled_rect(platform->renderer, { 0, WIN_RES.y - TASKBAR_HEIGHT }, { WIN_RES.x, TASKBAR_HEIGHT });
 
-			if (state->title_menu.context == TitleMenuContext::title_menu || state->title_menu.context == TitleMenuContext::intro && state->title_menu.intro.entering_keytime < 0.5f)
-			{
-				constexpr f32 OPTION_SCALAR  = 0.425f;
-				constexpr f32 OPTION_SPACING = 0.1f;
-				FOR_ELEMS(it, TITLE_MENU_OPTIONS)
+			SDL_Surface* surface;
+			SDL_LockTextureToSurface(state->title_menu.texture.terminal, 0, &surface);
+			SDL_FillRect(surface, 0, 0);
+
+			lambda blit_img =
+				[&](Img* img, vi2 position, vi2 dimensions)
 				{
-					f32 activation = 1.0f - clamp(fabsf(it_index - state->title_menu.option_cursor_interpolated_index), 0.0f, 1.0f);
-					draw_text
-					(
-						platform->renderer,
-						state->font.major,
-						{ WIN_RES.x * 0.08f, WIN_RES.y * (0.3f + it_index * OPTION_SPACING) },
-						FC_ALIGN_LEFT,
-						OPTION_SCALAR,
-						vxx
-						(
-							lerp(vf3 { 0.75f, 0.75f, 0.75f }, { 1.0f, 1.0f, 0.2f }, activation),
-							lerp(0.95f, 1.0f, activation)
-						),
-						*it
-					);
-				}
-
-				draw_text
-				(
-					platform->renderer,
-					state->font.major,
-					{ WIN_RES.x * 0.07f, WIN_RES.y * (0.3f + state->title_menu.option_cursor_interpolated_index * OPTION_SPACING) },
-					FC_ALIGN_RIGHT,
-					OPTION_SCALAR,
-					{ 1.0f, 1.0f, 0.2f, 1.0f },
-					">"
-				);
-
-				if (state->title_menu.context == TitleMenuContext::intro)
-				{
-					blackout = state->title_menu.intro.entering_keytime * 2.0f;
-				}
-			}
-			else if (state->title_menu.context == TitleMenuContext::intro)
-			{
-				set_color(platform->renderer, monochrome(0.5f));
-				draw_filled_rect(platform->renderer, { PADDING, PADDING }, VIEW_RES);
-
-				set_color(platform->renderer, monochrome(0.2f));
-				draw_filled_rect(platform->renderer, { PADDING, WIN_RES.y - PADDING - HUD_RES.y }, HUD_RES);
-
-				draw_text
-				(
-					platform->renderer,
-					state->font.major,
-					{ WIN_RES.x * 0.5f, WIN_RES.y * 0.25f },
-					FC_ALIGN_CENTER,
-					1.0f,
-					{ 0.9f, 0.9f, 0.9f, 1.0f },
-					"%d",
-					INTRO_DATA[state->title_menu.intro.current_text_index].slide_index
-				);
-
-				constexpr i32 TEXT_PADDING = 5;
-				draw_boxed_text
-				(
-					platform->renderer,
-					state->font.minor,
-					{ PADDING + TEXT_PADDING, WIN_RES.y - PADDING - HUD_RES.y + TEXT_PADDING },
-					HUD_RES - vi2 { TEXT_PADDING, TEXT_PADDING } * 2,
-					FC_ALIGN_LEFT,
-					0.8f,
-					{ 0.9f, 0.9f, 0.9f, 1.0f },
-					"%s",
-					state->title_menu.intro.text
-				);
-
-				if (state->title_menu.intro.is_exiting)
-				{
-					blackout = state->title_menu.intro.exiting_keytime;
-				}
-				else
-				{
-					blackout = 1.0f - (state->title_menu.intro.entering_keytime - 0.5f) * 2.0f;
-				}
-			}
-			else if (state->title_menu.context == TitleMenuContext::settings)
-			{
-				constexpr f32 OPTION_SCALAR  = 0.3f;
-				constexpr f32 OPTION_SPACING = 0.12f;
-				FOR_ELEMS(it, SETTING_OPTIONS)
-				{
-					f32 activation = 1.0f - clamp(fabsf(it_index - state->title_menu.option_cursor_interpolated_index), 0.0f, 1.0f);
-					draw_text
-					(
-						platform->renderer,
-						state->font.major,
-						{ WIN_RES.x * 0.1f, WIN_RES.y * (0.37f + it_index * OPTION_SPACING) },
-						FC_ALIGN_LEFT,
-						OPTION_SCALAR,
-						vxx
-						(
-							lerp(vf3 { 0.75f, 0.75f, 0.75f }, { 1.0f, 1.0f, 0.2f }, activation),
-							lerp(0.95f, 1.0f, activation)
-						),
-						*it
-					);
-
-					f32* slider_value = 0;
-
-					switch (it_index)
+					FOR_RANGE(y, clamp(position.y, 0, WIN_RES.y), clamp(position.y + dimensions.y, 0, WIN_RES.y))
 					{
-						case SettingOption::master_volume : slider_value = &state->master_volume; break;
-						case SettingOption::brightness    : slider_value = &state->brightness;    break;
+						FOR_RANGE(x, clamp(position.x, 0, WIN_RES.x), clamp(position.x + dimensions.x, 0, WIN_RES.x))
+						{
+							vf4 color = img_color_at(img, { (x - position.x) / static_cast<f32>(dimensions.x), (y - position.y) / static_cast<f32>(dimensions.y) });
+							reinterpret_cast<u32*>(surface->pixels)[(WIN_RES.y - 1 - y) * WIN_RES.x + x] =
+								pack_color(lerp(unpack_color(reinterpret_cast<u32*>(surface->pixels)[(WIN_RES.y - 1 - y) * WIN_RES.x + x]), color, color.w));
+						}
 					}
+				};
 
-					if (slider_value)
-					{
-						f32 baseline = FC_GetBaseline(state->font.major) * OPTION_SCALAR;
-						set_color(platform->renderer, { 1.0f, 1.0f, 1.0f, 1.0f });
-						draw_line(platform->renderer, vxx(vf2 { WIN_RES.x * 0.5f, WIN_RES.y * (0.37f + it_index * OPTION_SPACING) + baseline / 2.0f }), vxx(vf2 { WIN_RES.x * 0.9f, WIN_RES.y * (0.37f + it_index * OPTION_SPACING) + baseline / 2.0f }));
-						draw_filled_circle(platform->renderer, vxx(vf2 { WIN_RES.x * lerp(0.5f, 0.9f, *slider_value), WIN_RES.y * (0.37f + it_index * OPTION_SPACING) + baseline / 2.0f }), 5);
-					}
-				}
+			blit_img(&state->title_menu.img.power_button, { 0, 0 }, { TASKBAR_HEIGHT, TASKBAR_HEIGHT });
+			blit_img(&state->title_menu.img.gear, TERMINAL_SETTINGS_POSITION, { TERMINAL_ICON_DIM, TERMINAL_ICON_DIM });
+			blit_img(&state->title_menu.img.text_file, TERMINAL_CREDITS_POSITION, { TERMINAL_ICON_DIM, TERMINAL_ICON_DIM });
+			blit_img(&state->title_menu.img.antihome_program, TERMINAL_ANTIHOME_PROGRAM_POSITION, { TERMINAL_ICON_DIM, TERMINAL_ICON_DIM });
+			blit_img(&state->title_menu.img.cursor, vxx(state->title_menu.cursor + vf2 { 0.0f, -state->title_menu.img.cursor.dim.y * 0.005f }), vxx(state->title_menu.img.cursor.dim * 0.005f));
 
-				draw_text
-				(
-					platform->renderer,
-					state->font.major,
-					{ WIN_RES.x * 0.09f, WIN_RES.y * (0.37f + state->title_menu.option_cursor_interpolated_index * OPTION_SPACING) },
-					FC_ALIGN_RIGHT,
-					OPTION_SCALAR,
-					{ 1.0f, 1.0f, 0.2f, 1.0f },
-					">"
-				);
+			SDL_UnlockTexture(state->title_menu.texture.terminal);
+			blit_texture(platform->renderer, state->title_menu.texture.terminal, { 0, 0 }, WIN_RES);
 
-				// @TEMP@
-				draw_text
-				(
-					platform->renderer,
-					state->font.minor,
-					{ 0.0f, 0.0f },
-					FC_ALIGN_LEFT,
-					1.0f,
-					{ 1.0f, 1.0f, 1.0f, 1.0f },
-					"%d %f\n",
-					state->title_menu.settings.repeat_sfx_count,
-					state->title_menu.settings.repeat_sfx_keytime
-				);
-			}
-			else if (state->title_menu.context == TitleMenuContext::credits)
-			{
-				constexpr strlit CREDITS[] =
-					{
-						"Phuc Doan\n    Programmer",
-						"Mila Matthews\n    Artist",
-						"Ren Stolebarger\n    Voice Actor"
-					};
-				FOR_ELEMS(it, CREDITS)
-				{
-					draw_text
-					(
-						platform->renderer,
-						state->font.major,
-						{ WIN_RES.x * 0.1f, WIN_RES.y * (0.37f + it_index * 0.12f) },
-						FC_ALIGN_LEFT,
-						0.3f,
-						{ 1.0f, 1.0f, 1.0f, 1.0f },
-						*it
-					);
-				}
-			}
+			draw_text
+			(
+				platform->renderer,
+				state->font.minor,
+				{ TERMINAL_SETTINGS_POSITION.x + TERMINAL_ICON_DIM / 2.0f, WIN_RES.y - 1.0f - TERMINAL_SETTINGS_POSITION.y + TERMINAL_ICON_PADDING * 0.15f },
+				FC_ALIGN_CENTER,
+				0.5f,
+				{ 1.0f, 1.0f, 1.0f, 1.0f },
+				"Settings"
+			);
+
+			draw_text
+			(
+				platform->renderer,
+				state->font.minor,
+				{ TERMINAL_CREDITS_POSITION.x + TERMINAL_ICON_DIM / 2.0f, WIN_RES.y - 1.0f - TERMINAL_CREDITS_POSITION.y + TERMINAL_ICON_PADDING * 0.15f },
+				FC_ALIGN_CENTER,
+				0.5f,
+				{ 1.0f, 1.0f, 1.0f, 1.0f },
+				"credits.txt"
+			);
+
+			draw_text
+			(
+				platform->renderer,
+				state->font.minor,
+				{ TERMINAL_ANTIHOME_PROGRAM_POSITION.x + TERMINAL_ICON_DIM / 2.0f, WIN_RES.y - 1.0f - TERMINAL_ANTIHOME_PROGRAM_POSITION.y + TERMINAL_ICON_PADDING * 0.15f },
+				FC_ALIGN_CENTER,
+				0.5f,
+				{ 1.0f, 1.0f, 1.0f, 1.0f },
+				"Antihome"
+			);
+
+			//if (state->title_menu.intro.entering_keytime < 0.5f)
+			//{
+			//	set_color(platform->renderer, { 0.05f, 0.1f, 0.15f, 1.0f });
+			//	SDL_RenderClear(platform->renderer);
+
+			//	blit_texture(platform->renderer, state->title_menu.background, { 0, 0 }, WIN_RES);
+			//	draw_text
+			//	(
+			//		platform->renderer,
+			//		state->font.major,
+			//		{ WIN_RES.x * 0.05f, WIN_RES.y * 0.05f },
+			//		FC_ALIGN_LEFT,
+			//		1.0f,
+			//		{ 1.0f, 1.0f, 1.0f, 1.0f },
+			//		"Antihome"
+			//	);
+			//}
+			//else
+			//{
+			//	set_color(platform->renderer, monochrome(0.0f));
+			//	SDL_RenderClear(platform->renderer);
+			//}
+
+			//if (state->title_menu.context == TitleMenuContext::title_menu || state->title_menu.context == TitleMenuContext::intro && state->title_menu.intro.entering_keytime < 0.5f)
+			//{
+			//	constexpr f32 OPTION_SCALAR  = 0.425f;
+			//	constexpr f32 OPTION_SPACING = 0.1f;
+			//	FOR_ELEMS(it, TITLE_MENU_OPTIONS)
+			//	{
+			//		f32 activation = 1.0f - clamp(fabsf(it_index - state->title_menu.option_cursor_interpolated_index), 0.0f, 1.0f);
+			//		draw_text
+			//		(
+			//			platform->renderer,
+			//			state->font.major,
+			//			{ WIN_RES.x * 0.08f, WIN_RES.y * (0.3f + it_index * OPTION_SPACING) },
+			//			FC_ALIGN_LEFT,
+			//			OPTION_SCALAR,
+			//			vxx
+			//			(
+			//				lerp(vf3 { 0.75f, 0.75f, 0.75f }, { 1.0f, 1.0f, 0.2f }, activation),
+			//				lerp(0.95f, 1.0f, activation)
+			//			),
+			//			*it
+			//		);
+			//	}
+
+			//	draw_text
+			//	(
+			//		platform->renderer,
+			//		state->font.major,
+			//		{ WIN_RES.x * 0.07f, WIN_RES.y * (0.3f + state->title_menu.option_cursor_interpolated_index * OPTION_SPACING) },
+			//		FC_ALIGN_RIGHT,
+			//		OPTION_SCALAR,
+			//		{ 1.0f, 1.0f, 0.2f, 1.0f },
+			//		">"
+			//	);
+
+			//	if (state->title_menu.context == TitleMenuContext::intro)
+			//	{
+			//		blackout = state->title_menu.intro.entering_keytime * 2.0f;
+			//	}
+			//}
+			//else if (state->title_menu.context == TitleMenuContext::intro)
+			//{
+			//	set_color(platform->renderer, monochrome(0.5f));
+			//	draw_filled_rect(platform->renderer, { PADDING, PADDING }, VIEW_RES);
+
+			//	set_color(platform->renderer, monochrome(0.2f));
+			//	draw_filled_rect(platform->renderer, { PADDING, WIN_RES.y - PADDING - HUD_RES.y }, HUD_RES);
+
+			//	draw_text
+			//	(
+			//		platform->renderer,
+			//		state->font.major,
+			//		{ WIN_RES.x * 0.5f, WIN_RES.y * 0.25f },
+			//		FC_ALIGN_CENTER,
+			//		1.0f,
+			//		{ 0.9f, 0.9f, 0.9f, 1.0f },
+			//		"%d",
+			//		INTRO_DATA[state->title_menu.intro.current_text_index].slide_index
+			//	);
+
+			//	constexpr i32 TEXT_PADDING = 5;
+			//	draw_boxed_text
+			//	(
+			//		platform->renderer,
+			//		state->font.minor,
+			//		{ PADDING + TEXT_PADDING, WIN_RES.y - PADDING - HUD_RES.y + TEXT_PADDING },
+			//		HUD_RES - vi2 { TEXT_PADDING, TEXT_PADDING } * 2,
+			//		FC_ALIGN_LEFT,
+			//		0.8f,
+			//		{ 0.9f, 0.9f, 0.9f, 1.0f },
+			//		"%s",
+			//		state->title_menu.intro.text
+			//	);
+
+			//	if (state->title_menu.intro.is_exiting)
+			//	{
+			//		blackout = state->title_menu.intro.exiting_keytime;
+			//	}
+			//	else
+			//	{
+			//		blackout = 1.0f - (state->title_menu.intro.entering_keytime - 0.5f) * 2.0f;
+			//	}
+			//}
+			//else if (state->title_menu.context == TitleMenuContext::settings)
+			//{
+			//	constexpr f32 OPTION_SCALAR  = 0.3f;
+			//	constexpr f32 OPTION_SPACING = 0.12f;
+			//	FOR_ELEMS(it, SETTING_OPTIONS)
+			//	{
+			//		f32 activation = 1.0f - clamp(fabsf(it_index - state->title_menu.option_cursor_interpolated_index), 0.0f, 1.0f);
+			//		draw_text
+			//		(
+			//			platform->renderer,
+			//			state->font.major,
+			//			{ WIN_RES.x * 0.1f, WIN_RES.y * (0.37f + it_index * OPTION_SPACING) },
+			//			FC_ALIGN_LEFT,
+			//			OPTION_SCALAR,
+			//			vxx
+			//			(
+			//				lerp(vf3 { 0.75f, 0.75f, 0.75f }, { 1.0f, 1.0f, 0.2f }, activation),
+			//				lerp(0.95f, 1.0f, activation)
+			//			),
+			//			*it
+			//		);
+
+			//		f32* slider_value = 0;
+
+			//		switch (it_index)
+			//		{
+			//			case SettingOption::master_volume : slider_value = &state->master_volume; break;
+			//			case SettingOption::brightness    : slider_value = &state->brightness;    break;
+			//		}
+
+			//		if (slider_value)
+			//		{
+			//			f32 baseline = FC_GetBaseline(state->font.major) * OPTION_SCALAR;
+			//			set_color(platform->renderer, { 1.0f, 1.0f, 1.0f, 1.0f });
+			//			draw_line(platform->renderer, vxx(vf2 { WIN_RES.x * 0.5f, WIN_RES.y * (0.37f + it_index * OPTION_SPACING) + baseline / 2.0f }), vxx(vf2 { WIN_RES.x * 0.9f, WIN_RES.y * (0.37f + it_index * OPTION_SPACING) + baseline / 2.0f }));
+			//			draw_filled_circle(platform->renderer, vxx(vf2 { WIN_RES.x * lerp(0.5f, 0.9f, *slider_value), WIN_RES.y * (0.37f + it_index * OPTION_SPACING) + baseline / 2.0f }), 5);
+			//		}
+			//	}
+
+			//	draw_text
+			//	(
+			//		platform->renderer,
+			//		state->font.major,
+			//		{ WIN_RES.x * 0.09f, WIN_RES.y * (0.37f + state->title_menu.option_cursor_interpolated_index * OPTION_SPACING) },
+			//		FC_ALIGN_RIGHT,
+			//		OPTION_SCALAR,
+			//		{ 1.0f, 1.0f, 0.2f, 1.0f },
+			//		">"
+			//	);
+
+			//	// @TEMP@
+			//	draw_text
+			//	(
+			//		platform->renderer,
+			//		state->font.minor,
+			//		{ 0.0f, 0.0f },
+			//		FC_ALIGN_LEFT,
+			//		1.0f,
+			//		{ 1.0f, 1.0f, 1.0f, 1.0f },
+			//		"%d %f\n",
+			//		state->title_menu.settings.repeat_sfx_count,
+			//		state->title_menu.settings.repeat_sfx_keytime
+			//	);
+			//}
+			//else if (state->title_menu.context == TitleMenuContext::credits)
+			//{
+			//	constexpr strlit CREDITS[] =
+			//		{
+			//			"Phuc Doan\n    Programmer",
+			//			"Mila Matthews\n    Artist",
+			//			"Ren Stolebarger\n    Voice Actor"
+			//		};
+			//	FOR_ELEMS(it, CREDITS)
+			//	{
+			//		draw_text
+			//		(
+			//			platform->renderer,
+			//			state->font.major,
+			//			{ WIN_RES.x * 0.1f, WIN_RES.y * (0.37f + it_index * 0.12f) },
+			//			FC_ALIGN_LEFT,
+			//			0.3f,
+			//			{ 1.0f, 1.0f, 1.0f, 1.0f },
+			//			*it
+			//		);
+			//	}
+			//}
 		} break;
 
 		case StateContext::game:
@@ -3062,7 +3202,7 @@ extern "C" PROTOTYPE_RENDER(render)
 										(
 											lerp
 											(
-												unpack_color(view_pixels[y * VIEW_RES.x + x]),
+												unpack_color(view_pixels[y * VIEW_RES.x + x]).xyz,
 												shader(scan_pixel.xyz, ray, vx3(node->normal, 0.0f), node->distance),
 												scan_pixel.w
 											)
@@ -3084,7 +3224,7 @@ extern "C" PROTOTYPE_RENDER(render)
 					FOR_RANGE(y, clamp(paper_coordinates.y, 0, VIEW_RES.y), clamp(paper_coordinates.y + paper_dimensions.y, 0, VIEW_RES.y))
 					{
 						vf4 color = img_color_at(&state->game.img.papers[state->game.holding.paper->paper.index], { static_cast<f32>(x - paper_coordinates.x) / paper_dimensions.x, (1.0f - static_cast<f32>(y - paper_coordinates.y) / paper_dimensions.y) });
-						view_pixels[y * VIEW_RES.x + x] = pack_color(lerp(unpack_color(view_pixels[y * VIEW_RES.x + x]), color.xyz, color.w));
+						view_pixels[y * VIEW_RES.x + x] = pack_color(lerp(unpack_color(view_pixels[y * VIEW_RES.x + x]).xyz, color.xyz, color.w));
 					}
 				}
 			}

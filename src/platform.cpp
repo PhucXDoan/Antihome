@@ -100,12 +100,6 @@ int main(int, char**)
 		exit(-1);
 	}
 
-	{
-		SDL_Surface* icon = SDL_LoadBMP(DATA_DIR "icon.bmp");
-		SDL_SetWindowIcon(window, icon);
-		SDL_FreeSurface(icon);
-	}
-
 	Platform platform        = {};
 	platform.renderer        = renderer;
 	platform.memory_capacity = MEBIBYTES_OF(1);
@@ -123,8 +117,21 @@ int main(int, char**)
 	DEFER { SDL_UnloadObject(dll); };
 
 	initialize(&platform);
-	boot_up(&platform);
+	boot_up(&platform, window);
 	DEFER { boot_down(&platform); };
+
+	// @NOTE@ Prevents one frame of cursor delta at start up.
+	{
+		i32 cursor_delta_x;
+		i32 cursor_delta_y;
+		SDL_GetRelativeMouseState(&cursor_delta_x, &cursor_delta_y);
+		platform.cursor_delta = { static_cast<f32>(cursor_delta_x), -static_cast<f32>(cursor_delta_y) };
+
+		i32 cursor_x;
+		i32 cursor_y;
+		SDL_GetMouseState(&cursor_x, &cursor_y);
+		platform.cursor = { static_cast<f32>(cursor_x), WIN_DIM.y - 1.0f - cursor_y };
+	}
 
 	u64 performance_count = SDL_GetPerformanceCounter();
 	f32 frame_time        = 0.0f;
@@ -208,7 +215,7 @@ int main(int, char**)
 
 			boot_down(&platform);
 			reload_dll();
-			boot_up(&platform);
+			boot_up(&platform, window);
 			frame_time = 0.0f;
 		}
 

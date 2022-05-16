@@ -122,13 +122,23 @@ internal constexpr u32 pack_color(vf3 color)
 		(static_cast<u8>(color.z * 255.0f) <<  8);
 }
 
-internal constexpr vf3 unpack_color(u32 pixel)
+internal constexpr u32 pack_color(vf4 color)
+{
+	return
+		(static_cast<u8>(color.x * 255.0f) << 24) |
+		(static_cast<u8>(color.y * 255.0f) << 16) |
+		(static_cast<u8>(color.z * 255.0f) <<  8) |
+		(static_cast<u8>(color.w * 255.0f) <<  0);
+}
+
+internal constexpr vf4 unpack_color(u32 pixel)
 {
 	return
 		{
 			static_cast<f32>((pixel >> 24) & 0xFF) / 255.0f,
 			static_cast<f32>((pixel >> 16) & 0xFF) / 255.0f,
-			static_cast<f32>((pixel >>  8) & 0xFF) / 255.0f
+			static_cast<f32>((pixel >>  8) & 0xFF) / 255.0f,
+			static_cast<f32>((pixel >>  0) & 0xFF) / 255.0f
 		};
 }
 
