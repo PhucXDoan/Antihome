@@ -166,6 +166,15 @@ global constexpr strlit CREEPY_SOUND_WAV_FILE_PATHS[] =
 		DATA_DIR "audio/creepy_sound_7.wav"
 	};
 
+global constexpr struct { f32 min_scalar; f32 max_scalar; strlit file_path; } PAPER_DATA[] =
+	{
+		{ 0.2f, 0.8f, DATA_DIR "papers/terry_entry_0.png" },
+		{ 0.2f, 0.8f, DATA_DIR "papers/terry_entry_1.png" },
+		{ 0.2f, 0.8f, DATA_DIR "papers/terry_entry_2.png" },
+		{ 0.2f, 0.8f, DATA_DIR "papers/terry_entry_3.png" },
+		{ 0.2f, 0.8f, DATA_DIR "papers/terry_entry_4.png" }
+	};
+
 enum_loose (TitleMenuOption, u8)
 {
 	start,
@@ -203,29 +212,42 @@ enum_loose (ItemType, u8)
 	null,
 
 	enum_start_region(ITEM)
-		batteries,
+		cheap_batteries,
 		paper,
 		flashlight,
+		cowbell,
+		eyedrops,
+		first_aid_kit,
+		nightvision_goggles,
+		pills,
+		military_grade_batteries,
 	enum_end_region(ITEM)
 };
 
 global constexpr strlit DEFAULT_ITEM_IMG_FILE_PATHS[ItemType::ITEM_COUNT] =
 	{
-		DATA_DIR "batteries.png",
-		DATA_DIR "paper.png",
-		DATA_DIR "flashlight_off.png"
+		DATA_DIR "items/cheap_batteries.png",
+		DATA_DIR "items/paper.png",
+		DATA_DIR "items/flashlight_off.png",
+		DATA_DIR "items/cowbell.png",
+		DATA_DIR "items/eyedrops.png",
+		DATA_DIR "items/first_aid_kit.png",
+		DATA_DIR "items/nightvision_goggles.png",
+		DATA_DIR "items/pills.png",
+		DATA_DIR "items/military_grade_batteries.png"
 	};
 
 global constexpr f32 ITEM_SPAWN_WEIGHTS[ItemType::ITEM_COUNT] =
 	{
 		10.0f,
 		5.0f,
-		1.0f
-	};
-
-global constexpr struct { f32 min_scalar; f32 max_scalar; strlit file_path; } PAPER_DATA[] =
-	{
-		{ 0.2f, 0.8f, DATA_DIR "terry_entry_4.png" }
+		1.0f,
+		0.0f,
+		3.0f,
+		4.0f,
+		2.0f,
+		6.0f,
+		4.0f
 	};
 
 struct Item
@@ -242,6 +264,11 @@ struct Item
 		{
 			f32 power;
 		} flashlight;
+
+		struct
+		{
+			i32 index;
+		} paper;
 	};
 };
 
@@ -456,7 +483,7 @@ struct State
 		Item*                hand_hovered_item;
 
 		i32                  item_count;
-		Item                 item_buffer[32];
+		Item                 item_buffer[MAP_DIM * MAP_DIM / 6];
 
 		vf2                  interacting_cursor_velocity;
 		vf2                  interacting_cursor;
@@ -808,6 +835,7 @@ internal vf2 rng_open_position(State* state)
 
 internal vf2 move(State* state, vf2 position, vf2 displacement)
 {
+	#if 1
 	vf2 current_position     = position;
 	vf2 current_displacement = displacement;
 	FOR_RANGE(4)
@@ -868,6 +896,9 @@ internal vf2 move(State* state, vf2 position, vf2 displacement)
 		}
 	}
 	return current_position;
+	#else
+	return position + displacement;
+	#endif
 }
 
 internal bool32 exists_clear_way(State* state, vf2 position, vf2 goal)
@@ -951,7 +982,7 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 
 			state->game.img.monster          = init_img(DATA_DIR "monster.png");
 			state->game.img.hand             = init_img(DATA_DIR "hand.png");
-			state->game.img.flashlight_on    = init_img(DATA_DIR "flashlight_on.png");
+			state->game.img.flashlight_on    = init_img(DATA_DIR "items/flashlight_on.png");
 			state->game.img.door             = init_img(DATA_DIR "door.png");
 			state->game.img.wall_left_arrow  = init_img(DATA_DIR "streak_left_0.png");
 			state->game.img.wall_right_arrow = init_img(DATA_DIR "streak_right_0.png");
@@ -966,11 +997,11 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 				*it = init_img(PAPER_DATA[it_index].file_path);
 			}
 
-			state->game.texture.lucia_haunted = IMG_LoadTexture(renderer, DATA_DIR "lucia_haunted.png");
-			state->game.texture.lucia_healed  = IMG_LoadTexture(renderer, DATA_DIR "lucia_healed.png");
-			state->game.texture.lucia_hit     = IMG_LoadTexture(renderer, DATA_DIR "lucia_hit.png");
-			state->game.texture.lucia_normal  = IMG_LoadTexture(renderer, DATA_DIR "lucia_normal.png");
-			state->game.texture.lucia_wounded = IMG_LoadTexture(renderer, DATA_DIR "lucia_wounded.png");
+			state->game.texture.lucia_haunted = IMG_LoadTexture(renderer, DATA_DIR "hud/lucia_haunted.png");
+			state->game.texture.lucia_healed  = IMG_LoadTexture(renderer, DATA_DIR "hud/lucia_healed.png");
+			state->game.texture.lucia_hit     = IMG_LoadTexture(renderer, DATA_DIR "hud/lucia_hit.png");
+			state->game.texture.lucia_normal  = IMG_LoadTexture(renderer, DATA_DIR "hud/lucia_normal.png");
+			state->game.texture.lucia_wounded = IMG_LoadTexture(renderer, DATA_DIR "hud/lucia_wounded.png");
 			state->game.texture.view          = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_STREAMING, VIEW_RES.x, VIEW_RES.y);
 
 			state->game.audio.drone         = Mix_LoadWAV(DATA_DIR "audio/drone.wav");
@@ -1431,13 +1462,27 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 							state->game.monster_position.xy = rng_open_position(state);
 
+							lambda create_item =
+								[&](ItemType type)
+								{
+									Item* item = allocate_item(state);
+									*item             = {};
+									item->type        = type;
+									item->position.xy = rng_open_position(state);
+									item->normal      = polar(state->time * 1.5f);
+
+									switch (type)
+									{
+										case ItemType::paper:
+										{
+											item->paper.index = rng(&state->seed, 0, ARRAY_CAPACITY(PAPER_DATA));
+										};
+									}
+								};
+
 							for (ItemType type = ItemType::ITEM_START; type != ItemType::ITEM_END; type = static_cast<ItemType>(+type + 1))
 							{
-								Item* item = allocate_item(state);
-								*item             = {};
-								item->type        = type;
-								item->position.xy = rng_open_position(state);
-								item->normal      = polar(state->time * 1.5f);
+								create_item(type);
 							}
 
 							FOR_RANGE(ARRAY_CAPACITY(state->game.item_buffer) - state->game.item_count)
@@ -1464,11 +1509,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 									}
 								}
 
-								Item* item = allocate_item(state);
-								*item             = {};
-								item->type        = static_cast<ItemType>(+ItemType::ITEM_START + i);
-								item->position.xy = rng_open_position(state);
-								item->normal      = polar(state->time * 1.5f);
+								create_item(static_cast<ItemType>(+ItemType::ITEM_START + i));
 							}
 
 							return UpdateCode::resume;
@@ -1616,26 +1657,37 @@ extern "C" PROTOTYPE_UPDATE(update)
 				{
 					if (PRESSED(Input::left_mouse))
 					{
-						state->game.inventory_click_position = state->game.interacting_cursor;
-
-						FOR_RANGE(y, ARRAY_CAPACITY(state->game.inventory))
+						if
+						(
+							fabs(state->game.interacting_cursor.x * 2.0f - VIEW_RES.x) < ARRAY_CAPACITY(state->game.inventory[0]) * (INVENTORY_DIM + INVENTORY_PADDING) &&
+							fabs(state->game.interacting_cursor.y * 2.0f - VIEW_RES.y) < ARRAY_CAPACITY(state->game.inventory   ) * (INVENTORY_DIM + INVENTORY_PADDING)
+						)
 						{
-							FOR_RANGE(x, ARRAY_CAPACITY(state->game.inventory[y]))
-							{
-								if
-								(
-									fabsf(VIEW_RES.x / 2.0f + (x + (1.0f - ARRAY_CAPACITY(state->game.inventory[y])) / 2.0f) * (INVENTORY_DIM + INVENTORY_PADDING) - state->game.interacting_cursor.x) < INVENTORY_DIM / 2.0f &&
-									fabsf(VIEW_RES.y / 2.0f - (y + (1.0f - ARRAY_CAPACITY(state->game.inventory   )) / 2.0f) * (INVENTORY_DIM + INVENTORY_PADDING) - state->game.interacting_cursor.y) < INVENTORY_DIM / 2.0f
-								)
-								{
-									if (state->game.inventory[y][x].type != ItemType::null)
-									{
-										state->game.inventory_selected = &state->game.inventory[y][x];
-									}
+							state->game.inventory_click_position = state->game.interacting_cursor;
 
-									break;
+							FOR_RANGE(y, ARRAY_CAPACITY(state->game.inventory))
+							{
+								FOR_RANGE(x, ARRAY_CAPACITY(state->game.inventory[y]))
+								{
+									if
+									(
+										fabsf(VIEW_RES.x / 2.0f + (x + (1.0f - ARRAY_CAPACITY(state->game.inventory[y])) / 2.0f) * (INVENTORY_DIM + INVENTORY_PADDING) - state->game.interacting_cursor.x) < INVENTORY_DIM / 2.0f &&
+										fabsf(VIEW_RES.y / 2.0f - (y + (1.0f - ARRAY_CAPACITY(state->game.inventory   )) / 2.0f) * (INVENTORY_DIM + INVENTORY_PADDING) - state->game.interacting_cursor.y) < INVENTORY_DIM / 2.0f
+									)
+									{
+										if (state->game.inventory[y][x].type != ItemType::null)
+										{
+											state->game.inventory_selected = &state->game.inventory[y][x];
+										}
+
+										break;
+									}
 								}
 							}
+						}
+						else
+						{
+							state->game.inventory_visibility = false;
 						}
 					}
 					else if (state->game.inventory_selected)
@@ -1693,9 +1745,9 @@ extern "C" PROTOTYPE_UPDATE(update)
 														Item   combined_result = {};
 
 														{
-															Item* batteries;
+															Item* cheap_batteries;
 															Item* flashlight;
-															if (check_combine(&batteries, ItemType::batteries, &flashlight, ItemType::flashlight, &state->game.inventory[y][x], state->game.inventory_selected))
+															if (check_combine(&cheap_batteries, ItemType::cheap_batteries, &flashlight, ItemType::flashlight, &state->game.inventory[y][x], state->game.inventory_selected))
 															{
 																combined = true;
 
@@ -1760,7 +1812,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 								switch (state->game.inventory_selected->type)
 								{
-									case ItemType::batteries:
+									case ItemType::cheap_batteries:
 									{
 										state->game.notification_message = "\"Some batteries. They feel cheap.\"";
 										state->game.notification_keytime = 1.0f;
@@ -1772,9 +1824,8 @@ extern "C" PROTOTYPE_UPDATE(update)
 										state->game.holding.paper         = state->game.inventory_selected;
 										state->game.paper_velocity        = { 0.0f, 0.0f };
 										state->game.paper_delta_position  = { 0.0f, 0.0f };
-										state->game.paper_index           = 0; // @TEMP@
 										state->game.paper_scalar_velocity = 0.0f;
-										state->game.paper_scalar          = PAPER_DATA[state->game.paper_index].min_scalar;
+										state->game.paper_scalar          = PAPER_DATA[state->game.holding.paper->paper.index].min_scalar;
 									} break;
 
 									case ItemType::flashlight:
@@ -1810,10 +1861,10 @@ extern "C" PROTOTYPE_UPDATE(update)
 					(
 						PRESSED(Input::left_mouse) &&
 						(
-							state->game.interacting_cursor.x < VIEW_RES.x / 2.0f + (state->game.paper_delta_position.x - state->game.img.papers[state->game.paper_index].dim.x / 2.0f) * state->game.paper_scalar ||
-							state->game.interacting_cursor.x > VIEW_RES.x / 2.0f + (state->game.paper_delta_position.x + state->game.img.papers[state->game.paper_index].dim.x / 2.0f) * state->game.paper_scalar ||
-							state->game.interacting_cursor.y < VIEW_RES.y / 2.0f + (state->game.paper_delta_position.y - state->game.img.papers[state->game.paper_index].dim.y / 2.0f) * state->game.paper_scalar ||
-							state->game.interacting_cursor.y > VIEW_RES.y / 2.0f + (state->game.paper_delta_position.y + state->game.img.papers[state->game.paper_index].dim.y / 2.0f) * state->game.paper_scalar
+							state->game.interacting_cursor.x < VIEW_RES.x / 2.0f + (state->game.paper_delta_position.x - state->game.img.papers[state->game.holding.paper->paper.index].dim.x / 2.0f) * state->game.paper_scalar ||
+							state->game.interacting_cursor.x > VIEW_RES.x / 2.0f + (state->game.paper_delta_position.x + state->game.img.papers[state->game.holding.paper->paper.index].dim.x / 2.0f) * state->game.paper_scalar ||
+							state->game.interacting_cursor.y < VIEW_RES.y / 2.0f + (state->game.paper_delta_position.y - state->game.img.papers[state->game.holding.paper->paper.index].dim.y / 2.0f) * state->game.paper_scalar ||
+							state->game.interacting_cursor.y > VIEW_RES.y / 2.0f + (state->game.paper_delta_position.y + state->game.img.papers[state->game.holding.paper->paper.index].dim.y / 2.0f) * state->game.paper_scalar
 						)
 					)
 					{
@@ -1836,9 +1887,9 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 						state->game.paper_scalar = state->game.paper_scalar + state->game.paper_scalar_velocity * state->game.paper_scalar * SECONDS_PER_UPDATE;
 
-						if (PAPER_DATA[state->game.paper_index].min_scalar > state->game.paper_scalar || state->game.paper_scalar > PAPER_DATA[state->game.paper_index].max_scalar)
+						if (PAPER_DATA[state->game.holding.paper->paper.index].min_scalar > state->game.paper_scalar || state->game.paper_scalar > PAPER_DATA[state->game.holding.paper->paper.index].max_scalar)
 						{
-							state->game.paper_scalar          = clamp(state->game.paper_scalar, PAPER_DATA[state->game.paper_index].min_scalar, PAPER_DATA[state->game.paper_index].max_scalar);
+							state->game.paper_scalar          = clamp(state->game.paper_scalar, PAPER_DATA[state->game.holding.paper->paper.index].min_scalar, PAPER_DATA[state->game.holding.paper->paper.index].max_scalar);
 							state->game.paper_scalar_velocity = 0.0f;
 						}
 
@@ -1847,8 +1898,8 @@ extern "C" PROTOTYPE_UPDATE(update)
 						constexpr f32 PAPER_MARGIN = 25.0f;
 						vf2 region =
 							vf2 {
-								(VIEW_RES.x + state->game.img.papers[state->game.paper_index].dim.x * state->game.paper_scalar) / 2.0f - PAPER_MARGIN,
-								(VIEW_RES.y + state->game.img.papers[state->game.paper_index].dim.y * state->game.paper_scalar) / 2.0f - PAPER_MARGIN
+								(VIEW_RES.x + state->game.img.papers[state->game.holding.paper->paper.index].dim.x * state->game.paper_scalar) / 2.0f - PAPER_MARGIN,
+								(VIEW_RES.y + state->game.img.papers[state->game.holding.paper->paper.index].dim.y * state->game.paper_scalar) / 2.0f - PAPER_MARGIN
 							} / state->game.paper_scalar;
 
 						if (fabsf(state->game.paper_delta_position.x) > region.x)
@@ -1894,7 +1945,8 @@ extern "C" PROTOTYPE_UPDATE(update)
 									Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.pick_up_paper, 0);
 								} break;
 
-								case ItemType::batteries:
+								case ItemType::cheap_batteries:
+								case ItemType::military_grade_batteries:
 								{
 									Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.eletronical, 0);
 								} break;
@@ -2363,22 +2415,22 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 					if (state->game.blacked_out)
 					{
-						Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.drone_on, 0);
+						Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.drone_off, 0);
+						Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.blackout, 0);
 					}
 					else
 					{
-						Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.drone_off, 0);
-						Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.blackout, 0);
+						Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.drone_on, 0);
 					}
 				}
 
 				if (state->game.blacked_out)
 				{
-					state->game.ceiling_lights_keytime = clamp(state->game.ceiling_lights_keytime + SECONDS_PER_UPDATE / 2.0f, 0.0f, 1.0f);
+					state->game.ceiling_lights_keytime = clamp(state->game.ceiling_lights_keytime - SECONDS_PER_UPDATE / 1.0f, 0.0f, 1.0f);
 				}
 				else
 				{
-					state->game.ceiling_lights_keytime = clamp(state->game.ceiling_lights_keytime - SECONDS_PER_UPDATE / 1.0f, 0.0f, 1.0f);
+					state->game.ceiling_lights_keytime = clamp(state->game.ceiling_lights_keytime + SECONDS_PER_UPDATE / 2.0f, 0.0f, 1.0f);
 				}
 			}
 		} break;
@@ -2638,11 +2690,16 @@ extern "C" PROTOTYPE_RENDER(render)
 
 				vf2 ray_horizontal = polar(state->game.lucia_angle + (0.5f - static_cast<f32>(x) / VIEW_RES.x) * state->game.lucia_fov);
 
-				bool32 wall_exists   = false;
-				vf2    wall_normal   = { NAN, NAN };
-				f32    wall_distance = NAN;
-				f32    wall_portion  = NAN;
-
+				bool32    wall_exists   = false;
+				vf2       wall_normal   = { NAN, NAN };
+				f32       wall_distance = NAN;
+				f32       wall_portion  = NAN;
+				WallVoxel wall_voxel = {};
+				vi2       wall_coordinates =
+					{
+						static_cast<i32>(floorf(state->game.lucia_position.x / WALL_SPACING)),
+						static_cast<i32>(floorf(state->game.lucia_position.y / WALL_SPACING))
+					};
 				vi2 step =
 					{
 						ray_horizontal.x < 0.0f ? -1 : 1,
@@ -2658,12 +2715,6 @@ extern "C" PROTOTYPE_RENDER(render)
 						step.x / ray_horizontal.x * WALL_SPACING,
 						step.y / ray_horizontal.y * WALL_SPACING
 					};
-				vi2 wall_coordinates =
-					{
-						static_cast<i32>(floorf(state->game.lucia_position.x / WALL_SPACING)),
-						static_cast<i32>(floorf(state->game.lucia_position.y / WALL_SPACING))
-					};
-				WallVoxel wall_voxel = {};
 				FOR_RANGE(MAP_DIM * MAP_DIM)
 				{
 					FOR_ELEMS(voxel_data, WALL_VOXEL_DATA)
@@ -2917,6 +2968,7 @@ extern "C" PROTOTYPE_RENDER(render)
 					}
 				}
 
+				constexpr i32 DEBUG_SCANS = 10'000;
 				#if PROFILE
 				LARGE_INTEGER DEBUG_WALL_FLOOR_CEILING_li1;
 				QueryPerformanceCounter(&DEBUG_WALL_FLOOR_CEILING_li1);
@@ -2928,12 +2980,12 @@ extern "C" PROTOTYPE_RENDER(render)
 					DEBUG_WALL_FLOOR_CEILING_total   = 0;
 					DEBUG_WALL_FLOOR_CEILING_counter = 0;
 				}
+				#endif
 
 				persist u64 DEBUG_THING_total;
 				persist u64 DEBUG_THING_counter;
 				LARGE_INTEGER DEBUG_THING_li0;
 				QueryPerformanceCounter(&DEBUG_THING_li0);
-				#endif
 
 				struct RenderScanNode
 				{
@@ -2950,59 +3002,78 @@ extern "C" PROTOTYPE_RENDER(render)
 				RenderScanNode* render_scan_node = 0;
 				memory_arena_checkpoint(&state->transient_arena);
 
-				lambda intersect =
+				lambda scan =
 					[&](Img* img, vf3 position, vf2 normal, vf2 dimensions)
 					{
-						f32 distance;
-						f32 portion;
-						if
-						(
-							ray_cast_line
-							(
-								&distance,
-								&portion,
-								state->game.lucia_position.xy,
-								ray_horizontal,
-								position.xy - rotate90(normal) * dimensions.x / 2.0f,
-								position.xy + rotate90(normal) * dimensions.x / 2.0f
-							)
-							&& IN_RANGE(portion, 0.0f, 1.0f)
-						)
-						{
-							RenderScanNode** post_node = &render_scan_node;
-							while (*post_node && (*post_node)->distance > distance)
+						vf2 step             = vf2 { ray_horizontal.x < 0.0f ? -1.0f : 1.0f, ray_horizontal.y < 0.0f ? -1.0f : 1.0f } * MAP_DIM * WALL_SPACING;
+						vf2 t_max            =
 							{
-								post_node = &(*post_node)->next_node;
+								((ray_horizontal.x >= 0.0f ? MAP_DIM * WALL_SPACING : 0.0f) - state->game.lucia_position.x) / ray_horizontal.x,
+								((ray_horizontal.y >= 0.0f ? MAP_DIM * WALL_SPACING : 0.0f) - state->game.lucia_position.y) / ray_horizontal.y
+							};
+						vf2 t_delta          = { step.x / ray_horizontal.x, step.y / ray_horizontal.y };
+						vf3 current_position = position;
+						FOR_RANGE(3)
+						{
+							f32 distance;
+							f32 portion;
+							if
+							(
+								ray_cast_line
+								(
+									&distance,
+									&portion,
+									state->game.lucia_position.xy,
+									ray_horizontal,
+									current_position.xy - rotate90(normal) * dimensions.x / 2.0f,
+									current_position.xy + rotate90(normal) * dimensions.x / 2.0f
+								)
+								&& IN_RANGE(portion, 0.0f, 1.0f)
+							)
+							{
+								RenderScanNode** post_node = &render_scan_node;
+								while (*post_node && (*post_node)->distance > distance)
+								{
+									post_node = &(*post_node)->next_node;
+								}
+
+								RenderScanNode* new_node = memory_arena_push<RenderScanNode>(&state->transient_arena);
+								new_node->img        = img;
+								new_node->position   = current_position;
+								new_node->normal     = normal;
+								new_node->distance   = distance;
+								new_node->portion    = portion;
+								new_node->next_node  = *post_node;
+								new_node->starting_y = static_cast<i32>(VIEW_RES.y / 2.0f + HORT_TO_VERT_K / state->game.lucia_fov * (current_position.z - 0.5f * dimensions.y - state->game.lucia_position.z) / (distance + 0.1f));
+								new_node->ending_y   = static_cast<i32>(VIEW_RES.y / 2.0f + HORT_TO_VERT_K / state->game.lucia_fov * (current_position.z + 0.5f * dimensions.y - state->game.lucia_position.z) / (distance + 0.1f));
+								*post_node = new_node;
+								return;
 							}
 
-							RenderScanNode* new_node = memory_arena_push<RenderScanNode>(&state->transient_arena);
-							new_node->img        = img;
-							new_node->position   = position;
-							new_node->normal     = normal;
-							new_node->distance   = distance;
-							new_node->portion    = portion;
-							new_node->next_node  = *post_node;
-							new_node->starting_y = static_cast<i32>(VIEW_RES.y / 2.0f + HORT_TO_VERT_K / state->game.lucia_fov * (position.z - 0.5f * dimensions.y - state->game.lucia_position.z) / (distance + 0.1f));
-							new_node->ending_y   = static_cast<i32>(VIEW_RES.y / 2.0f + HORT_TO_VERT_K / state->game.lucia_fov * (position.z + 0.5f * dimensions.y - state->game.lucia_position.z) / (distance + 0.1f));
-							*post_node = new_node;
+							if (t_max.x < t_max.y)
+							{
+								t_max.x            += t_delta.x;
+								current_position.x += step.x;
+							}
+							else
+							{
+								t_max.y            += t_delta.y;
+								current_position.y += step.y;
+							}
 						}
 					};
 
-				FOR_RANGE(i, 9) // @TODO@ Optimize
+
+				scan(&state->game.img.monster, state->game.monster_position, state->game.monster_normal, { 1.0f, 1.0f });
+
+				if (state->game.hand_hovered_item || state->game.hand_on_door)
 				{
-					vf3 offset = vi3 { i % 3 - 1, i / 3 - 1, 0 } * MAP_DIM * WALL_SPACING;
+					scan(&state->game.img.hand, state->game.hand_position, state->game.hand_normal, { 0.05f, 0.05f });
+				}
 
-					intersect(&state->game.img.monster, offset + state->game.monster_position, state->game.monster_normal, { 1.0f, 1.0f });
-
-					if (state->game.hand_hovered_item || state->game.hand_on_door)
-					{
-						intersect(&state->game.img.hand, offset + state->game.hand_position, state->game.hand_normal, { 0.05f, 0.05f });
-					}
-
-					FOR_ELEMS(item, state->game.item_buffer, state->game.item_count)
-					{
-						intersect(&state->game.img.default_items[+item->type - +ItemType::ITEM_START], offset + item->position, item->normal, { 0.25f, 0.25f });
-					}
+				FOR_ELEMS(item, state->game.item_buffer, state->game.item_count)
+				{
+					scan(&state->game.img.default_items[+item->type - +ItemType::ITEM_START], item->position, item->normal, { 0.25f, 0.25f });
 				}
 
 				for (RenderScanNode* node = render_scan_node; node; node = node->next_node)
@@ -3039,7 +3110,7 @@ extern "C" PROTOTYPE_RENDER(render)
 					}
 				}
 
-				#if PROFILE
+				#if 1
 				LARGE_INTEGER DEBUG_THING_li1;
 				QueryPerformanceCounter(&DEBUG_THING_li1);
 				DEBUG_THING_total   += DEBUG_THING_li1.QuadPart - DEBUG_THING_li0.QuadPart;
@@ -3055,14 +3126,14 @@ extern "C" PROTOTYPE_RENDER(render)
 
 			if (state->game.holding.paper)
 			{
-				vi2 paper_dimensions  = vxx(state->game.img.papers[state->game.paper_index].dim * state->game.paper_scalar);
-				vi2 paper_coordinates = vxx(VIEW_RES / 2.0f + (conjugate(state->game.paper_delta_position) - state->game.img.papers[state->game.paper_index].dim / 2.0f) * state->game.paper_scalar);
+				vi2 paper_dimensions  = vxx(state->game.img.papers[state->game.holding.paper->paper.index].dim * state->game.paper_scalar);
+				vi2 paper_coordinates = vxx(VIEW_RES / 2.0f + (conjugate(state->game.paper_delta_position) - state->game.img.papers[state->game.holding.paper->paper.index].dim / 2.0f) * state->game.paper_scalar);
 
 				FOR_RANGE(x, clamp(paper_coordinates.x, 0, VIEW_RES.x), clamp(paper_coordinates.x + paper_dimensions.x, 0, VIEW_RES.x))
 				{
 					FOR_RANGE(y, clamp(paper_coordinates.y, 0, VIEW_RES.y), clamp(paper_coordinates.y + paper_dimensions.y, 0, VIEW_RES.y))
 					{
-						vf4 color = img_color_at(&state->game.img.papers[state->game.paper_index], { static_cast<f32>(x - paper_coordinates.x) / paper_dimensions.x, (1.0f - static_cast<f32>(y - paper_coordinates.y) / paper_dimensions.y) });
+						vf4 color = img_color_at(&state->game.img.papers[state->game.holding.paper->paper.index], { static_cast<f32>(x - paper_coordinates.x) / paper_dimensions.x, (1.0f - static_cast<f32>(y - paper_coordinates.y) / paper_dimensions.y) });
 						view_pixels[y * VIEW_RES.x + x] = pack_color(lerp(unpack_color(view_pixels[y * VIEW_RES.x + x]), color.xyz, color.w));
 					}
 				}
@@ -3215,8 +3286,9 @@ extern "C" PROTOTYPE_RENDER(render)
 				FC_ALIGN_LEFT,
 				1.0f,
 				{ 1.0f, 1.0f, 1.0f, 1.0f },
-				"%f\n",
-				state->game.creepy_sound_countdown
+				"%f %f\n",
+				state->game.lucia_position.x,
+				state->game.lucia_position.y
 			);
 #elif 1
 			set_color(platform->renderer, monochrome(0.0f));
