@@ -1,8 +1,4 @@
 /* @TODO@
-	- Sunday 2022-5-15:
-		- Add the new sounds in.
-		- Add journal entries to be picked up in.
-
 	- Monday 2022-5-16:
 		- Revised title menu.
 			- Vintage look.
@@ -55,19 +51,6 @@
 
 	- Friday 2022-6-3:
 
-	* Items:
-		* Satellite dish piece
-		* SNAV
-		* Drugs of varying effects
-		* First aid kit
-		* Radio
-		* Military grade batteries
-		* Eyedrops
-		* Night Vision Goggles
-		* Clipboard
-		* Joint
-		* Cowbell
-
 	* Better input.
 	* Handle disconnected initial and updated values.
 	* Handle different resolutions.
@@ -76,8 +59,6 @@
 // @NOTE@ Credits
 // "A Fast Voxel Traversal Algorithm for Ray Tracing" https://www.flipcode.com/archives/A%20faster%20voxel%20traversal%20algorithm%20for%20ray%20tracing.pdf
 // "How to check if two given line segments intersect?" https://www.geeksforgeeks.org/check-if-two-given-line-segments-intersect/, http://www.dcs.gla.ac.uk/~pat/52233/slides/Geometry1x1.pdf
-
-// @TODO@ Consider half-precision floats for depth buffer.
 
 #define STB_IMAGE_IMPLEMENTATION true
 #include <stb_image.h>
@@ -931,7 +912,7 @@ internal bool32 exists_clear_way(State* state, vf2 position, vf2 goal)
 			static_cast<i32>(floorf(goal.y / WALL_SPACING))
 		};
 
-	FOR_RANGE(MAXIMUM(fabsf(ray.x), fabsf(ray.y)) / WALL_SPACING + 1)
+	FOR_RANGE(max(fabsf(ray.x), fabsf(ray.y)) / WALL_SPACING + 1)
 	{
 		FOR_ELEMS(voxel_data, WALL_VOXEL_DATA)
 		{
@@ -2679,13 +2660,32 @@ extern "C" PROTOTYPE_RENDER(render)
 
 			FOR_RANGE(x, VIEW_RES.x)
 			{
-				#define PROFILE false
+				#define PROFILE true
 				#if PROFILE
-				constexpr i32 DEBUG_SCANS = 10'000;
-				persist u64 DEBUG_CAST_total;
-				persist u64 DEBUG_CAST_counter;
-				LARGE_INTEGER DEBUG_CAST_li0;
-				QueryPerformanceCounter(&DEBUG_CAST_li0);
+				constexpr i32           DEBUG_SCANS       = 10'000;
+				persist   u64           DEBUG_ACCUMULATOR = 0;
+				persist   i32           DEBUG_COUNTER     = 0;
+				persist   LARGE_INTEGER DEBUG_FREQUENCY;
+
+				QueryPerformanceFrequency(&DEBUG_FREQUENCY);
+
+				LARGE_INTEGER DEBUG_LI_0;
+				QueryPerformanceCounter(&DEBUG_LI_0);
+
+				DEFER
+				{
+					LARGE_INTEGER DEBUG_LI_1;
+					QueryPerformanceCounter(&DEBUG_LI_1);
+
+					DEBUG_ACCUMULATOR += DEBUG_LI_1.QuadPart - DEBUG_LI_0.QuadPart;
+					DEBUG_COUNTER     += 1;
+					if (DEBUG_COUNTER > DEBUG_SCANS)
+					{
+						DEBUG_printf("%f\n", DEBUG_ACCUMULATOR / static_cast<f64>(DEBUG_FREQUENCY.QuadPart));
+						DEBUG_ACCUMULATOR = 0;
+						DEBUG_COUNTER     = 0;
+					}
+				};
 				#endif
 
 				vf2 ray_horizontal = polar(state->game.lucia_angle + (0.5f - static_cast<f32>(x) / VIEW_RES.x) * state->game.lucia_fov);
@@ -2779,8 +2779,8 @@ extern "C" PROTOTYPE_RENDER(render)
 				{
 					starting_y       = static_cast<i32>(VIEW_RES.y / 2.0f - HORT_TO_VERT_K / state->game.lucia_fov *                state->game.lucia_position.z  / (wall_distance + 0.1f));
 					ending_y         = static_cast<i32>(VIEW_RES.y / 2.0f + HORT_TO_VERT_K / state->game.lucia_fov * (WALL_HEIGHT - state->game.lucia_position.z) / (wall_distance + 0.1f));
-					pixel_starting_y = MAXIMUM(0, starting_y);
-					pixel_ending_y   = MINIMUM(ending_y, VIEW_RES.y);
+					pixel_starting_y = max(0, starting_y);
+					pixel_ending_y   = min(ending_y, VIEW_RES.y);
 
 					constexpr f32 ALIGNED_SPAN = 0.5f;
 					constexpr f32 SLASH_SPAN   = ALIGNED_SPAN / SQRT2;
@@ -2845,24 +2845,6 @@ extern "C" PROTOTYPE_RENDER(render)
 						overlay_img = 0;
 					}
 				}
-
-				#if PROFILE
-				LARGE_INTEGER DEBUG_CAST_li1;
-				QueryPerformanceCounter(&DEBUG_CAST_li1);
-				DEBUG_CAST_total   += DEBUG_CAST_li1.QuadPart - DEBUG_CAST_li0.QuadPart;
-				DEBUG_CAST_counter += 1;
-				if (DEBUG_CAST_counter > DEBUG_SCANS)
-				{
-					DEBUG_printf("cast %f\t", static_cast<f64>(DEBUG_CAST_total) / DEBUG_PERFORMANCE_FREQ.QuadPart);
-					DEBUG_CAST_total   = 0;
-					DEBUG_CAST_counter = 0;
-				}
-
-				persist u64 DEBUG_WALL_FLOOR_CEILING_total;
-				persist u64 DEBUG_WALL_FLOOR_CEILING_counter;
-				LARGE_INTEGER DEBUG_WALL_FLOOR_CEILING_li0;
-				QueryPerformanceCounter(&DEBUG_WALL_FLOOR_CEILING_li0);
-				#endif
 
 				lambda shader =
 					[&](vf3 color, vf3 ray, vf3 normal, f32 distance)
@@ -2967,25 +2949,6 @@ extern "C" PROTOTYPE_RENDER(render)
 						view_inv_depth_buffer[x * VIEW_RES.y + y] = 1.0f / distance;
 					}
 				}
-
-				constexpr i32 DEBUG_SCANS = 10'000;
-				#if PROFILE
-				LARGE_INTEGER DEBUG_WALL_FLOOR_CEILING_li1;
-				QueryPerformanceCounter(&DEBUG_WALL_FLOOR_CEILING_li1);
-				DEBUG_WALL_FLOOR_CEILING_total   += DEBUG_WALL_FLOOR_CEILING_li1.QuadPart - DEBUG_WALL_FLOOR_CEILING_li0.QuadPart;
-				DEBUG_WALL_FLOOR_CEILING_counter += 1;
-				if (DEBUG_WALL_FLOOR_CEILING_counter > DEBUG_SCANS)
-				{
-					DEBUG_printf("wall floor ceiling %f\t", static_cast<f64>(DEBUG_WALL_FLOOR_CEILING_total) / DEBUG_PERFORMANCE_FREQ.QuadPart);
-					DEBUG_WALL_FLOOR_CEILING_total   = 0;
-					DEBUG_WALL_FLOOR_CEILING_counter = 0;
-				}
-				#endif
-
-				persist u64 DEBUG_THING_total;
-				persist u64 DEBUG_THING_counter;
-				LARGE_INTEGER DEBUG_THING_li0;
-				QueryPerformanceCounter(&DEBUG_THING_li0);
 
 				struct RenderScanNode
 				{
@@ -3109,19 +3072,6 @@ extern "C" PROTOTYPE_RENDER(render)
 						}
 					}
 				}
-
-				#if 1
-				LARGE_INTEGER DEBUG_THING_li1;
-				QueryPerformanceCounter(&DEBUG_THING_li1);
-				DEBUG_THING_total   += DEBUG_THING_li1.QuadPart - DEBUG_THING_li0.QuadPart;
-				DEBUG_THING_counter += 1;
-				if (DEBUG_THING_counter > DEBUG_SCANS)
-				{
-					DEBUG_printf("scan %f\n", static_cast<f64>(DEBUG_THING_total) / DEBUG_PERFORMANCE_FREQ.QuadPart);
-					DEBUG_THING_total   = 0;
-					DEBUG_THING_counter = 0;
-				}
-				#endif
 			}
 
 			if (state->game.holding.paper)
