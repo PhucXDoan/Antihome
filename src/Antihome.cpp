@@ -81,8 +81,9 @@ global constexpr i32 INVENTORY_PADDING     = 5;
 global constexpr f32 CREEPY_SOUND_MIN_TIME = 15.0f;
 global constexpr f32 CREEPY_SOUND_MAX_TIME = 90.0f;
 
-global constexpr i32 TERMINAL_ICON_DIM     = 25;
-global constexpr i32 TERMINAL_ICON_PADDING = 15;
+global constexpr i32 TERMINAL_TASKBAR_HEIGHT            = 20;
+global constexpr i32 TERMINAL_ICON_DIM                  = 25;
+global constexpr i32 TERMINAL_ICON_PADDING              = 15;
 global constexpr vi2 TERMINAL_SETTINGS_POSITION         = { TERMINAL_ICON_PADDING, WIN_RES.y - (TERMINAL_ICON_PADDING + TERMINAL_ICON_DIM)     };
 global constexpr vi2 TERMINAL_CREDITS_POSITION          = { TERMINAL_ICON_PADDING, WIN_RES.y - (TERMINAL_ICON_PADDING + TERMINAL_ICON_DIM) * 2 };
 global constexpr vi2 TERMINAL_ANTIHOME_PROGRAM_POSITION = { TERMINAL_ICON_PADDING, WIN_RES.y - (TERMINAL_ICON_PADDING + TERMINAL_ICON_DIM) * 3 };
@@ -160,38 +161,6 @@ global constexpr struct { f32 min_scalar; f32 max_scalar; strlit file_path; } PA
 		{ 0.2f, 0.8f, DATA_DIR "papers/terry_entry_2.png" },
 		{ 0.2f, 0.8f, DATA_DIR "papers/terry_entry_3.png" },
 		{ 0.2f, 0.8f, DATA_DIR "papers/terry_entry_4.png" }
-	};
-
-enum_loose (TitleMenuOption, u8)
-{
-	start,
-	settings,
-	credits,
-	exit,
-	CAPACITY
-};
-
-global constexpr strlit TITLE_MENU_OPTIONS[TitleMenuOption::CAPACITY] =
-	{
-		"Start",
-		"Settings",
-		"Credits",
-		"Exit"
-	};
-
-enum_loose (SettingOption, u8)
-{
-	master_volume,
-	brightness,
-	done,
-	CAPACITY
-};
-
-global constexpr strlit SETTING_OPTIONS[SettingOption::CAPACITY] =
-	{
-		"Master Volume",
-		"Brightness",
-		"Done"
 	};
 
 enum_loose (ItemType, u8)
@@ -287,13 +256,25 @@ enum struct StateContext : u8
 	end
 };
 
-enum struct TitleMenuContext : u8
+enum_loose (TerminalWindowType, u8)
 {
-	title_menu,
-	intro,
-	settings,
-	credits
+	null,
+
+	enum_start_region(TYPE)
+		settings,
+		credits,
+		antihome_program,
+		power,
+	enum_end_region(TYPE)
 };
+
+global constexpr vi2 TERMINAL_WINDOW_DIMENSIONS[TerminalWindowType::TYPE_COUNT] =
+	{
+		{ 150, 100 },
+		{ 150, 100 },
+		{ 150, 100 },
+		{ 125, 50 }
+	};
 
 struct State
 {
@@ -356,6 +337,9 @@ struct State
 
 		vf2 cursor_velocity;
 		vf2 cursor;
+
+		TerminalWindowType window_type;
+		vf2                window_position;
 
 		//SDL_Texture*     background;
 
@@ -1212,6 +1196,55 @@ extern "C" PROTOTYPE_UPDATE(update)
 			{
 				state->title_menu.cursor_velocity.y = 0.0f;
 				state->title_menu.cursor.y          = clamp(state->title_menu.cursor.y, CURSOR_PADDING, static_cast<f32>(WIN_RES.y - CURSOR_PADDING));
+			}
+
+			if (PRESSED(Input::left_mouse))
+			{
+				if
+				(
+					state->title_menu.window_type != TerminalWindowType::null &&
+					IN_RANGE(state->title_menu.cursor.x, state->title_menu.window_position.x, state->title_menu.window_position.x + TERMINAL_WINDOW_DIMENSIONS[+state->title_menu.window_type - +TerminalWindowType::TYPE_START].x) &&
+					IN_RANGE(state->title_menu.cursor.y, state->title_menu.window_position.y, state->title_menu.window_position.y + TERMINAL_WINDOW_DIMENSIONS[+state->title_menu.window_type - +TerminalWindowType::TYPE_START].y)
+				)
+				{
+					DEBUG_printf("meow\n");
+				}
+				else if
+				(
+					IN_RANGE(state->title_menu.cursor.x, TERMINAL_SETTINGS_POSITION.x, TERMINAL_SETTINGS_POSITION.x + TERMINAL_ICON_DIM) &&
+					IN_RANGE(state->title_menu.cursor.y, TERMINAL_SETTINGS_POSITION.y, TERMINAL_SETTINGS_POSITION.y + TERMINAL_ICON_DIM)
+				)
+				{
+					state->title_menu.window_type     = TerminalWindowType::settings;
+					state->title_menu.window_position = (WIN_RES - TERMINAL_WINDOW_DIMENSIONS[+state->title_menu.window_type - +TerminalWindowType::TYPE_START]) / 2.0f;
+				}
+				else if
+				(
+					IN_RANGE(state->title_menu.cursor.x, TERMINAL_CREDITS_POSITION.x, TERMINAL_CREDITS_POSITION.x + TERMINAL_ICON_DIM) &&
+					IN_RANGE(state->title_menu.cursor.y, TERMINAL_CREDITS_POSITION.y, TERMINAL_CREDITS_POSITION.y + TERMINAL_ICON_DIM)
+				)
+				{
+					state->title_menu.window_type     = TerminalWindowType::credits;
+					state->title_menu.window_position = (WIN_RES - TERMINAL_WINDOW_DIMENSIONS[+state->title_menu.window_type - +TerminalWindowType::TYPE_START]) / 2.0f;
+				}
+				else if
+				(
+					IN_RANGE(state->title_menu.cursor.x, TERMINAL_ANTIHOME_PROGRAM_POSITION.x, TERMINAL_ANTIHOME_PROGRAM_POSITION.x + TERMINAL_ICON_DIM) &&
+					IN_RANGE(state->title_menu.cursor.y, TERMINAL_ANTIHOME_PROGRAM_POSITION.y, TERMINAL_ANTIHOME_PROGRAM_POSITION.y + TERMINAL_ICON_DIM)
+				)
+				{
+					state->title_menu.window_type     = TerminalWindowType::antihome_program;
+					state->title_menu.window_position = (WIN_RES - TERMINAL_WINDOW_DIMENSIONS[+state->title_menu.window_type - +TerminalWindowType::TYPE_START]) / 2.0f;
+				}
+				else if
+				(
+					IN_RANGE(state->title_menu.cursor.x, 0, TERMINAL_TASKBAR_HEIGHT) &&
+					IN_RANGE(state->title_menu.cursor.y, 0, TERMINAL_TASKBAR_HEIGHT)
+				)
+				{
+					state->title_menu.window_type     = TerminalWindowType::power;
+					state->title_menu.window_position = (WIN_RES - TERMINAL_WINDOW_DIMENSIONS[+state->title_menu.window_type - +TerminalWindowType::TYPE_START]) / 2.0f;
+				}
 			}
 
 		//	switch (state->title_menu.context)
@@ -2526,13 +2559,12 @@ extern "C" PROTOTYPE_RENDER(render)
 			set_color(platform->renderer, { 0.003f, 0.51f, 0.5, 1.0f });
 			SDL_RenderClear(platform->renderer);
 
-			constexpr i32 TASKBAR_HEIGHT = 20;
 			set_color(platform->renderer, monochrome(0.3f));
-			draw_filled_rect(platform->renderer, { 0, WIN_RES.y - TASKBAR_HEIGHT }, { WIN_RES.x, TASKBAR_HEIGHT });
+			draw_filled_rect(platform->renderer, { 0, WIN_RES.y - TERMINAL_TASKBAR_HEIGHT }, { WIN_RES.x, TERMINAL_TASKBAR_HEIGHT });
 
 			SDL_Surface* surface;
 			SDL_LockTextureToSurface(state->title_menu.texture.terminal, 0, &surface);
-			SDL_FillRect(surface, 0, 0);
+			draw_filled_rect(surface, { 0, 0 }, WIN_RES, { 0.0f, 0.0f, 0.0f, 0.0f });
 
 			lambda blit_img =
 				[&](Img* img, vi2 position, vi2 dimensions)
@@ -2548,47 +2580,71 @@ extern "C" PROTOTYPE_RENDER(render)
 					}
 				};
 
-			blit_img(&state->title_menu.img.power_button, { 0, 0 }, { TASKBAR_HEIGHT, TASKBAR_HEIGHT });
+			blit_img(&state->title_menu.img.power_button, { 0, 0 }, { TERMINAL_TASKBAR_HEIGHT, TERMINAL_TASKBAR_HEIGHT });
 			blit_img(&state->title_menu.img.gear, TERMINAL_SETTINGS_POSITION, { TERMINAL_ICON_DIM, TERMINAL_ICON_DIM });
 			blit_img(&state->title_menu.img.text_file, TERMINAL_CREDITS_POSITION, { TERMINAL_ICON_DIM, TERMINAL_ICON_DIM });
 			blit_img(&state->title_menu.img.antihome_program, TERMINAL_ANTIHOME_PROGRAM_POSITION, { TERMINAL_ICON_DIM, TERMINAL_ICON_DIM });
+
+			switch (state->title_menu.window_type)
+			{
+				case TerminalWindowType::settings:
+				{
+					draw_filled_rect(surface, vxx(state->title_menu.window_position), TERMINAL_WINDOW_DIMENSIONS[+state->title_menu.window_type - +TerminalWindowType::TYPE_START], monochrome(0.7f));
+				} break;
+
+				case TerminalWindowType::credits:
+				{
+					draw_filled_rect(surface, vxx(state->title_menu.window_position), TERMINAL_WINDOW_DIMENSIONS[+state->title_menu.window_type - +TerminalWindowType::TYPE_START], { 0.75f, 0.75f, 0.25f, 1.0f });
+				} break;
+
+				case TerminalWindowType::antihome_program:
+				{
+					draw_filled_rect(surface, vxx(state->title_menu.window_position), TERMINAL_WINDOW_DIMENSIONS[+state->title_menu.window_type - +TerminalWindowType::TYPE_START], monochrome(0.7f));
+				} break;
+
+				case TerminalWindowType::power:
+				{
+					draw_filled_rect(surface, vxx(state->title_menu.window_position), TERMINAL_WINDOW_DIMENSIONS[+state->title_menu.window_type - +TerminalWindowType::TYPE_START], monochrome(0.7f));
+				} break;
+			}
+
 			blit_img(&state->title_menu.img.cursor, vxx(state->title_menu.cursor + vf2 { 0.0f, -state->title_menu.img.cursor.dim.y * 0.005f }), vxx(state->title_menu.img.cursor.dim * 0.005f));
 
 			SDL_UnlockTexture(state->title_menu.texture.terminal);
 			blit_texture(platform->renderer, state->title_menu.texture.terminal, { 0, 0 }, WIN_RES);
 
-			draw_text
-			(
-				platform->renderer,
-				state->font.minor,
-				{ TERMINAL_SETTINGS_POSITION.x + TERMINAL_ICON_DIM / 2.0f, WIN_RES.y - 1.0f - TERMINAL_SETTINGS_POSITION.y + TERMINAL_ICON_PADDING * 0.15f },
-				FC_ALIGN_CENTER,
-				0.5f,
-				{ 1.0f, 1.0f, 1.0f, 1.0f },
-				"Settings"
-			);
+			//draw_text
+			//(
+			//	platform->renderer,
+			//	state->font.minor,
+			//	{ TERMINAL_SETTINGS_POSITION.x + TERMINAL_ICON_DIM / 2.0f, WIN_RES.y - 1.0f - TERMINAL_SETTINGS_POSITION.y + TERMINAL_ICON_PADDING * 0.15f },
+			//	FC_ALIGN_CENTER,
+			//	0.5f,
+			//	{ 1.0f, 1.0f, 1.0f, 1.0f },
+			//	"Settings"
+			//);
 
-			draw_text
-			(
-				platform->renderer,
-				state->font.minor,
-				{ TERMINAL_CREDITS_POSITION.x + TERMINAL_ICON_DIM / 2.0f, WIN_RES.y - 1.0f - TERMINAL_CREDITS_POSITION.y + TERMINAL_ICON_PADDING * 0.15f },
-				FC_ALIGN_CENTER,
-				0.5f,
-				{ 1.0f, 1.0f, 1.0f, 1.0f },
-				"credits.txt"
-			);
+			//draw_text
+			//(
+			//	platform->renderer,
+			//	state->font.minor,
+			//	{ TERMINAL_CREDITS_POSITION.x + TERMINAL_ICON_DIM / 2.0f, WIN_RES.y - 1.0f - TERMINAL_CREDITS_POSITION.y + TERMINAL_ICON_PADDING * 0.15f },
+			//	FC_ALIGN_CENTER,
+			//	0.5f,
+			//	{ 1.0f, 1.0f, 1.0f, 1.0f },
+			//	"credits.txt"
+			//);
 
-			draw_text
-			(
-				platform->renderer,
-				state->font.minor,
-				{ TERMINAL_ANTIHOME_PROGRAM_POSITION.x + TERMINAL_ICON_DIM / 2.0f, WIN_RES.y - 1.0f - TERMINAL_ANTIHOME_PROGRAM_POSITION.y + TERMINAL_ICON_PADDING * 0.15f },
-				FC_ALIGN_CENTER,
-				0.5f,
-				{ 1.0f, 1.0f, 1.0f, 1.0f },
-				"Antihome"
-			);
+			//draw_text
+			//(
+			//	platform->renderer,
+			//	state->font.minor,
+			//	{ TERMINAL_ANTIHOME_PROGRAM_POSITION.x + TERMINAL_ICON_DIM / 2.0f, WIN_RES.y - 1.0f - TERMINAL_ANTIHOME_PROGRAM_POSITION.y + TERMINAL_ICON_PADDING * 0.15f },
+			//	FC_ALIGN_CENTER,
+			//	0.5f,
+			//	{ 1.0f, 1.0f, 1.0f, 1.0f },
+			//	"Antihome"
+			//);
 
 			//if (state->title_menu.intro.entering_keytime < 0.5f)
 			//{

@@ -119,7 +119,8 @@ internal constexpr u32 pack_color(vf3 color)
 	return
 		(static_cast<u8>(color.x * 255.0f) << 24) |
 		(static_cast<u8>(color.y * 255.0f) << 16) |
-		(static_cast<u8>(color.z * 255.0f) <<  8);
+		(static_cast<u8>(color.z * 255.0f) <<  8) |
+		0xFF;
 }
 
 internal constexpr u32 pack_color(vf4 color)
@@ -539,6 +540,18 @@ internal void set_color(SDL_Renderer* renderer, vf4 color)
 		static_cast<u8>(color.z * 255.0f),
 		static_cast<u8>(color.w * 255.0f)
 	);
+}
+
+internal void draw_filled_rect(SDL_Surface* surface, vi2 position, vi2 dimensions, vf3 color)
+{
+	SDL_Rect rect = { position.x, position.y, dimensions.x, dimensions.y };
+	SDL_FillRect(surface, &rect, pack_color(color));
+}
+
+internal void draw_filled_rect(SDL_Surface* surface, vi2 position, vi2 dimensions, vf4 color)
+{
+	SDL_Rect rect = { position.x, position.y, dimensions.x, dimensions.y };
+	SDL_FillRect(surface, &rect, pack_color(color));
 }
 
 internal void draw_filled_rect(SDL_Renderer* renderer, vi2 position, vi2 dimensions)
