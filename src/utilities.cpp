@@ -542,18 +542,6 @@ internal void set_color(SDL_Renderer* renderer, vf4 color)
 	);
 }
 
-internal void draw_filled_rect(SDL_Surface* surface, vi2 position, vi2 dimensions, vf3 color)
-{
-	SDL_Rect rect = { position.x, position.y, dimensions.x, dimensions.y };
-	SDL_FillRect(surface, &rect, pack_color(color));
-}
-
-internal void draw_filled_rect(SDL_Surface* surface, vi2 position, vi2 dimensions, vf4 color)
-{
-	SDL_Rect rect = { position.x, position.y, dimensions.x, dimensions.y };
-	SDL_FillRect(surface, &rect, pack_color(color));
-}
-
 internal void draw_filled_rect(SDL_Renderer* renderer, vi2 position, vi2 dimensions)
 {
 	SDL_Rect rect = { position.x, position.y, dimensions.x, dimensions.y };

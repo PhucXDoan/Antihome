@@ -315,21 +315,11 @@ struct State
 		{
 			struct
 			{
-				Img cursor;
-				Img power_button;
-				Img gear;
-				Img text_file;
-				Img antihome_program;
-			} img;
-
-			Img imgs[sizeof(img) / sizeof(Img)];
-		};
-
-		union
-		{
-			struct
-			{
-				SDL_Texture* terminal;
+				SDL_Texture* cursor;
+				SDL_Texture* power_button;
+				SDL_Texture* gear;
+				SDL_Texture* text_file;
+				SDL_Texture* antihome_program;
 			} texture;
 
 			SDL_Texture* textures[sizeof(texture) / sizeof(SDL_Texture*)];
@@ -969,14 +959,11 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 	{
 		case StateContext::title_menu:
 		{
-			state->title_menu.img.cursor           = init_img(DATA_DIR "cursor.png");
-			state->title_menu.img.power_button     = init_img(DATA_DIR "terminal_power_button.png");
-			state->title_menu.img.gear             = init_img(DATA_DIR "gear.png");
-			state->title_menu.img.text_file        = init_img(DATA_DIR "text_file.png");
-			state->title_menu.img.antihome_program = init_img(DATA_DIR "antihome_program.png");
-
-			state->title_menu.texture.terminal = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_STREAMING, WIN_RES.x, WIN_RES.y);
-			SDL_SetTextureBlendMode(state->title_menu.texture.terminal, SDL_BLENDMODE_BLEND);
+			state->title_menu.texture.cursor           = IMG_LoadTexture(renderer, DATA_DIR "cursor.png");
+			state->title_menu.texture.power_button     = IMG_LoadTexture(renderer, DATA_DIR "terminal_power_button.png");
+			state->title_menu.texture.gear             = IMG_LoadTexture(renderer, DATA_DIR "gear.png");
+			state->title_menu.texture.text_file        = IMG_LoadTexture(renderer, DATA_DIR "text_file.png");
+			state->title_menu.texture.antihome_program = IMG_LoadTexture(renderer, DATA_DIR "antihome_program.png");
 		} break;
 
 		case StateContext::game:
@@ -1057,11 +1044,6 @@ internal void boot_down_state(State* state)
 	{
 		case StateContext::title_menu:
 		{
-			FOR_ELEMS(it, state->game.imgs)
-			{
-				deinit_img(it);
-			}
-
 			FOR_ELEMS(it, state->game.textures)
 			{
 				SDL_DestroyTexture(*it);
@@ -2562,89 +2544,76 @@ extern "C" PROTOTYPE_RENDER(render)
 			set_color(platform->renderer, monochrome(0.3f));
 			draw_filled_rect(platform->renderer, { 0, WIN_RES.y - TERMINAL_TASKBAR_HEIGHT }, { WIN_RES.x, TERMINAL_TASKBAR_HEIGHT });
 
-			SDL_Surface* surface;
-			SDL_LockTextureToSurface(state->title_menu.texture.terminal, 0, &surface);
-			draw_filled_rect(surface, { 0, 0 }, WIN_RES, { 0.0f, 0.0f, 0.0f, 0.0f });
+			blit_texture
+			(
+				platform->renderer,
+				state->title_menu.texture.power_button,
+				{ 0, WIN_RES.y - TERMINAL_TASKBAR_HEIGHT },
+				{ TERMINAL_TASKBAR_HEIGHT, TERMINAL_TASKBAR_HEIGHT }
+			);
 
-			lambda blit_img =
-				[&](Img* img, vi2 position, vi2 dimensions)
+			lambda draw_icon =
+				[&](SDL_Texture* texture, vi2 position, strlit name)
 				{
-					FOR_RANGE(y, clamp(position.y, 0, WIN_RES.y), clamp(position.y + dimensions.y, 0, WIN_RES.y))
-					{
-						FOR_RANGE(x, clamp(position.x, 0, WIN_RES.x), clamp(position.x + dimensions.x, 0, WIN_RES.x))
-						{
-							vf4 color = img_color_at(img, { (x - position.x) / static_cast<f32>(dimensions.x), (y - position.y) / static_cast<f32>(dimensions.y) });
-							reinterpret_cast<u32*>(surface->pixels)[(WIN_RES.y - 1 - y) * WIN_RES.x + x] =
-								pack_color(lerp(unpack_color(reinterpret_cast<u32*>(surface->pixels)[(WIN_RES.y - 1 - y) * WIN_RES.x + x]), color, color.w));
-						}
-					}
+					blit_texture
+					(
+						platform->renderer,
+						texture,
+						{ position.x, WIN_RES.y - TERMINAL_ICON_DIM - position.y },
+						{ TERMINAL_ICON_DIM, TERMINAL_ICON_DIM }
+					);
+
+					draw_text
+					(
+						platform->renderer,
+						state->font.minor,
+						{ position.x + TERMINAL_ICON_DIM / 2.0f, WIN_RES.y - 1.0f - position.y + TERMINAL_ICON_PADDING * 0.15f },
+						FC_ALIGN_CENTER,
+						0.5f,
+						{ 1.0f, 1.0f, 1.0f, 1.0f },
+						"%s",
+						name
+					);
 				};
 
-			blit_img(&state->title_menu.img.power_button, { 0, 0 }, { TERMINAL_TASKBAR_HEIGHT, TERMINAL_TASKBAR_HEIGHT });
-			blit_img(&state->title_menu.img.gear, TERMINAL_SETTINGS_POSITION, { TERMINAL_ICON_DIM, TERMINAL_ICON_DIM });
-			blit_img(&state->title_menu.img.text_file, TERMINAL_CREDITS_POSITION, { TERMINAL_ICON_DIM, TERMINAL_ICON_DIM });
-			blit_img(&state->title_menu.img.antihome_program, TERMINAL_ANTIHOME_PROGRAM_POSITION, { TERMINAL_ICON_DIM, TERMINAL_ICON_DIM });
+			draw_icon(state->title_menu.texture.gear, TERMINAL_SETTINGS_POSITION, "Settings");
+			draw_icon(state->title_menu.texture.text_file, TERMINAL_CREDITS_POSITION, "credits.txt");
+			draw_icon(state->title_menu.texture.antihome_program, TERMINAL_ANTIHOME_PROGRAM_POSITION, "Antihome");
 
 			switch (state->title_menu.window_type)
 			{
 				case TerminalWindowType::settings:
 				{
-					draw_filled_rect(surface, vxx(state->title_menu.window_position), TERMINAL_WINDOW_DIMENSIONS[+state->title_menu.window_type - +TerminalWindowType::TYPE_START], monochrome(0.7f));
+					set_color(platform->renderer, monochrome(0.7f));
+					draw_filled_rect(platform->renderer, vxx(state->title_menu.window_position), TERMINAL_WINDOW_DIMENSIONS[+state->title_menu.window_type - +TerminalWindowType::TYPE_START]);
 				} break;
 
 				case TerminalWindowType::credits:
 				{
-					draw_filled_rect(surface, vxx(state->title_menu.window_position), TERMINAL_WINDOW_DIMENSIONS[+state->title_menu.window_type - +TerminalWindowType::TYPE_START], { 0.75f, 0.75f, 0.25f, 1.0f });
+					set_color(platform->renderer, { 0.75f, 0.75f, 0.25f, 1.0f });
+					draw_filled_rect(platform->renderer, vxx(state->title_menu.window_position), TERMINAL_WINDOW_DIMENSIONS[+state->title_menu.window_type - +TerminalWindowType::TYPE_START]);
 				} break;
 
 				case TerminalWindowType::antihome_program:
 				{
-					draw_filled_rect(surface, vxx(state->title_menu.window_position), TERMINAL_WINDOW_DIMENSIONS[+state->title_menu.window_type - +TerminalWindowType::TYPE_START], monochrome(0.7f));
+					set_color(platform->renderer, monochrome(0.7f));
+					draw_filled_rect(platform->renderer, vxx(state->title_menu.window_position), TERMINAL_WINDOW_DIMENSIONS[+state->title_menu.window_type - +TerminalWindowType::TYPE_START]);
 				} break;
 
 				case TerminalWindowType::power:
 				{
-					draw_filled_rect(surface, vxx(state->title_menu.window_position), TERMINAL_WINDOW_DIMENSIONS[+state->title_menu.window_type - +TerminalWindowType::TYPE_START], monochrome(0.7f));
+					set_color(platform->renderer, monochrome(0.7f));
+					draw_filled_rect(platform->renderer, vxx(state->title_menu.window_position), TERMINAL_WINDOW_DIMENSIONS[+state->title_menu.window_type - +TerminalWindowType::TYPE_START]);
 				} break;
 			}
 
-			blit_img(&state->title_menu.img.cursor, vxx(state->title_menu.cursor + vf2 { 0.0f, -state->title_menu.img.cursor.dim.y * 0.005f }), vxx(state->title_menu.img.cursor.dim * 0.005f));
-
-			SDL_UnlockTexture(state->title_menu.texture.terminal);
-			blit_texture(platform->renderer, state->title_menu.texture.terminal, { 0, 0 }, WIN_RES);
-
-			//draw_text
-			//(
-			//	platform->renderer,
-			//	state->font.minor,
-			//	{ TERMINAL_SETTINGS_POSITION.x + TERMINAL_ICON_DIM / 2.0f, WIN_RES.y - 1.0f - TERMINAL_SETTINGS_POSITION.y + TERMINAL_ICON_PADDING * 0.15f },
-			//	FC_ALIGN_CENTER,
-			//	0.5f,
-			//	{ 1.0f, 1.0f, 1.0f, 1.0f },
-			//	"Settings"
-			//);
-
-			//draw_text
-			//(
-			//	platform->renderer,
-			//	state->font.minor,
-			//	{ TERMINAL_CREDITS_POSITION.x + TERMINAL_ICON_DIM / 2.0f, WIN_RES.y - 1.0f - TERMINAL_CREDITS_POSITION.y + TERMINAL_ICON_PADDING * 0.15f },
-			//	FC_ALIGN_CENTER,
-			//	0.5f,
-			//	{ 1.0f, 1.0f, 1.0f, 1.0f },
-			//	"credits.txt"
-			//);
-
-			//draw_text
-			//(
-			//	platform->renderer,
-			//	state->font.minor,
-			//	{ TERMINAL_ANTIHOME_PROGRAM_POSITION.x + TERMINAL_ICON_DIM / 2.0f, WIN_RES.y - 1.0f - TERMINAL_ANTIHOME_PROGRAM_POSITION.y + TERMINAL_ICON_PADDING * 0.15f },
-			//	FC_ALIGN_CENTER,
-			//	0.5f,
-			//	{ 1.0f, 1.0f, 1.0f, 1.0f },
-			//	"Antihome"
-			//);
+			blit_texture
+			(
+				platform->renderer,
+				state->title_menu.texture.cursor,
+				vxx(vf2 { state->title_menu.cursor.x, WIN_RES.y - 1.0f - state->title_menu.cursor.y }),
+				{ 5, 10 }
+			);
 
 			//if (state->title_menu.intro.entering_keytime < 0.5f)
 			//{
