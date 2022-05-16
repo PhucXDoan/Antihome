@@ -114,6 +114,13 @@ internal f32 mod(f32 x, f32 m) { f32 y = fmodf(x, m); return y < 0.0f ? y + m : 
 
 internal vf2 polar(f32 angle) { return { cosf(angle), sinf(angle) }; }
 
+internal bool32 in_rect(vf2 position, vf2 bottom_left, vf2 dimensions)
+{
+	return
+		bottom_left.x <= position.x && position.x <= bottom_left.x + dimensions.x &&
+		bottom_left.y <= position.y && position.y <= bottom_left.y + dimensions.y;
+}
+
 internal constexpr u32 pack_color(vf3 color)
 {
 	return
@@ -542,25 +549,25 @@ internal void set_color(SDL_Renderer* renderer, vf4 color)
 	);
 }
 
-internal void draw_filled_rect(SDL_Renderer* renderer, vi2 position, vi2 dimensions)
+internal void draw_filled_rect(SDL_Renderer* renderer, vi2 position, vi2 dimensions) // @NOTICE@ @TODO@ DEPRECATE.
 {
 	SDL_Rect rect = { position.x, position.y, dimensions.x, dimensions.y };
 	SDL_RenderFillRect(renderer, &rect);
 }
 
-internal void draw_rect(SDL_Renderer* renderer, vi2 position, vi2 dimensions)
+internal void draw_rect(SDL_Renderer* renderer, vi2 position, vi2 dimensions) // @NOTICE@ @TODO@ DEPRECATE.
 {
 	SDL_Rect rect = { position.x, position.y, dimensions.x, dimensions.y };
 	SDL_RenderDrawRect(renderer, &rect);
 }
 
-internal void draw_line(SDL_Renderer* renderer, vi2 start, vi2 end)
+internal void draw_line(SDL_Renderer* renderer, vi2 start, vi2 end) // @NOTICE@ @TODO@ DEPRECATE.
 {
 	ASSERT(fabs(start.x - end.x) + fabs(start.y - end.y) < 4096.0f);
 	SDL_RenderDrawLine(renderer, start.x, start.y, end.x, end.y);
 }
 
-internal void draw_circle(SDL_Renderer* renderer, vi2 center, i32 radius)
+internal void draw_circle(SDL_Renderer* renderer, vi2 center, i32 radius) // @NOTICE@ @TODO@ DEPRECATE.
 {
 	ASSERT(radius < 256);
 
@@ -595,7 +602,7 @@ internal void draw_circle(SDL_Renderer* renderer, vi2 center, i32 radius)
 	}
 }
 
-internal void draw_filled_circle(SDL_Renderer* renderer, vi2 center, i32 radius)
+internal void draw_filled_circle(SDL_Renderer* renderer, vi2 center, i32 radius) // @NOTICE@ @TODO@ DEPRECATE.
 {
 	ASSERT(radius < 256);
 
@@ -627,7 +634,7 @@ internal void draw_filled_circle(SDL_Renderer* renderer, vi2 center, i32 radius)
 }
 
 template <typename... ARGUMENTS>
-internal void draw_text(SDL_Renderer* renderer, FC_Font* font, vf2 coordinates, FC_AlignEnum alignment, f32 scalar, vf4 rgba, strlit fstr, ARGUMENTS... arguments)
+internal void draw_text(SDL_Renderer* renderer, FC_Font* font, vf2 coordinates, FC_AlignEnum alignment, f32 scalar, vf4 rgba, strlit fstr, ARGUMENTS... arguments) // @NOTICE@ @TODO@ DEPRECATE.
 {
 	FC_DrawEffect
 	(
@@ -653,7 +660,7 @@ internal void draw_text(SDL_Renderer* renderer, FC_Font* font, vf2 coordinates, 
 }
 
 template <typename... ARGUMENTS>
-internal void draw_boxed_text(SDL_Renderer* renderer, FC_Font* font, vi2 coordinates, vi2 dimensions, FC_AlignEnum alignment, f32 scalar, vf4 rgba, strlit fstr, ARGUMENTS... arguments)
+internal void draw_boxed_text(SDL_Renderer* renderer, FC_Font* font, vi2 coordinates, vi2 dimensions, FC_AlignEnum alignment, f32 scalar, vf4 rgba, strlit fstr, ARGUMENTS... arguments) // @NOTICE@ @TODO@ DEPRECATE.
 {
 	FC_DrawBoxEffect
 	(
@@ -677,7 +684,7 @@ internal void draw_boxed_text(SDL_Renderer* renderer, FC_Font* font, vi2 coordin
 	);
 }
 
-internal void blit_texture(SDL_Renderer* renderer, SDL_Texture* texture, vi2 position, vi2 dimensions)
+internal void blit_texture(SDL_Renderer* renderer, SDL_Texture* texture, vi2 position, vi2 dimensions) // @NOTICE@ @TODO@ DEPRECATE.
 {
 	SDL_Rect dst = { position.x, position.y, dimensions.x, dimensions.y };
 	SDL_RenderCopy(renderer, texture, 0, &dst);
@@ -715,4 +722,48 @@ internal i32 iterate_repeated_movement(Platform* platform, Input negative_input,
 	}
 
 	return delta;
+}
+
+internal void render_filled_rect(SDL_Renderer* renderer, vf2 bottom_left, vf2 dimensions)
+{
+	SDL_FRect rect = { bottom_left.x, WIN_RES.y - bottom_left.y - dimensions.y, dimensions.x, dimensions.y };
+	SDL_RenderFillRectF(renderer, &rect);
+}
+
+internal void render_rect(SDL_Renderer* renderer, vf2 bottom_left, vf2 dimensions)
+{
+	SDL_FRect rect = { bottom_left.x, WIN_RES.y - bottom_left.y - dimensions.y, dimensions.x, dimensions.y };
+	SDL_RenderDrawRectF(renderer, &rect);
+}
+
+internal void render_texture(SDL_Renderer* renderer, SDL_Texture* texture, vf2 position, vf2 dimensions)
+{
+	SDL_FRect rect = { position.x, WIN_RES.y - position.y - dimensions.y, dimensions.x, dimensions.y };
+	SDL_RenderCopyF(renderer, texture, 0, &rect);
+}
+
+template <typename... ARGUMENTS>
+internal void render_text(SDL_Renderer* renderer, FC_Font* font, vf2 coordinates, FC_AlignEnum alignment, f32 scalar, vf4 rgba, strlit fstr, ARGUMENTS... arguments)
+{
+	FC_DrawEffect
+	(
+		font,
+		renderer,
+		coordinates.x,
+		WIN_RES.y - coordinates.y - FC_GetBaseline(font) * scalar,
+		FC_MakeEffect
+		(
+			alignment,
+			FC_MakeScale(scalar, scalar),
+			FC_MakeColor
+			(
+				static_cast<u8>(rgba.x * 255.0f),
+				static_cast<u8>(rgba.y * 255.0f),
+				static_cast<u8>(rgba.z * 255.0f),
+				static_cast<u8>(rgba.w * 255.0f)
+			)
+		),
+		fstr,
+		arguments...
+	);
 }

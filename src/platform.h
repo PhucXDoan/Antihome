@@ -6,6 +6,7 @@
 #include <SDL_image.h>
 
 global constexpr vi2 WIN_DIM            = { 800, 600 };
+global constexpr vi2 WIN_RES            = WIN_DIM / 3; // @TODO@ This affects text.
 global constexpr f32 SECONDS_PER_UPDATE = 1.0f / 24.0f;
 
 enum_loose (Input, u32)

@@ -14,7 +14,6 @@
 #define internal static
 #define persist  static
 #define global   static
-#define refering const auto&
 #define aliasing auto&
 #define lambda   const auto
 
