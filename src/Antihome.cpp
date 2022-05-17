@@ -60,12 +60,12 @@
 #include "platform.h"
 #include "utilities.cpp"
 
-global constexpr f32 TERMINAL_TASKBAR_HEIGHT            = 50.0f;
-global constexpr f32 TERMINAL_ICON_DIM                  = 50.0f;
-global constexpr vf2 TERMINAL_CREDITS_POSITION          = { 55.0f, WIN_DIM.y - (TERMINAL_ICON_DIM + 50.0f) * 0.75f };
-global constexpr vf2 TERMINAL_ANTIHOME_PROGRAM_POSITION = { 55.0f, WIN_DIM.y - (TERMINAL_ICON_DIM + 50.0f) * 1.75f };
-global constexpr f32 TERMINAL_TITLE_BAR_HEIGHT          = 25.0f;
-global constexpr vf2 TERMINAL_BUTTON_DIMENSIONS         = { 45.0f, 27.0f };
+global constexpr f32 COMPUTER_TASKBAR_HEIGHT            = 50.0f;
+global constexpr f32 COMPUTER_ICON_DIM                  = 50.0f;
+global constexpr vf2 COMPUTER_CREDITS_POSITION          = { 55.0f, WIN_DIM.y - (COMPUTER_ICON_DIM + 50.0f) * 0.75f };
+global constexpr vf2 COMPUTER_ANTIHOME_PROGRAM_POSITION = { 55.0f, WIN_DIM.y - (COMPUTER_ICON_DIM + 50.0f) * 1.75f };
+global constexpr f32 COMPUTER_TITLE_BAR_HEIGHT          = 25.0f;
+global constexpr vf2 COMPUTER_BUTTON_DIMENSIONS         = { 45.0f, 27.0f };
 
 global constexpr f32 HUD_HEIGHT            = 175.0f;
 global constexpr vi2 VIEW_RES              = vxx(vf2 { static_cast<f32>(WIN_DIM.x), WIN_DIM.y - HUD_HEIGHT } / 3.0f);
@@ -231,7 +231,7 @@ enum struct StateContext : u8
 	end
 };
 
-enum_loose (TerminalWindowType, u8)
+enum_loose (ComputerWindowType, u8)
 {
 	null,
 
@@ -240,6 +240,22 @@ enum_loose (TerminalWindowType, u8)
 		antihome_program,
 		power,
 	enum_end_region(TYPE)
+};
+
+enum struct HandOnState : u8
+{
+	null,
+	door,
+	circuit_breaker,
+	item
+};
+
+enum struct HudType : u8
+{
+	null,
+	inventory,
+	paper,
+	circuit_breaker
 };
 
 struct State
@@ -291,7 +307,7 @@ struct State
 		vf2                cursor_velocity;
 		vf2                cursor;
 		bool32             cursor_dragging_window;
-		TerminalWindowType window_type;
+		ComputerWindowType window_type;
 		vf2                window_dimensions;
 		vf2                window_velocity;
 		vf2                window_position;
@@ -403,44 +419,49 @@ struct State
 		vf2                  monster_normal;
 
 		vf3                  hand_position;
-		vf2                  hand_normal;
-		bool32               hand_on_door;
+		HandOnState          hand_on_state;
 		Item*                hand_hovered_item;
 
 		i32                  item_count;
 		Item                 item_buffer[MAP_DIM * MAP_DIM / 6];
 
-		vf2                  interacting_cursor_velocity;
-		vf2                  interacting_cursor;
-		bool32               inventory_visibility;
-		vf2                  inventory_click_position;
-		Item*                inventory_selected;
-		bool32               inventory_grabbing;
-		union
+		struct
 		{
-			Item             inventory[2][4];
-			Item             flat_inventory[sizeof(inventory) / sizeof(Item)];
-		};
+			vf2     cursor_velocity;
+			vf2     cursor;
+			HudType type;
+
+			struct
+			{
+				Item   array[2][4];
+				vf2    click_position;
+				Item*  selected_item;
+				bool32 grabbing;
+			} inventory;
+
+			struct
+			{
+				i32 index;
+				vf2 velocity;
+				vf2 delta_position;
+				f32 scalar_velocity;
+				f32 scalar;
+			} paper;
+		} hud;
 
 		union
 		{
 			struct
 			{
-				Item* paper;
 				Item* flashlight;
 			} holding;
 
 			Item* holdings[sizeof(holding) / sizeof(Item*)];
 		};
 
-		f32                  flashlight_activation;
-		vf3                  flashlight_ray;
-		f32                  flashlight_keytime;
-		vf2                  paper_velocity;
-		vf2                  paper_delta_position;
-		i32                  paper_index;
-		f32                  paper_scalar_velocity;
-		f32                  paper_scalar;
+		f32 flashlight_activation;
+		vf3 flashlight_ray;
+		f32 flashlight_keytime;
 	} game;
 
 	struct
@@ -459,6 +480,7 @@ internal const WallVoxelData* get_wall_voxel_data(WallVoxel voxel)
 		case WallVoxel::forward_slash : return &WALL_VOXEL_DATA[3];
 	}
 
+	ASSERT(false);
 	return 0;
 }
 
@@ -1015,7 +1037,6 @@ extern "C" PROTOTYPE_INITIALIZE(initialize)
 	state->transient_arena.base = platform->memory          + sizeof(State) + state->long_term_arena.size;
 	state->transient_arena.used = 0;
 
-
 	state->title_menu.cursor = WIN_DIM / 2.0f;
 
 	SDL_SetRelativeMouseMode(SDL_TRUE);
@@ -1090,21 +1111,21 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 			if (PRESSED(Input::left_mouse))
 			{
-				if (tm.window_type != TerminalWindowType::null && in_rect(tm.cursor, tm.window_position + vf2 { 0.0f, tm.window_dimensions.y }, { tm.window_dimensions.x - TERMINAL_TITLE_BAR_HEIGHT, TERMINAL_TITLE_BAR_HEIGHT }))
+				if (tm.window_type != ComputerWindowType::null && in_rect(tm.cursor, tm.window_position + vf2 { 0.0f, tm.window_dimensions.y }, { tm.window_dimensions.x - COMPUTER_TITLE_BAR_HEIGHT, COMPUTER_TITLE_BAR_HEIGHT }))
 				{
 					tm.cursor_dragging_window = true;
 				}
-				else if (tm.window_type != TerminalWindowType::null && in_rect(tm.cursor, tm.window_position + tm.window_dimensions + vf2 { -TERMINAL_TITLE_BAR_HEIGHT, 0.0f }, { TERMINAL_TITLE_BAR_HEIGHT, TERMINAL_TITLE_BAR_HEIGHT }))
+				else if (tm.window_type != ComputerWindowType::null && in_rect(tm.cursor, tm.window_position + tm.window_dimensions + vf2 { -COMPUTER_TITLE_BAR_HEIGHT, 0.0f }, { COMPUTER_TITLE_BAR_HEIGHT, COMPUTER_TITLE_BAR_HEIGHT }))
 				{
-					tm.window_type = TerminalWindowType::null;
+					tm.window_type = ComputerWindowType::null;
 				}
-				else if (tm.window_type != TerminalWindowType::null && in_rect(tm.cursor, tm.window_position, tm.window_dimensions))
+				else if (tm.window_type != ComputerWindowType::null && in_rect(tm.cursor, tm.window_position, tm.window_dimensions))
 				{
 					switch (tm.window_type)
 					{
-						case TerminalWindowType::antihome_program:
+						case ComputerWindowType::antihome_program:
 						{
-							if (in_rect(tm.cursor, tm.window_position + vf2 { tm.window_dimensions.x * 0.5f, tm.window_dimensions.y * 0.33f } - TERMINAL_BUTTON_DIMENSIONS / 2.0f, TERMINAL_BUTTON_DIMENSIONS))
+							if (in_rect(tm.cursor, tm.window_position + vf2 { tm.window_dimensions.x * 0.5f, tm.window_dimensions.y * 0.33f } - COMPUTER_BUTTON_DIMENSIONS / 2.0f, COMPUTER_BUTTON_DIMENSIONS))
 							{
 								boot_down_state(state);
 								state->context = StateContext::game;
@@ -1364,36 +1385,36 @@ extern "C" PROTOTYPE_UPDATE(update)
 							}
 						} break;
 
-						case TerminalWindowType::power:
+						case ComputerWindowType::power:
 						{
-							if (in_rect(tm.cursor, tm.window_position + vf2 { tm.window_dimensions.x * 0.25f, tm.window_dimensions.y * 0.25f } - TERMINAL_BUTTON_DIMENSIONS / 2.0f, TERMINAL_BUTTON_DIMENSIONS))
+							if (in_rect(tm.cursor, tm.window_position + vf2 { tm.window_dimensions.x * 0.25f, tm.window_dimensions.y * 0.25f } - COMPUTER_BUTTON_DIMENSIONS / 2.0f, COMPUTER_BUTTON_DIMENSIONS))
 							{
 								return UpdateCode::terminate;
 							}
-							else if (in_rect(tm.cursor, tm.window_position + vf2 { tm.window_dimensions.x * 0.75f, tm.window_dimensions.y * 0.25f } - TERMINAL_BUTTON_DIMENSIONS / 2.0f, TERMINAL_BUTTON_DIMENSIONS))
+							else if (in_rect(tm.cursor, tm.window_position + vf2 { tm.window_dimensions.x * 0.75f, tm.window_dimensions.y * 0.25f } - COMPUTER_BUTTON_DIMENSIONS / 2.0f, COMPUTER_BUTTON_DIMENSIONS))
 							{
-								tm.window_type = TerminalWindowType::null;
+								tm.window_type = ComputerWindowType::null;
 							}
 						} break;
 					}
 				}
 				else
 				{
-					TerminalWindowType clicked_window_type = TerminalWindowType::null;
+					ComputerWindowType clicked_window_type = ComputerWindowType::null;
 
-					if (in_rect(tm.cursor, TERMINAL_CREDITS_POSITION, { TERMINAL_ICON_DIM, TERMINAL_ICON_DIM }))
+					if (in_rect(tm.cursor, COMPUTER_CREDITS_POSITION, { COMPUTER_ICON_DIM, COMPUTER_ICON_DIM }))
 					{
-						clicked_window_type  = TerminalWindowType::credits;
+						clicked_window_type  = ComputerWindowType::credits;
 						tm.window_dimensions = { 250.0f, 300.0f };
 					}
-					else if (in_rect(tm.cursor, TERMINAL_ANTIHOME_PROGRAM_POSITION, { TERMINAL_ICON_DIM, TERMINAL_ICON_DIM }))
+					else if (in_rect(tm.cursor, COMPUTER_ANTIHOME_PROGRAM_POSITION, { COMPUTER_ICON_DIM, COMPUTER_ICON_DIM }))
 					{
-						clicked_window_type  = TerminalWindowType::antihome_program;
+						clicked_window_type  = ComputerWindowType::antihome_program;
 						tm.window_dimensions = { 275.0f, 250.0f };
 					}
-					else if (in_rect(tm.cursor, { 0.0f, 0.0f }, { TERMINAL_TASKBAR_HEIGHT, TERMINAL_TASKBAR_HEIGHT }))
+					else if (in_rect(tm.cursor, { 0.0f, 0.0f }, { COMPUTER_TASKBAR_HEIGHT, COMPUTER_TASKBAR_HEIGHT }))
 					{
-						clicked_window_type  = TerminalWindowType::power;
+						clicked_window_type  = ComputerWindowType::power;
 						tm.window_dimensions = { 200.0f, 100.0f };
 					}
 
@@ -1401,7 +1422,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 					{
 						if (clicked_window_type == tm.window_type)
 						{
-							tm.window_type = TerminalWindowType::null;
+							tm.window_type = ComputerWindowType::null;
 						}
 						else
 						{
@@ -1417,7 +1438,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 				tm.cursor_dragging_window = false;
 			}
 
-			if (tm.window_type != TerminalWindowType::null)
+			if (tm.window_type != ComputerWindowType::null)
 			{
 				if (tm.cursor_dragging_window)
 				{
@@ -1430,15 +1451,15 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 				tm.window_position += tm.window_velocity * SECONDS_PER_UPDATE;
 
-				if (tm.window_position.x < 2.0f * TERMINAL_TITLE_BAR_HEIGHT - tm.window_dimensions.x || tm.window_position.x > WIN_DIM.x - TERMINAL_TITLE_BAR_HEIGHT)
+				if (tm.window_position.x < 2.0f * COMPUTER_TITLE_BAR_HEIGHT - tm.window_dimensions.x || tm.window_position.x > WIN_DIM.x - COMPUTER_TITLE_BAR_HEIGHT)
 				{
-					tm.window_position.x = clamp(tm.window_position.x, 2.0f * TERMINAL_TITLE_BAR_HEIGHT - tm.window_dimensions.x, WIN_DIM.x - TERMINAL_TITLE_BAR_HEIGHT);
+					tm.window_position.x = clamp(tm.window_position.x, 2.0f * COMPUTER_TITLE_BAR_HEIGHT - tm.window_dimensions.x, WIN_DIM.x - COMPUTER_TITLE_BAR_HEIGHT);
 					tm.window_velocity.x = 0.0f;
 				}
 
-				if (tm.window_position.y < TERMINAL_TASKBAR_HEIGHT - tm.window_dimensions.y || tm.window_position.y > WIN_DIM.y - TERMINAL_TITLE_BAR_HEIGHT - tm.window_dimensions.y)
+				if (tm.window_position.y < COMPUTER_TASKBAR_HEIGHT - tm.window_dimensions.y || tm.window_position.y > WIN_DIM.y - COMPUTER_TITLE_BAR_HEIGHT - tm.window_dimensions.y)
 				{
-					tm.window_position.y = clamp(tm.window_position.y, TERMINAL_TASKBAR_HEIGHT - tm.window_dimensions.y, WIN_DIM.y - TERMINAL_TITLE_BAR_HEIGHT - tm.window_dimensions.y);
+					tm.window_position.y = clamp(tm.window_position.y, COMPUTER_TASKBAR_HEIGHT - tm.window_dimensions.y, WIN_DIM.y - COMPUTER_TITLE_BAR_HEIGHT - tm.window_dimensions.y);
 					tm.window_velocity.y = 0.0f;
 				}
 			}
@@ -1479,178 +1500,71 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 				if (PRESSED(Input::tab))
 				{
-					state->game.inventory_visibility = !state->game.inventory_visibility;
-					state->game.inventory_selected   = 0;
-					state->game.inventory_grabbing   = false;
-
-					if (!state->game.holding.paper)
+					if (state->game.hud.type == HudType::inventory)
 					{
-						state->game.interacting_cursor_velocity = { 0.0f, 0.0f };
-						state->game.interacting_cursor          = VIEW_RES / 2.0f;
+						state->game.hud.type = HudType::null;
 					}
+					else
+					{
+						if (state->game.hud.type == HudType::null)
+						{
+							state->game.hud.cursor_velocity         = { 0.0f, 0.0f };
+							state->game.hud.cursor                  = VIEW_RES / 2.0f;
+							state->game.hud.inventory.selected_item = 0;
+							state->game.hud.inventory.grabbing      = false;
+						}
 
-					state->game.holding.paper = 0;
+						state->game.hud.type = HudType::inventory;
+					}
 				}
 
-				if (state->game.inventory_visibility || state->game.holding.paper)
+				if (state->game.hud.type != HudType::null)
 				{
-					state->game.interacting_cursor_velocity += platform->cursor_delta * 16.0f;
-					state->game.interacting_cursor_velocity *= 0.3f;
-
-					state->game.interacting_cursor   += state->game.interacting_cursor_velocity * SECONDS_PER_UPDATE;
-					state->game.interacting_cursor.x  = clamp(state->game.interacting_cursor.x, 0.0f, static_cast<f32>(VIEW_RES.x));
-					state->game.interacting_cursor.y  = clamp(state->game.interacting_cursor.y, 0.0f, static_cast<f32>(VIEW_RES.y));
+					state->game.hud.cursor_velocity += platform->cursor_delta * 16.0f;
+					state->game.hud.cursor_velocity *= 0.3f;
+					state->game.hud.cursor          += state->game.hud.cursor_velocity * SECONDS_PER_UPDATE;
+					if (state->game.hud.cursor.x < 0.0f || state->game.hud.cursor.x > VIEW_RES.x)
+					{
+						state->game.hud.cursor.x          = clamp(state->game.hud.cursor.x, 0.0f, static_cast<f32>(VIEW_RES.x));
+						state->game.hud.cursor_velocity.x = 0.0f;
+					}
+					if (state->game.hud.cursor.y < 0.0f || state->game.hud.cursor.y > VIEW_RES.y)
+					{
+						state->game.hud.cursor.y          = clamp(state->game.hud.cursor.y, 0.0f, static_cast<f32>(VIEW_RES.y));
+						state->game.hud.cursor_velocity.y = 0.0f;
+					}
 				}
 
-
-				if (state->game.inventory_visibility)
+				switch (state->game.hud.type)
 				{
-					if (PRESSED(Input::left_mouse))
+					case HudType::inventory:
 					{
-						if
-						(
-							fabs(state->game.interacting_cursor.x * 2.0f - VIEW_RES.x) < ARRAY_CAPACITY(state->game.inventory[0]) * (INVENTORY_DIM + INVENTORY_PADDING) &&
-							fabs(state->game.interacting_cursor.y * 2.0f - VIEW_RES.y) < ARRAY_CAPACITY(state->game.inventory   ) * (INVENTORY_DIM + INVENTORY_PADDING)
-						)
+						if (PRESSED(Input::left_mouse))
 						{
-							state->game.inventory_click_position = state->game.interacting_cursor;
+							constexpr vf2 INVENTORY_HUD_DIMENSIONS = vf2 { static_cast<f32>(ARRAY_CAPACITY(state->game.hud.inventory.array[0])), static_cast<f32>(ARRAY_CAPACITY(state->game.hud.inventory.array)) } * (INVENTORY_DIM + INVENTORY_PADDING);
+							if (in_rect(state->game.hud.cursor, VIEW_RES / 2.0f - INVENTORY_HUD_DIMENSIONS / 2.0f, INVENTORY_HUD_DIMENSIONS))
+							{
+								state->game.hud.inventory.click_position = state->game.hud.cursor;
 
-							FOR_RANGE(y, ARRAY_CAPACITY(state->game.inventory))
-							{
-								FOR_RANGE(x, ARRAY_CAPACITY(state->game.inventory[y]))
+								FOR_RANGE(y, ARRAY_CAPACITY(state->game.hud.inventory.array)) // @TODO@ Optimize this
 								{
-									if
-									(
-										fabsf(VIEW_RES.x / 2.0f + (x + (1.0f - ARRAY_CAPACITY(state->game.inventory[y])) / 2.0f) * (INVENTORY_DIM + INVENTORY_PADDING) - state->game.interacting_cursor.x) < INVENTORY_DIM / 2.0f &&
-										fabsf(VIEW_RES.y / 2.0f - (y + (1.0f - ARRAY_CAPACITY(state->game.inventory   )) / 2.0f) * (INVENTORY_DIM + INVENTORY_PADDING) - state->game.interacting_cursor.y) < INVENTORY_DIM / 2.0f
-									)
+									FOR_RANGE(x, ARRAY_CAPACITY(state->game.hud.inventory.array[y]))
 									{
-										if (state->game.inventory[y][x].type != ItemType::null)
-										{
-											state->game.inventory_selected = &state->game.inventory[y][x];
-										}
-
-										break;
-									}
-								}
-							}
-						}
-						else
-						{
-							state->game.inventory_visibility = false;
-						}
-					}
-					else if (state->game.inventory_selected)
-					{
-						if (HOLDING(Input::left_mouse))
-						{
-							if (!state->game.inventory_grabbing && norm_sq(state->game.interacting_cursor - state->game.inventory_click_position) > 25.0f)
-							{
-								state->game.inventory_grabbing = true;
-							}
-						}
-						else if (RELEASED(Input::left_mouse))
-						{
-							if (state->game.inventory_grabbing)
-							{
-								if
-								(
-									fabs(state->game.interacting_cursor.x * 2.0f - VIEW_RES.x) < ARRAY_CAPACITY(state->game.inventory[0]) * (INVENTORY_DIM + INVENTORY_PADDING) &&
-									fabs(state->game.interacting_cursor.y * 2.0f - VIEW_RES.y) < ARRAY_CAPACITY(state->game.inventory   ) * (INVENTORY_DIM + INVENTORY_PADDING)
-								)
-								{
-									FOR_RANGE(y, ARRAY_CAPACITY(state->game.inventory))
-									{
-										FOR_RANGE(x, ARRAY_CAPACITY(state->game.inventory[y]))
-										{
-											if
+										if
+										(
+											in_rect
 											(
-												fabsf(VIEW_RES.x / 2.0f + (x + (1.0f - ARRAY_CAPACITY(state->game.inventory[y])) / 2.0f) * (INVENTORY_DIM + INVENTORY_PADDING) - state->game.interacting_cursor.x) < INVENTORY_DIM / 2.0f &&
-												fabsf(VIEW_RES.y / 2.0f - (y + (1.0f - ARRAY_CAPACITY(state->game.inventory   )) / 2.0f) * (INVENTORY_DIM + INVENTORY_PADDING) - state->game.interacting_cursor.y) < INVENTORY_DIM / 2.0f
+												state->game.hud.cursor,
+												VIEW_RES / 2.0f + vf2 { x - ARRAY_CAPACITY(state->game.hud.inventory.array[y]) / 2.0f, ARRAY_CAPACITY(state->game.hud.inventory.array) / 2.0f - y - 1.0f } * (INVENTORY_DIM + INVENTORY_PADDING),
+												{ INVENTORY_DIM, INVENTORY_DIM }
 											)
-											{
-												if (&state->game.inventory[y][x] != state->game.inventory_selected)
-												{
-													if (state->game.inventory[y][x].type == ItemType::null)
-													{
-														// @NOTE@ Item move.
-
-														state->game.inventory[y][x]          = *state->game.inventory_selected;
-														state->game.inventory_selected->type = ItemType::null;
-
-														FOR_ELEMS(it, state->game.holdings)
-														{
-															if (*it == state->game.inventory_selected)
-															{
-																*it = &state->game.inventory[y][x];
-																break;
-															}
-														}
-													}
-													else
-													{
-														// @NOTE@ Item combine.
-
-														bool32 combined        = false;
-														Item   combined_result = {};
-
-														{
-															Item* cheap_batteries;
-															Item* flashlight;
-															if (check_combine(&cheap_batteries, ItemType::cheap_batteries, &flashlight, ItemType::flashlight, &state->game.inventory[y][x], state->game.inventory_selected))
-															{
-																combined = true;
-
-																Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.eletronical, 0);
-																state->game.notification_message = "(You replaced the batteries in the flashlight.)";
-																state->game.notification_keytime = 1.0f;
-
-																combined_result = *flashlight;
-																combined_result.flashlight.power = 1.0f;
-
-																if (state->game.holding.flashlight == state->game.inventory_selected)
-																{
-																	state->game.holding.flashlight = &state->game.inventory[y][x];
-																}
-															}
-															else
-															{
-																state->game.notification_message = "\"I'm not sure how these fit.\"";
-																state->game.notification_keytime = 1.0f;
-															}
-														}
-
-														if (combined)
-														{
-															state->game.inventory_selected->type = ItemType::null;
-															state->game.inventory[y][x]          = combined_result;
-														}
-													}
-												}
-
-												goto DONE_SEARCH;
-											}
-										}
-									}
-
-									DONE_SEARCH:;
-								}
-								else
-								{
-									// @NOTE@ Item drop.
-
-									Item* dropped = allocate_item(state);
-									*dropped = *state->game.inventory_selected;
-									dropped->position = state->game.lucia_position;
-									dropped->velocity = polar(state->game.lucia_angle + rng(&state->seed, -0.5f, 0.5f) * 1.0f) * rng(&state->seed, 2.5f, 6.0f);
-
-									state->game.inventory_selected->type = ItemType::null;
-
-									FOR_ELEMS(it, state->game.holdings)
-									{
-										if (*it == state->game.inventory_selected)
+										)
 										{
-											*it = 0;
+											if (state->game.hud.inventory.array[y][x].type != ItemType::null)
+											{
+												state->game.hud.inventory.selected_item = &state->game.hud.inventory.array[y][x];
+											}
+
 											break;
 										}
 									}
@@ -1658,170 +1572,311 @@ extern "C" PROTOTYPE_UPDATE(update)
 							}
 							else
 							{
-								// @NOTE@ Item use.
+								state->game.hud.type = HudType::null;
+							}
+						}
 
-								switch (state->game.inventory_selected->type)
+						if (state->game.hud.inventory.selected_item)
+						{
+							if (HOLDING(Input::left_mouse))
+							{
+								if (!state->game.hud.inventory.grabbing && norm_sq(state->game.hud.cursor - state->game.hud.inventory.click_position) > 25.0f)
 								{
-									case ItemType::cheap_batteries:
+									state->game.hud.inventory.grabbing = true;
+								}
+							}
+							else if (RELEASED(Input::left_mouse))
+							{
+								if (state->game.hud.inventory.grabbing)
+								{
+									if
+									(
+										fabs(state->game.hud.cursor.x * 2.0f - VIEW_RES.x) < ARRAY_CAPACITY(state->game.hud.inventory.array[0]) * (INVENTORY_DIM + INVENTORY_PADDING) &&
+										fabs(state->game.hud.cursor.y * 2.0f - VIEW_RES.y) < ARRAY_CAPACITY(state->game.hud.inventory.array   ) * (INVENTORY_DIM + INVENTORY_PADDING)
+									)
 									{
-										state->game.notification_message = "\"Some batteries. They feel cheap.\"";
-										state->game.notification_keytime = 1.0f;
-									} break;
+										FOR_RANGE(y, ARRAY_CAPACITY(state->game.hud.inventory.array))
+										{
+											FOR_RANGE(x, ARRAY_CAPACITY(state->game.hud.inventory.array[y]))
+											{
+												// @TODO@ Simplify
+												if
+												(
+													fabsf(VIEW_RES.x / 2.0f + (x + (1.0f - ARRAY_CAPACITY(state->game.hud.inventory.array[y])) / 2.0f) * (INVENTORY_DIM + INVENTORY_PADDING) - state->game.hud.cursor.x) < INVENTORY_DIM / 2.0f &&
+													fabsf(VIEW_RES.y / 2.0f - (y + (1.0f - ARRAY_CAPACITY(state->game.hud.inventory.array   )) / 2.0f) * (INVENTORY_DIM + INVENTORY_PADDING) - state->game.hud.cursor.y) < INVENTORY_DIM / 2.0f
+												)
+												{
+													if (&state->game.hud.inventory.array[y][x] != state->game.hud.inventory.selected_item)
+													{
+														if (state->game.hud.inventory.array[y][x].type == ItemType::null)
+														{
+															// @NOTE@ Item move.
 
-									case ItemType::paper:
-									{
-										Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.pick_up_paper, 0);
-										state->game.holding.paper         = state->game.inventory_selected;
-										state->game.paper_velocity        = { 0.0f, 0.0f };
-										state->game.paper_delta_position  = { 0.0f, 0.0f };
-										state->game.paper_scalar_velocity = 0.0f;
-										state->game.paper_scalar          = PAPER_DATA[state->game.holding.paper->paper.index].min_scalar;
-									} break;
+															state->game.hud.inventory.array[y][x]        = *state->game.hud.inventory.selected_item;
+															state->game.hud.inventory.selected_item->type = ItemType::null;
 
-									case ItemType::flashlight:
+															FOR_ELEMS(it, state->game.holdings)
+															{
+																if (*it == state->game.hud.inventory.selected_item)
+																{
+																	*it = &state->game.hud.inventory.array[y][x];
+																	break;
+																}
+															}
+														}
+														else
+														{
+															// @NOTE@ Item combine.
+
+															bool32 combined        = false;
+															Item   combined_result = {};
+
+															{
+																Item* cheap_batteries;
+																Item* flashlight;
+																if (check_combine(&cheap_batteries, ItemType::cheap_batteries, &flashlight, ItemType::flashlight, &state->game.hud.inventory.array[y][x], state->game.hud.inventory.selected_item))
+																{
+																	combined = true;
+
+																	Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.eletronical, 0);
+																	state->game.notification_message = "(You replaced the batteries in the flashlight.)";
+																	state->game.notification_keytime = 1.0f;
+
+																	combined_result = *flashlight;
+																	combined_result.flashlight.power = 1.0f;
+
+																	if (state->game.holding.flashlight == state->game.hud.inventory.selected_item)
+																	{
+																		state->game.holding.flashlight = &state->game.hud.inventory.array[y][x];
+																	}
+																}
+																else
+																{
+																	state->game.notification_message = "\"I'm not sure how these fit.\"";
+																	state->game.notification_keytime = 1.0f;
+																}
+															}
+
+															if (combined)
+															{
+																state->game.hud.inventory.selected_item->type = ItemType::null;
+																state->game.hud.inventory.array[y][x]          = combined_result;
+															}
+														}
+													}
+
+													goto DONE_SEARCH;
+												}
+											}
+										}
+
+										DONE_SEARCH:;
+									}
+									else
 									{
-										Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.switch_toggle, 0);
-										if (state->game.inventory_selected == state->game.holding.flashlight)
+										// @NOTE@ Item drop.
+
+										Item* dropped = allocate_item(state);
+										*dropped = *state->game.hud.inventory.selected_item;
+										dropped->position = state->game.lucia_position;
+										dropped->velocity = polar(state->game.lucia_angle + rng(&state->seed, -0.5f, 0.5f) * 1.0f) * rng(&state->seed, 2.5f, 6.0f);
+
+										state->game.hud.inventory.selected_item->type = ItemType::null;
+
+										FOR_ELEMS(it, state->game.holdings)
 										{
-											state->game.holding.flashlight = 0;
+											if (*it == state->game.hud.inventory.selected_item)
+											{
+												*it = 0;
+												break;
+											}
 										}
-										else if (state->game.inventory_selected->flashlight.power)
+									}
+								}
+								else
+								{
+									// @NOTE@ Item use.
+
+									switch (state->game.hud.inventory.selected_item->type)
+									{
+										case ItemType::cheap_batteries:
 										{
-											state->game.holding.flashlight = state->game.inventory_selected;
-										}
-										else
-										{
-											state->game.notification_message = "\"The flashlight is dead.\"";
+											state->game.notification_message = "\"Some batteries. They feel cheap.\"";
 											state->game.notification_keytime = 1.0f;
-										}
-									};
+										} break;
+
+										case ItemType::paper:
+										{
+											Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.pick_up_paper, 0);
+											state->game.hud.type         = HudType::paper;
+											state->game.hud.paper        = {};
+											state->game.hud.paper.index  = state->game.hud.inventory.selected_item->paper.index;
+											state->game.hud.paper.scalar = PAPER_DATA[state->game.hud.paper.index].min_scalar;
+										} break;
+
+										case ItemType::flashlight:
+										{
+											Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.switch_toggle, 0);
+											if (state->game.hud.inventory.selected_item == state->game.holding.flashlight)
+											{
+												state->game.holding.flashlight = 0;
+											}
+											else if (state->game.hud.inventory.selected_item->flashlight.power)
+											{
+												state->game.holding.flashlight = state->game.hud.inventory.selected_item;
+											}
+											else
+											{
+												state->game.notification_message = "\"The flashlight is dead.\"";
+												state->game.notification_keytime = 1.0f;
+											}
+										};
+									}
+
+									if (state->game.hud.type == HudType::inventory)
+									{
+										state->game.hud.type = HudType::null;
+									}
 								}
 
-								state->game.inventory_visibility = false;
+								state->game.hud.inventory.selected_item = 0;
+								state->game.hud.inventory.grabbing      = false;
 							}
-
-							state->game.inventory_selected   = 0;
-							state->game.inventory_grabbing   = false;
 						}
-					}
-				}
-				else if (state->game.holding.paper)
-				{
-					if
-					(
-						PRESSED(Input::left_mouse) &&
-						(
-							state->game.interacting_cursor.x < VIEW_RES.x / 2.0f + (state->game.paper_delta_position.x - state->game.img.papers[state->game.holding.paper->paper.index].dim.x / 2.0f) * state->game.paper_scalar ||
-							state->game.interacting_cursor.x > VIEW_RES.x / 2.0f + (state->game.paper_delta_position.x + state->game.img.papers[state->game.holding.paper->paper.index].dim.x / 2.0f) * state->game.paper_scalar ||
-							state->game.interacting_cursor.y < VIEW_RES.y / 2.0f + (state->game.paper_delta_position.y - state->game.img.papers[state->game.holding.paper->paper.index].dim.y / 2.0f) * state->game.paper_scalar ||
-							state->game.interacting_cursor.y > VIEW_RES.y / 2.0f + (state->game.paper_delta_position.y + state->game.img.papers[state->game.holding.paper->paper.index].dim.y / 2.0f) * state->game.paper_scalar
-						)
-					)
-					{
-						state->game.holding.paper = 0;
-					}
-					else
-					{
-						state->game.paper_scalar_velocity += platform->scroll * 2.0f;
-						state->game.paper_scalar_velocity *= 0.5f;
+					} break;
 
-						if (HOLDING(Input::left_mouse))
+					case HudType::paper:
+					{
+						// @TODO@ Clean up
+						if
+						(
+							PRESSED(Input::left_mouse) &&
+							!in_rect
+							(
+								state->game.hud.cursor,
+								VIEW_RES / 2.0f + (state->game.hud.paper.delta_position - state->game.img.papers[state->game.hud.paper.index].dim / 2.0f) * state->game.hud.paper.scalar,
+								state->game.img.papers[state->game.hud.paper.index].dim * state->game.hud.paper.scalar
+							)
+						)
 						{
-							state->game.paper_velocity        = state->game.interacting_cursor_velocity;
-							state->game.paper_scalar_velocity = 0.0f;
+							state->game.hud.type = HudType::null;
 						}
 						else
 						{
-							state->game.paper_velocity *= 0.5f;
+							state->game.hud.paper.scalar_velocity += platform->scroll * 2.0f;
+							state->game.hud.paper.scalar_velocity *= 0.5f;
+
+							if (HOLDING(Input::left_mouse))
+							{
+								state->game.hud.paper.velocity        = state->game.hud.cursor_velocity;
+								state->game.hud.paper.scalar_velocity = 0.0f;
+							}
+							else
+							{
+								state->game.hud.paper.velocity *= 0.5f;
+							}
+
+							state->game.hud.paper.scalar = state->game.hud.paper.scalar + state->game.hud.paper.scalar_velocity * state->game.hud.paper.scalar * SECONDS_PER_UPDATE;
+
+							if (PAPER_DATA[state->game.hud.paper.index].min_scalar > state->game.hud.paper.scalar || state->game.hud.paper.scalar > PAPER_DATA[state->game.hud.paper.index].max_scalar)
+							{
+								state->game.hud.paper.scalar          = clamp(state->game.hud.paper.scalar, PAPER_DATA[state->game.hud.paper.index].min_scalar, PAPER_DATA[state->game.hud.paper.index].max_scalar);
+								state->game.hud.paper.scalar_velocity = 0.0f;
+							}
+
+							state->game.hud.paper.delta_position += state->game.hud.paper.velocity / state->game.hud.paper.scalar * SECONDS_PER_UPDATE;
+
+							constexpr f32 PAPER_MARGIN = 25.0f;
+							vf2 region =
+								vf2 {
+									(VIEW_RES.x + state->game.img.papers[state->game.hud.paper.index].dim.x * state->game.hud.paper.scalar) / 2.0f - PAPER_MARGIN,
+									(VIEW_RES.y + state->game.img.papers[state->game.hud.paper.index].dim.y * state->game.hud.paper.scalar) / 2.0f - PAPER_MARGIN
+								} / state->game.hud.paper.scalar;
+
+							if (fabsf(state->game.hud.paper.delta_position.x) > region.x)
+							{
+								state->game.hud.paper.delta_position.x = clamp(state->game.hud.paper.delta_position.x, -region.x, region.x);
+								state->game.hud.paper.velocity.x       = 0.0f;
+							}
+							if (fabsf(state->game.hud.paper.delta_position.y) > region.y)
+							{
+								state->game.hud.paper.delta_position.y = clamp(state->game.hud.paper.delta_position.y, -region.y, region.y);
+								state->game.hud.paper.velocity.y       = 0.0f;
+							}
 						}
+					} break;
 
-						state->game.paper_scalar = state->game.paper_scalar + state->game.paper_scalar_velocity * state->game.paper_scalar * SECONDS_PER_UPDATE;
+					default:
+					{
+						state->game.lucia_angle_velocity -= platform->cursor_delta.x * 0.01f / SECONDS_PER_UPDATE;
 
-						if (PAPER_DATA[state->game.holding.paper->paper.index].min_scalar > state->game.paper_scalar || state->game.paper_scalar > PAPER_DATA[state->game.holding.paper->paper.index].max_scalar)
+						if (PRESSED(Input::space) || PRESSED(Input::left_mouse))
 						{
-							state->game.paper_scalar          = clamp(state->game.paper_scalar, PAPER_DATA[state->game.holding.paper->paper.index].min_scalar, PAPER_DATA[state->game.holding.paper->paper.index].max_scalar);
-							state->game.paper_scalar_velocity = 0.0f;
-						}
+							switch (state->game.hand_on_state)
+							{
+								case HandOnState::door:
+								{
+									state->game.is_exiting = true;
+								} break;
 
-						state->game.paper_delta_position += state->game.paper_velocity / state->game.paper_scalar * SECONDS_PER_UPDATE;
+								case HandOnState::circuit_breaker:
+								{
+									state->game.notification_message = "\"Meow\"";
+									state->game.notification_keytime = 1.0f;
+								} break;
 
-						constexpr f32 PAPER_MARGIN = 25.0f;
-						vf2 region =
-							vf2 {
-								(VIEW_RES.x + state->game.img.papers[state->game.holding.paper->paper.index].dim.x * state->game.paper_scalar) / 2.0f - PAPER_MARGIN,
-								(VIEW_RES.y + state->game.img.papers[state->game.holding.paper->paper.index].dim.y * state->game.paper_scalar) / 2.0f - PAPER_MARGIN
-							} / state->game.paper_scalar;
+								case HandOnState::item:
+								{
+									Item* open_space = 0;
+									FOR_ELEMS(it, *state->game.hud.inventory.array, sizeof(state->game.hud.inventory.array) / sizeof(Item))
+									{
+										if (it->type == ItemType::null)
+										{
+											open_space = it;
+											break;
+										}
+									}
 
-						if (fabsf(state->game.paper_delta_position.x) > region.x)
-						{
-							state->game.paper_delta_position.x = clamp(state->game.paper_delta_position.x, -region.x, region.x);
-							state->game.paper_velocity.x       = 0.0f;
+									if (open_space)
+									{
+										switch (state->game.hand_hovered_item->type)
+										{
+											case ItemType::paper:
+											{
+												Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.pick_up_paper, 0);
+											} break;
+
+											case ItemType::cheap_batteries:
+											case ItemType::military_grade_batteries:
+											{
+												Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.eletronical, 0);
+											} break;
+
+											default:
+											{
+												Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.pick_up_heavy, 0);
+											} break;
+										}
+
+										*open_space = *state->game.hand_hovered_item;
+										deallocate_item(state, state->game.hand_hovered_item);
+
+										state->game.hand_on_state     = HandOnState::null;
+										state->game.hand_hovered_item = 0;
+									}
+									else
+									{
+										state->game.notification_message = "\"I can't carry any more.\"";
+										state->game.notification_keytime = 1.0f;
+									}
+								} break;
+							}
 						}
-						if (fabsf(state->game.paper_delta_position.y) > region.y)
-						{
-							state->game.paper_delta_position.y = clamp(state->game.paper_delta_position.y, -region.y, region.y);
-							state->game.paper_velocity.y       = 0.0f;
-						}
-					}
-				}
-				else
-				{
-					state->game.lucia_angle_velocity -= platform->cursor_delta.x * 0.01f / SECONDS_PER_UPDATE;
+					} break;
 				}
 
 				state->game.lucia_angle_velocity *= 0.4f;
 				state->game.lucia_angle           = mod(state->game.lucia_angle + state->game.lucia_angle_velocity * SECONDS_PER_UPDATE, TAU);
-
-				if (PRESSED(Input::space) || PRESSED(Input::left_mouse))
-				{
-					if (state->game.hand_hovered_item)
-					{
-						Item* open_space = 0;
-						FOR_ELEMS(it, state->game.flat_inventory)
-						{
-							if (it->type == ItemType::null)
-							{
-								open_space = it;
-								break;
-							}
-						}
-
-						if (open_space)
-						{
-							switch (state->game.hand_hovered_item->type)
-							{
-								case ItemType::paper:
-								{
-									Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.pick_up_paper, 0);
-								} break;
-
-								case ItemType::cheap_batteries:
-								case ItemType::military_grade_batteries:
-								{
-									Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.eletronical, 0);
-								} break;
-
-								default:
-								{
-									Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.pick_up_heavy, 0);
-								} break;
-							}
-
-							*open_space = *state->game.hand_hovered_item;
-							deallocate_item(state, state->game.hand_hovered_item);
-							state->game.hand_hovered_item = 0;
-						}
-						else
-						{
-							state->game.notification_message = "\"I can't carry anymore.\"";
-							state->game.notification_keytime = 1.0f;
-						}
-					}
-					else if (state->game.hand_on_door)
-					{
-						state->game.is_exiting = true;
-					}
-				}
 
 				vf2 wasd = { 0.0f, 0.0f };
 				if (HOLDING(Input::s)) { wasd.x -= 1.0f; }
@@ -1832,7 +1887,6 @@ extern "C" PROTOTYPE_UPDATE(update)
 				{
 					constexpr f32 MIN_PORTION = 0.7f;
 					state->game.lucia_velocity += rotate(normalize(wasd), state->game.lucia_angle) * 2.0f * ((1.0f - powf(1.0f - state->game.lucia_stamina, 8) + MIN_PORTION) / (1.0f + MIN_PORTION));
-
 				}
 
 				if (+wasd && HOLDING(Input::shift) && !state->game.lucia_out_of_breath)
@@ -2137,67 +2191,82 @@ extern "C" PROTOTYPE_UPDATE(update)
 				state->game.monster_position.z   = cosf(state->time * 3.0f) * 0.15f + WALL_HEIGHT / 2.0f;
 				state->game.monster_normal       = normalize(dampen(state->game.monster_normal, normalize(ray_to_closest(state->game.lucia_position.xy, state->game.monster_position.xy)), 1.0f, SECONDS_PER_UPDATE));
 
-				bool32 exists_hand_object   = false;
-				vf3    hand_object_position = {};
+				state->game.hand_on_state     = HandOnState::null;
+				state->game.hand_hovered_item = 0;
 
-				state->game.hand_on_door = false;
-				if (!state->game.holding.paper)
+				DEBUG_once
 				{
-					const WallVoxelData* data = get_wall_voxel_data(state->game.door_wall_side.voxel);
-					if (data)
-					{
-						vf2 door_position = (state->game.door_wall_side.coordinates + (data->start + data->end) / 2.0f) * WALL_SPACING;
-						vf2 ray_to_door   = ray_to_closest(state->game.lucia_position.xy, door_position);
-
-						// @TODO@ Unstupify this.
-						vf2 normal = data->normal * (state->game.door_wall_side.is_antinormal ? -1.0f : 1.0f);
-
-						if (dot(ray_to_door, normal) < 0.0f && norm_sq(ray_to_door) < 6.0f)
-						{
-							state->game.hand_on_door = true;
-							exists_hand_object       = true;
-							hand_object_position     = vx3(door_position + normal * 0.25f, WALL_HEIGHT / 2.0f);
-						}
-					}
+					state->game.lucia_position.xy = (state->game.circuit_breaker_wall_side.coordinates + vf2 { -1.5f, 0.5f }) * WALL_SPACING;
 				}
 
-				state->game.hand_hovered_item = 0;
-				if (!state->game.hand_on_door && !state->game.inventory_visibility && !state->game.holding.paper)
-				{
-					f32 best_heuristic = 0.0f;
-					FOR_ELEMS(item, state->game.item_buffer, state->game.item_count)
-					{
-						if (exists_clear_way(state, state->game.lucia_position.xy, item->position.xy))
-						{
-							vf2 ray      = ray_to_closest(state->game.lucia_position.xy, item->position.xy);
-							f32 distance = norm(ray);
+				vf3 hand_reach_position = { NAN, NAN };
 
-							if (distance < 1.5f)
+				if (state->game.hud.type == HudType::null)
+				{
+					{
+						// @TODO@ Get rid of this.
+						const WallVoxelData* data = get_wall_voxel_data(state->game.door_wall_side.voxel);
+
+						vf2 door_position = (state->game.door_wall_side.coordinates + (data->start + data->end) / 2.0f) * WALL_SPACING;
+						vf2 ray_to_door   = ray_to_closest(state->game.lucia_position.xy, door_position);
+						vf2 normal        = data->normal * (state->game.door_wall_side.is_antinormal ? -1.0f : 1.0f);
+
+						if (dot(ray_to_door, normal) < 0.0f && norm_sq(ray_to_door) < 4.0f)
+						{
+							state->game.hand_on_state = HandOnState::door;
+							hand_reach_position       = vx3(door_position + normal * 0.25f, WALL_HEIGHT / 2.0f);
+						}
+					}
+
+					if (state->game.hand_on_state == HandOnState::null)
+					{
+						// @TODO@ Get rid of this.
+						const WallVoxelData* data = get_wall_voxel_data(state->game.circuit_breaker_wall_side.voxel);
+
+						vf2 circuit_breaker_position = (state->game.circuit_breaker_wall_side.coordinates + (data->start + data->end) / 2.0f) * WALL_SPACING;
+						vf2 ray_to_circuit_breaker   = ray_to_closest(state->game.lucia_position.xy, circuit_breaker_position);
+						vf2 normal                   = data->normal * (state->game.circuit_breaker_wall_side.is_antinormal ? -1.0f : 1.0f);
+
+						if (dot(ray_to_circuit_breaker, normal) < 0.0f && norm_sq(ray_to_circuit_breaker) < 4.0f)
+						{
+							state->game.hand_on_state = HandOnState::circuit_breaker;
+							hand_reach_position       = vx3(circuit_breaker_position + normal * 0.25f, WALL_HEIGHT / 2.0f);
+						}
+					}
+
+					if (state->game.hand_on_state == HandOnState::null)
+					{
+						f32 best_heuristic = 0.0f;
+						FOR_ELEMS(item, state->game.item_buffer, state->game.item_count)
+						{
+							if (exists_clear_way(state, state->game.lucia_position.xy, item->position.xy))
 							{
-								f32 heuristic = 1.0f / (distance + 0.5f) + square(clamp(dot(ray / distance, polar(state->game.lucia_angle)), 0.0f, 1.0f));
-								if (best_heuristic <= heuristic)
+								vf2 ray      = ray_to_closest(state->game.lucia_position.xy, item->position.xy);
+								f32 distance = norm(ray);
+								if (distance < 1.5f)
 								{
-									best_heuristic                = heuristic;
-									state->game.hand_hovered_item = item;
+									f32 heuristic = 1.0f / (distance + 0.5f) + square(clamp(dot(ray / distance, polar(state->game.lucia_angle)), 0.0f, 1.0f));
+									if (best_heuristic <= heuristic)
+									{
+										best_heuristic                = heuristic;
+										state->game.hand_hovered_item = item;
+									}
 								}
 							}
 						}
-					}
 
-					if (state->game.hand_hovered_item)
-					{
-						exists_hand_object   = true;
-						hand_object_position = state->game.hand_hovered_item->position;
+						if (state->game.hand_hovered_item)
+						{
+							state->game.hand_on_state = HandOnState::item;
+							hand_reach_position       = state->game.hand_hovered_item->position;
+						}
 					}
 				}
 
-				if (exists_hand_object)
+				if (state->game.hand_on_state != HandOnState::null)
 				{
-					vf2 hand_object_ray = ray_to_closest(hand_object_position.xy, state->game.lucia_position.xy);
-
-					state->game.hand_position.xy = hand_object_position.xy + hand_object_ray / 2.0f;
-					state->game.hand_position.z  = lerp(hand_object_position.z, state->game.lucia_position.z, 0.75f);
-					state->game.hand_normal      = normalize(hand_object_ray);
+					state->game.hand_position.xy = hand_reach_position.xy + ray_to_closest(hand_reach_position.xy, state->game.lucia_position.xy) / 2.0f;
+					state->game.hand_position.z  = lerp(hand_reach_position.z, state->game.lucia_position.z, 0.75f);
 				}
 
 				if (state->game.holding.flashlight)
@@ -2330,12 +2399,12 @@ extern "C" PROTOTYPE_RENDER(render)
 			lambda draw_icon =
 				[&](SDL_Texture* texture, vf2 position, strlit name)
 				{
-					render_texture(platform->renderer, texture, position, { TERMINAL_ICON_DIM, TERMINAL_ICON_DIM });
+					render_texture(platform->renderer, texture, position, { COMPUTER_ICON_DIM, COMPUTER_ICON_DIM });
 					render_text
 					(
 						platform->renderer,
 						state->font.major,
-						{ position.x + TERMINAL_ICON_DIM / 2.0f, position.y - 15.0f },
+						{ position.x + COMPUTER_ICON_DIM / 2.0f, position.y - 15.0f },
 						0.5f,
 						FC_ALIGN_CENTER,
 						0.5f,
@@ -2345,28 +2414,28 @@ extern "C" PROTOTYPE_RENDER(render)
 					);
 				};
 
-			draw_icon(tm.texture.text_file       , TERMINAL_CREDITS_POSITION         , "credits.txt");
-			draw_icon(tm.texture.antihome_program, TERMINAL_ANTIHOME_PROGRAM_POSITION, "Antihome");
+			draw_icon(tm.texture.text_file       , COMPUTER_CREDITS_POSITION         , "credits.txt");
+			draw_icon(tm.texture.antihome_program, COMPUTER_ANTIHOME_PROGRAM_POSITION, "Antihome");
 
 			if (+tm.window_type)
 			{
 				set_color(platform->renderer, monochrome(0.5f));
-				render_filled_rect(platform->renderer, tm.window_position + vf2 { 0.0f, tm.window_dimensions.y }, { tm.window_dimensions.x, TERMINAL_TITLE_BAR_HEIGHT });
+				render_filled_rect(platform->renderer, tm.window_position + vf2 { 0.0f, tm.window_dimensions.y }, { tm.window_dimensions.x, COMPUTER_TITLE_BAR_HEIGHT });
 
 				render_texture
 				(
 					platform->renderer,
 					tm.texture.window_close,
 					{
-						tm.window_position.x + tm.window_dimensions.x - TERMINAL_TITLE_BAR_HEIGHT,
+						tm.window_position.x + tm.window_dimensions.x - COMPUTER_TITLE_BAR_HEIGHT,
 						tm.window_position.y + tm.window_dimensions.y,
 					},
-					{ TERMINAL_TITLE_BAR_HEIGHT, TERMINAL_TITLE_BAR_HEIGHT }
+					{ COMPUTER_TITLE_BAR_HEIGHT, COMPUTER_TITLE_BAR_HEIGHT }
 				);
 
 				switch (tm.window_type)
 				{
-					case TerminalWindowType::credits:
+					case ComputerWindowType::credits:
 					{
 						set_color(platform->renderer, { 0.75f, 0.65f, 0.2f, 1.0f });
 						render_filled_rect(platform->renderer, tm.window_position, tm.window_dimensions);
@@ -2387,7 +2456,7 @@ extern "C" PROTOTYPE_RENDER(render)
 						);
 					} break;
 
-					case TerminalWindowType::antihome_program:
+					case ComputerWindowType::antihome_program:
 					{
 						set_color(platform->renderer, monochrome(0.25f));
 						render_filled_rect(platform->renderer, tm.window_position, tm.window_dimensions);
@@ -2405,7 +2474,7 @@ extern "C" PROTOTYPE_RENDER(render)
 						);
 
 						set_color(platform->renderer, { 1.0f, 0.0f, 0.0f, 1.0f });
-						render_filled_rect(platform->renderer, tm.window_position + vf2 { tm.window_dimensions.x * 0.5f, tm.window_dimensions.y * 0.33f } - TERMINAL_BUTTON_DIMENSIONS / 2.0f, TERMINAL_BUTTON_DIMENSIONS);
+						render_filled_rect(platform->renderer, tm.window_position + vf2 { tm.window_dimensions.x * 0.5f, tm.window_dimensions.y * 0.33f } - COMPUTER_BUTTON_DIMENSIONS / 2.0f, COMPUTER_BUTTON_DIMENSIONS);
 						render_text
 						(
 							platform->renderer,
@@ -2419,7 +2488,7 @@ extern "C" PROTOTYPE_RENDER(render)
 						);
 					} break;
 
-					case TerminalWindowType::power:
+					case ComputerWindowType::power:
 					{
 						set_color(platform->renderer, monochrome(0.8f));
 						render_filled_rect(platform->renderer, tm.window_position, tm.window_dimensions);
@@ -2437,7 +2506,7 @@ extern "C" PROTOTYPE_RENDER(render)
 						);
 
 						set_color(platform->renderer, monochrome(0.6f));
-						render_filled_rect(platform->renderer, tm.window_position + vf2 { tm.window_dimensions.x * 0.25f, tm.window_dimensions.y * 0.3f } - TERMINAL_BUTTON_DIMENSIONS / 2.0f, TERMINAL_BUTTON_DIMENSIONS);
+						render_filled_rect(platform->renderer, tm.window_position + vf2 { tm.window_dimensions.x * 0.25f, tm.window_dimensions.y * 0.3f } - COMPUTER_BUTTON_DIMENSIONS / 2.0f, COMPUTER_BUTTON_DIMENSIONS);
 
 						render_text
 						(
@@ -2452,7 +2521,7 @@ extern "C" PROTOTYPE_RENDER(render)
 						);
 
 						set_color(platform->renderer, monochrome(0.6f));
-						render_filled_rect(platform->renderer, tm.window_position + vf2 { tm.window_dimensions.x * 0.75f, tm.window_dimensions.y * 0.3f } - TERMINAL_BUTTON_DIMENSIONS / 2.0f, TERMINAL_BUTTON_DIMENSIONS);
+						render_filled_rect(platform->renderer, tm.window_position + vf2 { tm.window_dimensions.x * 0.75f, tm.window_dimensions.y * 0.3f } - COMPUTER_BUTTON_DIMENSIONS / 2.0f, COMPUTER_BUTTON_DIMENSIONS);
 
 						render_text
 						(
@@ -2470,14 +2539,14 @@ extern "C" PROTOTYPE_RENDER(render)
 			}
 
 			set_color(platform->renderer, monochrome(0.3f));
-			render_filled_rect(platform->renderer, { 0.0f, 0.0f }, { static_cast<f32>(WIN_DIM.x), static_cast<f32>(TERMINAL_TASKBAR_HEIGHT) });
+			render_filled_rect(platform->renderer, { 0.0f, 0.0f }, { static_cast<f32>(WIN_DIM.x), static_cast<f32>(COMPUTER_TASKBAR_HEIGHT) });
 
 			render_texture
 			(
 				platform->renderer,
 				state->title_menu.texture.power_button,
 				{ 0.0f, 0.0f },
-				{ TERMINAL_TASKBAR_HEIGHT, TERMINAL_TASKBAR_HEIGHT }
+				{ COMPUTER_TASKBAR_HEIGHT, COMPUTER_TASKBAR_HEIGHT }
 			);
 
 			render_texture
@@ -2503,6 +2572,34 @@ extern "C" PROTOTYPE_RENDER(render)
 
 			FOR_RANGE(x, VIEW_RES.x)
 			{
+				#define PROFILE false
+				#if PROFILE
+				constexpr i32           DEBUG_SCANS       = 10'000;
+				persist   u64           DEBUG_ACCUMULATOR = 0;
+				persist   i32           DEBUG_COUNTER     = 0;
+				persist   LARGE_INTEGER DEBUG_FREQUENCY;
+
+				QueryPerformanceFrequency(&DEBUG_FREQUENCY);
+
+				LARGE_INTEGER DEBUG_LI_0;
+				QueryPerformanceCounter(&DEBUG_LI_0);
+
+				DEFER
+				{
+					LARGE_INTEGER DEBUG_LI_1;
+					QueryPerformanceCounter(&DEBUG_LI_1);
+
+					DEBUG_ACCUMULATOR += DEBUG_LI_1.QuadPart - DEBUG_LI_0.QuadPart;
+					DEBUG_COUNTER     += 1;
+					if (DEBUG_COUNTER > DEBUG_SCANS)
+					{
+						DEBUG_printf("%f\n", DEBUG_ACCUMULATOR / static_cast<f64>(DEBUG_FREQUENCY.QuadPart));
+						DEBUG_ACCUMULATOR = 0;
+						DEBUG_COUNTER     = 0;
+					}
+				};
+				#endif
+
 				vf2 ray_horizontal = polar(state->game.lucia_angle + (0.5f - static_cast<f32>(x) / VIEW_RES.x) * state->game.lucia_fov);
 
 				bool32    wall_exists   = false;
@@ -2691,11 +2788,11 @@ extern "C" PROTOTYPE_RENDER(render)
 								* clamp
 									(
 										(
-											0.22f
+											0.30f
 												- fabsf(dot(ray, normal)) * 0.01f
 												+ ((state->game.lucia_position.z + ray.z * distance) / WALL_HEIGHT + 0.95f) * 0.7f * ceiling_lights_t
 										)
-											* clamp(1.0f - distance / lerp(10.0f, 48.0f, ceiling_lights_t), 0.0f, 1.0f)
+											* clamp(1.0f - distance / lerp(8.0f, 48.0f, ceiling_lights_t), 0.0f, 1.0f)
 											+ flashlight_k,
 										0.0f,
 										1.0f
@@ -2704,19 +2801,6 @@ extern "C" PROTOTYPE_RENDER(render)
 
 						return vf3 { clamp(new_color.x, 0.0f, 1.0f), clamp(new_color.y, 0.0f, 1.0f), clamp(new_color.z, 0.0f, 1.0f) };
 					};
-
-				#define PROFILE true
-				#if PROFILE
-				constexpr i32           DEBUG_SCANS       = 10'000;
-				persist   u64           DEBUG_ACCUMULATOR = 0;
-				persist   i32           DEBUG_COUNTER     = 0;
-				persist   LARGE_INTEGER DEBUG_FREQUENCY;
-
-				QueryPerformanceFrequency(&DEBUG_FREQUENCY);
-
-				LARGE_INTEGER DEBUG_LI_0;
-				QueryPerformanceCounter(&DEBUG_LI_0);
-				#endif
 
 				struct RenderScanNode
 				{
@@ -2795,9 +2879,9 @@ extern "C" PROTOTYPE_RENDER(render)
 
 				scan(&state->game.img.monster, state->game.monster_position, state->game.monster_normal, { 1.0f, 1.0f });
 
-				if (state->game.hand_hovered_item || state->game.hand_on_door)
+				if (state->game.hand_on_state != HandOnState::null)
 				{
-					scan(&state->game.img.hand, state->game.hand_position, state->game.hand_normal, { 0.05f, 0.05f });
+					scan(&state->game.img.hand, state->game.hand_position, normalize(ray_to_closest(state->game.hand_position.xy, state->game.lucia_position.xy)), { 0.05f, 0.05f });
 				}
 
 				FOR_ELEMS(item, state->game.item_buffer, state->game.item_count)
@@ -2899,73 +2983,60 @@ extern "C" PROTOTYPE_RENDER(render)
 						view_pixels[(VIEW_RES.y - 1 - y) * VIEW_RES.x + x] = pack_color(scan_line[y].w ? lerp(bg_color, scan_line[y].xyz, scan_line[y].w) : bg_color);
 					}
 				}
-
-				#if PROFILE
-				{
-					LARGE_INTEGER DEBUG_LI_1;
-					QueryPerformanceCounter(&DEBUG_LI_1);
-
-					DEBUG_ACCUMULATOR += DEBUG_LI_1.QuadPart - DEBUG_LI_0.QuadPart;
-					DEBUG_COUNTER     += 1;
-					if (DEBUG_COUNTER > DEBUG_SCANS)
-					{
-						DEBUG_printf("%f\n", DEBUG_ACCUMULATOR / static_cast<f64>(DEBUG_FREQUENCY.QuadPart));
-						DEBUG_ACCUMULATOR = 0;
-						DEBUG_COUNTER     = 0;
-					}
-				}
-				#endif
 			}
 
-			if (state->game.holding.paper)
+			switch (state->game.hud.type)
 			{
-				vi2 paper_dimensions  = vxx(state->game.img.papers[state->game.holding.paper->paper.index].dim * state->game.paper_scalar);
-				vi2 paper_coordinates = vxx(VIEW_RES / 2.0f + (conjugate(state->game.paper_delta_position) - state->game.img.papers[state->game.holding.paper->paper.index].dim / 2.0f) * state->game.paper_scalar);
-
-				FOR_RANGE(x, clamp(paper_coordinates.x, 0, VIEW_RES.x), clamp(paper_coordinates.x + paper_dimensions.x, 0, VIEW_RES.x))
+				case HudType::paper:
 				{
-					FOR_RANGE(y, clamp(paper_coordinates.y, 0, VIEW_RES.y), clamp(paper_coordinates.y + paper_dimensions.y, 0, VIEW_RES.y))
+					vi2 paper_dimensions  = vxx(state->game.img.papers[state->game.hud.paper.index].dim * state->game.hud.paper.scalar);
+					vi2 paper_coordinates = vxx(VIEW_RES / 2.0f + (conjugate(state->game.hud.paper.delta_position) - state->game.img.papers[state->game.hud.paper.index].dim / 2.0f) * state->game.hud.paper.scalar);
+
+					FOR_RANGE(x, clamp(paper_coordinates.x, 0, VIEW_RES.x), clamp(paper_coordinates.x + paper_dimensions.x, 0, VIEW_RES.x))
 					{
-						vf4 color = img_color_at(&state->game.img.papers[state->game.holding.paper->paper.index], { static_cast<f32>(x - paper_coordinates.x) / paper_dimensions.x, (1.0f - static_cast<f32>(y - paper_coordinates.y) / paper_dimensions.y) });
-						view_pixels[y * VIEW_RES.x + x] = pack_color(lerp(unpack_color(view_pixels[y * VIEW_RES.x + x]).xyz, color.xyz, color.w));
+						FOR_RANGE(y, clamp(paper_coordinates.y, 0, VIEW_RES.y), clamp(paper_coordinates.y + paper_dimensions.y, 0, VIEW_RES.y))
+						{
+							vf4 color = img_color_at(&state->game.img.papers[state->game.hud.paper.index], { static_cast<f32>(x - paper_coordinates.x) / paper_dimensions.x, (1.0f - static_cast<f32>(y - paper_coordinates.y) / paper_dimensions.y) });
+							view_pixels[y * VIEW_RES.x + x] = pack_color(lerp(unpack_color(view_pixels[y * VIEW_RES.x + x]).xyz, color.xyz, color.w));
+						}
 					}
-				}
+				} break;
+
+				case HudType::inventory:
+				{
+					FOR_RANGE(y, ARRAY_CAPACITY(state->game.hud.inventory.array))
+					{
+						FOR_RANGE(x, ARRAY_CAPACITY(state->game.hud.inventory.array[y]))
+						{
+							draw_img_box
+							(
+								view_pixels,
+								state->game.hud.inventory.grabbing && state->game.hud.inventory.selected_item == &state->game.hud.inventory.array[y][x]
+									? 0
+									: get_corresponding_item_img(state, &state->game.hud.inventory.array[y][x]),
+								&state->game.hud.inventory.array[y][x] == state->game.hud.inventory.selected_item
+									? vf3 { 0.7f, 0.7f, 0.25f }
+									: vf3 { 0.5f, 0.5f, 0.5f },
+								{
+									VIEW_RES.x / 2 + x * (INVENTORY_DIM + INVENTORY_PADDING) - static_cast<i32>(ARRAY_CAPACITY(state->game.hud.inventory.array[y]) * (INVENTORY_DIM + INVENTORY_PADDING) - INVENTORY_PADDING) / 2,
+									VIEW_RES.y / 2 + y * (INVENTORY_DIM + INVENTORY_PADDING) - static_cast<i32>(ARRAY_CAPACITY(state->game.hud.inventory.array   ) * (INVENTORY_DIM + INVENTORY_PADDING) - INVENTORY_PADDING) / 2
+								},
+								INVENTORY_DIM
+							);
+						}
+					}
+
+					if (state->game.hud.inventory.grabbing)
+					{
+						draw_img(view_pixels, get_corresponding_item_img(state, state->game.hud.inventory.selected_item), vxx(vf2 { state->game.hud.cursor.x, VIEW_RES.y - 1.0f - state->game.hud.cursor.y }) - vi2 { INVENTORY_DIM, INVENTORY_DIM } * 3 / 4 / 2, INVENTORY_DIM * 3 / 4);
+					}
+				} break;
 			}
 
-			if (state->game.inventory_visibility)
-			{
-				FOR_RANGE(y, ARRAY_CAPACITY(state->game.inventory))
-				{
-					FOR_RANGE(x, ARRAY_CAPACITY(state->game.inventory[y]))
-					{
-						draw_img_box
-						(
-							view_pixels,
-							state->game.inventory_grabbing && state->game.inventory_selected == &state->game.inventory[y][x]
-								? 0
-								: get_corresponding_item_img(state, &state->game.inventory[y][x]),
-							&state->game.inventory[y][x] == state->game.inventory_selected
-								? vf3 { 0.7f, 0.7f, 0.25f }
-								: vf3 { 0.5f, 0.5f, 0.5f },
-							{
-								VIEW_RES.x / 2 + x * (INVENTORY_DIM + INVENTORY_PADDING) - static_cast<i32>(ARRAY_CAPACITY(state->game.inventory[y]) * (INVENTORY_DIM + INVENTORY_PADDING) - INVENTORY_PADDING) / 2,
-								VIEW_RES.y / 2 + y * (INVENTORY_DIM + INVENTORY_PADDING) - static_cast<i32>(ARRAY_CAPACITY(state->game.inventory   ) * (INVENTORY_DIM + INVENTORY_PADDING) - INVENTORY_PADDING) / 2
-							},
-							INVENTORY_DIM
-						);
-					}
-				}
-
-				if (state->game.inventory_grabbing)
-				{
-					draw_img(view_pixels, get_corresponding_item_img(state, state->game.inventory_selected), vxx(vf2 { state->game.interacting_cursor.x, VIEW_RES.y - 1.0f - state->game.interacting_cursor.y }) - vi2 { INVENTORY_DIM, INVENTORY_DIM } / 4, INVENTORY_DIM / 2);
-				}
-			}
-
-			if (state->game.inventory_visibility || state->game.holding.paper)
+			if (state->game.hud.type != HudType::null)
 			{
 				i32 cursor_dim = HOLDING(Input::left_mouse) ? 10 : 15;
-				draw_img(view_pixels, &state->game.img.hand, vxx(vf2 { state->game.interacting_cursor.x - cursor_dim / 2.0f, VIEW_RES.y - 1.0f - state->game.interacting_cursor.y - cursor_dim / 2.0f }), cursor_dim);
+				draw_img(view_pixels, &state->game.img.hand, vxx(vf2 { state->game.hud.cursor.x - cursor_dim / 2.0f, VIEW_RES.y - 1.0f - state->game.hud.cursor.y - cursor_dim / 2.0f }), cursor_dim);
 			}
 
 			SDL_UnlockTexture(state->game.texture.view);
@@ -3081,10 +3152,11 @@ extern "C" PROTOTYPE_RENDER(render)
 				FC_ALIGN_LEFT,
 				1.0f,
 				{ 1.0f, 1.0f, 1.0f, 1.0f },
-				"%.2f %.2f\n%.2f %.2f\n%.2f %.2f",
+				"%.2f %.2f\n%.2f %.2f\n%.2f %.2f\n%.2f %.2f",
 				state->game.lucia_position.x, state->game.lucia_position.y,
 				state->game.door_wall_side.coordinates.x * WALL_SPACING, state->game.door_wall_side.coordinates.y * WALL_SPACING,
-				state->game.circuit_breaker_wall_side.coordinates.x * WALL_SPACING, state->game.circuit_breaker_wall_side.coordinates.y * WALL_SPACING
+				state->game.circuit_breaker_wall_side.coordinates.x * WALL_SPACING, state->game.circuit_breaker_wall_side.coordinates.y * WALL_SPACING,
+				state->game.hud.cursor.x, state->game.hud.cursor.y
 			);
 		} break;
 
