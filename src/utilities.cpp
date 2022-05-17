@@ -549,145 +549,70 @@ internal void set_color(SDL_Renderer* renderer, vf4 color)
 	);
 }
 
-internal void draw_filled_rect(SDL_Renderer* renderer, vi2 position, vi2 dimensions) // @NOTICE@ @TODO@ DEPRECATE.
+internal void render_circle(SDL_Renderer* renderer, vf2 center, f32 radius)
 {
-	SDL_Rect rect = { position.x, position.y, dimensions.x, dimensions.y };
-	SDL_RenderFillRect(renderer, &rect);
-}
+	ASSERT(radius < 256.0f);
 
-internal void draw_rect(SDL_Renderer* renderer, vi2 position, vi2 dimensions) // @NOTICE@ @TODO@ DEPRECATE.
-{
-	SDL_Rect rect = { position.x, position.y, dimensions.x, dimensions.y };
-	SDL_RenderDrawRect(renderer, &rect);
-}
-
-internal void draw_line(SDL_Renderer* renderer, vi2 start, vi2 end) // @NOTICE@ @TODO@ DEPRECATE.
-{
-	ASSERT(fabs(start.x - end.x) + fabs(start.y - end.y) < 4096.0f);
-	SDL_RenderDrawLine(renderer, start.x, start.y, end.x, end.y);
-}
-
-internal void draw_circle(SDL_Renderer* renderer, vi2 center, i32 radius) // @NOTICE@ @TODO@ DEPRECATE.
-{
-	ASSERT(radius < 256);
-
-	vi2 p     = { radius - 1, 0 };
+	vf2 p     = { radius - 1.0f, 0.0f };
 	vi2 t     = { 1, 1 };
-	i32 error = t.x - 2 * radius;
+	f32 error = t.x - 2.0f * radius;
 
 	while (p.x >= p.y)
 	{
-		SDL_RenderDrawPoint(renderer, center.x + p.x, center.y - p.y);
-		SDL_RenderDrawPoint(renderer, center.x + p.x, center.y + p.y);
-		SDL_RenderDrawPoint(renderer, center.x - p.x, center.y - p.y);
-		SDL_RenderDrawPoint(renderer, center.x - p.x, center.y + p.y);
-		SDL_RenderDrawPoint(renderer, center.x + p.y, center.y - p.x);
-		SDL_RenderDrawPoint(renderer, center.x + p.y, center.y + p.x);
-		SDL_RenderDrawPoint(renderer, center.x - p.y, center.y - p.x);
-		SDL_RenderDrawPoint(renderer, center.x - p.y, center.y + p.x);
+		SDL_RenderDrawPointF(renderer, center.x + p.x, center.y - p.y);
+		SDL_RenderDrawPointF(renderer, center.x + p.x, center.y + p.y);
+		SDL_RenderDrawPointF(renderer, center.x - p.x, center.y - p.y);
+		SDL_RenderDrawPointF(renderer, center.x - p.x, center.y + p.y);
+		SDL_RenderDrawPointF(renderer, center.x + p.y, center.y - p.x);
+		SDL_RenderDrawPointF(renderer, center.x + p.y, center.y + p.x);
+		SDL_RenderDrawPointF(renderer, center.x - p.y, center.y - p.x);
+		SDL_RenderDrawPointF(renderer, center.x - p.y, center.y + p.x);
 
-		if (error <= 0)
+		if (error <= 0.0f)
 		{
-			p.y   += 1;
+			p.y   += 1.0f;
 			error += t.y;
 			t.y   += 2;
 		}
 
-		if (error > 0)
+		if (error > 0.0f)
 		{
-			p.x   -= 1;
+			p.x   -= 1.0f;
 			t.x   += 2;
-			error += t.x - 2 * radius;
+			error += t.x - 2.0f * radius;
 		}
 	}
 }
 
-internal void draw_filled_circle(SDL_Renderer* renderer, vi2 center, i32 radius) // @NOTICE@ @TODO@ DEPRECATE.
+internal void render_filled_circle(SDL_Renderer* renderer, vf2 center, f32 radius)
 {
-	ASSERT(radius < 256);
+	ASSERT(radius < 256.0f);
 
-	vi2 p     = { radius - 1, 0 };
+	vf2 p     = { radius - 1.0f, 0.0f };
 	vi2 t     = { 1, 1 };
-	i32 error = t.x - 2 * radius;
+	f32 error = t.x - 2.0f * radius;
 
 	while (p.x >= p.y)
 	{
-		SDL_RenderDrawLine(renderer, center.x - p.x, center.y - p.y, center.x + p.x, center.y - p.y);
-		SDL_RenderDrawLine(renderer, center.x - p.y, center.y - p.x, center.x + p.y, center.y - p.x);
-		SDL_RenderDrawLine(renderer, center.x - p.x, center.y + p.y, center.x + p.x, center.y + p.y);
-		SDL_RenderDrawLine(renderer, center.x - p.y, center.y + p.x, center.x + p.y, center.y + p.x);
+		SDL_RenderDrawLineF(renderer, center.x - p.x, center.y - p.y, center.x + p.x, center.y - p.y);
+		SDL_RenderDrawLineF(renderer, center.x - p.y, center.y - p.x, center.x + p.y, center.y - p.x);
+		SDL_RenderDrawLineF(renderer, center.x - p.x, center.y + p.y, center.x + p.x, center.y + p.y);
+		SDL_RenderDrawLineF(renderer, center.x - p.y, center.y + p.x, center.x + p.y, center.y + p.x);
 
-		if (error <= 0)
+		if (error <= 0.0f)
 		{
-			p.y   += 1;
+			p.y   += 1.0f;
 			error += t.y;
 			t.y   += 2;
 		}
 
-		if (error > 0)
+		if (error > 0.0f)
 		{
-			p.x   -= 1;
+			p.x   -= 1.0f;
 			t.x   += 2;
-			error += t.x - 2 * radius;
+			error += t.x - 2.0f * radius;
 		}
 	}
-}
-
-template <typename... ARGUMENTS>
-internal void draw_text(SDL_Renderer* renderer, FC_Font* font, vf2 coordinates, FC_AlignEnum alignment, f32 scalar, vf4 rgba, strlit fstr, ARGUMENTS... arguments) // @NOTICE@ @TODO@ DEPRECATE.
-{
-	FC_DrawEffect
-	(
-		font,
-		renderer,
-		coordinates.x,
-		coordinates.y,
-		FC_MakeEffect
-		(
-			alignment,
-			FC_MakeScale(scalar, scalar),
-			FC_MakeColor
-			(
-				static_cast<u8>(rgba.x * 255.0f),
-				static_cast<u8>(rgba.y * 255.0f),
-				static_cast<u8>(rgba.z * 255.0f),
-				static_cast<u8>(rgba.w * 255.0f)
-			)
-		),
-		fstr,
-		arguments...
-	);
-}
-
-template <typename... ARGUMENTS>
-internal void draw_boxed_text(SDL_Renderer* renderer, FC_Font* font, vi2 coordinates, vi2 dimensions, FC_AlignEnum alignment, f32 scalar, vf4 rgba, strlit fstr, ARGUMENTS... arguments) // @NOTICE@ @TODO@ DEPRECATE.
-{
-	FC_DrawBoxEffect
-	(
-		font,
-		renderer,
-		{ coordinates.x, coordinates.y, static_cast<i32>(dimensions.x / scalar), dimensions.y },
-		FC_MakeEffect
-		(
-			alignment,
-			FC_MakeScale(scalar, scalar),
-			FC_MakeColor
-			(
-				static_cast<u8>(rgba.x * 255.0f),
-				static_cast<u8>(rgba.y * 255.0f),
-				static_cast<u8>(rgba.z * 255.0f),
-				static_cast<u8>(rgba.w * 255.0f)
-			)
-		),
-		fstr,
-		arguments...
-	);
-}
-
-internal void blit_texture(SDL_Renderer* renderer, SDL_Texture* texture, vi2 position, vi2 dimensions) // @NOTICE@ @TODO@ DEPRECATE.
-{
-	SDL_Rect dst = { position.x, position.y, dimensions.x, dimensions.y };
-	SDL_RenderCopy(renderer, texture, 0, &dst);
 }
 
 internal i32 iterate_repeated_movement(Platform* platform, Input negative_input, Input positive_input, f32* current_repeat_countdown, f32 repeat_threshold = 0.3f, f32 repeat_frequency = 0.1f)

@@ -160,30 +160,17 @@ enum_loose (ItemType, u8)
 	enum_end_region(ITEM)
 };
 
-global constexpr strlit DEFAULT_ITEM_IMG_FILE_PATHS[ItemType::ITEM_COUNT] =
+global constexpr struct { strlit img_file_path; f32 spawn_weight; } ITEM_DATA[ItemType::ITEM_COUNT] =
 	{
-		DATA_DIR "items/cheap_batteries.png",
-		DATA_DIR "items/paper.png",
-		DATA_DIR "items/flashlight_off.png",
-		DATA_DIR "items/cowbell.png",
-		DATA_DIR "items/eyedrops.png",
-		DATA_DIR "items/first_aid_kit.png",
-		DATA_DIR "items/nightvision_goggles.png",
-		DATA_DIR "items/pills.png",
-		DATA_DIR "items/military_grade_batteries.png"
-	};
-
-global constexpr f32 ITEM_SPAWN_WEIGHTS[ItemType::ITEM_COUNT] =
-	{
-		10.0f,
-		5.0f,
-		4.0f,
-		0.0f,
-		3.0f,
-		4.0f,
-		2.0f,
-		6.0f,
-		4.0f
+		{ DATA_DIR "items/cheap_batteries.png"          , 10.0f },
+		{ DATA_DIR "items/paper.png"                    ,  5.0f },
+		{ DATA_DIR "items/flashlight_off.png"           ,  4.0f },
+		{ DATA_DIR "items/cowbell.png"                  ,  0.0f },
+		{ DATA_DIR "items/eyedrops.png"                 ,  3.0f },
+		{ DATA_DIR "items/first_aid_kit.png"            ,  4.0f },
+		{ DATA_DIR "items/nightvision_goggles.png"      ,  2.0f },
+		{ DATA_DIR "items/pills.png"                    ,  6.0f },
+		{ DATA_DIR "items/military_grade_batteries.png" ,  4.0f }
 	};
 
 struct Item
@@ -215,6 +202,14 @@ flag_struct (WallVoxel, u8)
 	back_slash    = 1 << 2,
 	forward_slash = 1 << 3
 };
+
+global constexpr struct WallVoxelData { WallVoxel voxel; vf2 start; vf2 end; vf2 normal; } WALL_VOXEL_DATA[] =
+	{
+		{ WallVoxel::left         , { 0.0f, 0.0f }, { 0.0f, 1.0f }, {     1.0f,      0.0f } },
+		{ WallVoxel::bottom       , { 0.0f, 0.0f }, { 1.0f, 0.0f }, {     0.0f,     -1.0f } },
+		{ WallVoxel::back_slash   , { 1.0f, 0.0f }, { 0.0f, 1.0f }, { INVSQRT2,  INVSQRT2 } },
+		{ WallVoxel::forward_slash, { 0.0f, 0.0f }, { 1.0f, 1.0f }, { INVSQRT2, -INVSQRT2 } }
+	};
 
 struct WallSide
 {
@@ -324,6 +319,7 @@ struct State
 				Img hand;
 				Img flashlight_on;
 				Img door;
+				Img circuit_breaker;
 				Img wall_left_arrow;
 				Img wall_right_arrow;
 				Img default_items[ItemType::ITEM_COUNT];
@@ -385,6 +381,7 @@ struct State
 
 		WallVoxel            wall_voxels[MAP_DIM][MAP_DIM];
 		WallSide             door_wall_side;
+		WallSide             circuit_breaker_wall_side;
 		f32                  creepy_sound_countdown;
 		bool32               blacked_out;
 		f32                  ceiling_lights_keytime;
@@ -451,16 +448,6 @@ struct State
 		f32 entering_keytime;
 	} end;
 };
-
-struct WallVoxelData { WallVoxel voxel; vf2 start; vf2 end; vf2 normal; };
-
-global constexpr WallVoxelData WALL_VOXEL_DATA[] =
-	{
-		{ WallVoxel::left         , { 0.0f, 0.0f }, { 0.0f, 1.0f }, {     1.0f,      0.0f } },
-		{ WallVoxel::bottom       , { 0.0f, 0.0f }, { 1.0f, 0.0f }, {     0.0f,     -1.0f } },
-		{ WallVoxel::back_slash   , { 1.0f, 0.0f }, { 0.0f, 1.0f }, { INVSQRT2,  INVSQRT2 } },
-		{ WallVoxel::forward_slash, { 0.0f, 0.0f }, { 1.0f, 1.0f }, { INVSQRT2, -INVSQRT2 } }
-	};
 
 internal const WallVoxelData* get_wall_voxel_data(WallVoxel voxel)
 {
@@ -734,11 +721,9 @@ internal void deallocate_item(State* state, Item* item)
 	state->game.item_count -= 1;
 }
 
-internal vf2 rng_open_position(State* state)
+internal vf2 rng_open_position(State* state, vi2 coordinates)
 {
 	// @TODO@ Clean up?
-	vi2 coordinates = { rng(&state->seed, 0, MAP_DIM), rng(&state->seed, 0, MAP_DIM) };
-
 	constexpr f32 SPAWN_PADDING = 0.1f;
 
 	if (+(*get_wall_voxel(state, coordinates) & WallVoxel::back_slash))
@@ -759,6 +744,11 @@ internal vf2 rng_open_position(State* state)
 	{
 		return (coordinates + vf2 { rng(&state->seed, SPAWN_PADDING, 1.0f - SPAWN_PADDING), rng(&state->seed, SPAWN_PADDING, 1.0f - SPAWN_PADDING) }) * WALL_SPACING;
 	}
+}
+
+internal vf2 rng_open_position(State* state)
+{
+	return rng_open_position(state, { rng(&state->seed, 0, MAP_DIM), rng(&state->seed, 0, MAP_DIM) });
 }
 
 internal vf2 move(State* state, vf2 position, vf2 displacement)
@@ -899,11 +889,11 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 	{
 		case StateContext::title_menu:
 		{
-			state->title_menu.texture.cursor           = IMG_LoadTexture(renderer, DATA_DIR "cursor.png");
-			state->title_menu.texture.power_button     = IMG_LoadTexture(renderer, DATA_DIR "terminal_power_button.png");
-			state->title_menu.texture.text_file        = IMG_LoadTexture(renderer, DATA_DIR "text_file.png");
-			state->title_menu.texture.antihome_program = IMG_LoadTexture(renderer, DATA_DIR "antihome_program.png");
-			state->title_menu.texture.window_close     = IMG_LoadTexture(renderer, DATA_DIR "window_close.png");
+			state->title_menu.texture.cursor           = IMG_LoadTexture(renderer, DATA_DIR "computer/cursor.png");
+			state->title_menu.texture.power_button     = IMG_LoadTexture(renderer, DATA_DIR "computer/terminal_power_button.png");
+			state->title_menu.texture.text_file        = IMG_LoadTexture(renderer, DATA_DIR "computer/text_file.png");
+			state->title_menu.texture.antihome_program = IMG_LoadTexture(renderer, DATA_DIR "computer/antihome_program.png");
+			state->title_menu.texture.window_close     = IMG_LoadTexture(renderer, DATA_DIR "computer/window_close.png");
 
 			state->title_menu.audio.ambience = Mix_LoadWAV(DATA_DIR "audio/computer.wav");
 
@@ -917,20 +907,21 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 
 		case StateContext::game:
 		{
-			state->game.mipmap.wall    = init_mipmap(DATA_DIR "wall.png");
-			state->game.mipmap.floor   = init_mipmap(DATA_DIR "floor.png");
-			state->game.mipmap.ceiling = init_mipmap(DATA_DIR "ceiling.png");
+			state->game.mipmap.wall    = init_mipmap(DATA_DIR "room/wall.png");
+			state->game.mipmap.floor   = init_mipmap(DATA_DIR "room/floor.png");
+			state->game.mipmap.ceiling = init_mipmap(DATA_DIR "room/ceiling.png");
 
 			state->game.img.monster          = init_img(DATA_DIR "monster.png");
 			state->game.img.hand             = init_img(DATA_DIR "hand.png");
 			state->game.img.flashlight_on    = init_img(DATA_DIR "items/flashlight_on.png");
-			state->game.img.door             = init_img(DATA_DIR "door.png");
-			state->game.img.wall_left_arrow  = init_img(DATA_DIR "streak_left_0.png");
-			state->game.img.wall_right_arrow = init_img(DATA_DIR "streak_right_0.png");
+			state->game.img.door             = init_img(DATA_DIR "overlays/door.png");
+			state->game.img.circuit_breaker  = init_img(DATA_DIR "overlays/circuit_breaker.png");
+			state->game.img.wall_left_arrow  = init_img(DATA_DIR "overlays/streak_left_0.png");
+			state->game.img.wall_right_arrow = init_img(DATA_DIR "overlays/streak_right_0.png");
 
-			FOR_ELEMS(it, DEFAULT_ITEM_IMG_FILE_PATHS)
+			FOR_ELEMS(it, ITEM_DATA)
 			{
-				state->game.img.default_items[it_index] = init_img(*it);
+				state->game.img.default_items[it_index] = init_img(it->img_file_path);
 			}
 
 			FOR_ELEMS(it, state->game.img.papers)
@@ -1233,18 +1224,18 @@ extern "C" PROTOTYPE_UPDATE(update)
 									}
 								}
 
+								// @TODO@ More robustness.
 								{
 									memory_arena_checkpoint(&state->transient_arena);
 
-									struct DoorSpotNode
+									struct WallSideNode
 									{
-										vi2           coordinates;
-										WallVoxel     wall_voxel;
-										DoorSpotNode* next_node;
+										WallSide      wall_side;
+										WallSideNode* next_node;
 									};
 
-									DoorSpotNode* door_spot_node  = 0;
-									i32           door_spot_count = 0;
+									WallSideNode* wall_side_node  = 0;
+									i32           wall_side_count = 0;
 
 									FOR_RANGE(y, MAP_DIM)
 									{
@@ -1254,35 +1245,86 @@ extern "C" PROTOTYPE_UPDATE(update)
 											{
 												if (+(state->game.wall_voxels[y][x] & it->voxel))
 												{
-													DoorSpotNode* node = memory_arena_push<DoorSpotNode>(&state->transient_arena);
-													node->coordinates  = { x, y };
-													node->wall_voxel   = it->voxel;
-													node->next_node    = door_spot_node;
-													door_spot_node     = node;
-													door_spot_count   += 1;
+													{
+														WallSideNode* node = memory_arena_push<WallSideNode>(&state->transient_arena);
+														node->wall_side.coordinates   = { x, y };
+														node->wall_side.voxel         = it->voxel;
+														node->wall_side.is_antinormal = false;
+														node->next_node               = wall_side_node;
+														wall_side_node   = node;
+														wall_side_count += 1;
+													}
+
+													{
+														WallSideNode* node = memory_arena_push<WallSideNode>(&state->transient_arena);
+														node->wall_side.coordinates   = { x, y };
+														node->wall_side.voxel         = it->voxel;
+														node->wall_side.is_antinormal = true;
+														node->next_node               = wall_side_node;
+														wall_side_node   = node;
+														wall_side_count += 1;
+													}
 												}
 											}
 										}
 									}
 
-									ASSERT(door_spot_node);
-
-									for (i32 i = rng(&state->seed, 0, door_spot_count); i; i -= 1)
 									{
-										door_spot_node = door_spot_node->next_node;
+										WallSideNode* door_wall_side_node = wall_side_node;
+										for (i32 i = rng(&state->seed, 0, wall_side_count); i; i -= 1)
+										{
+											door_wall_side_node = door_wall_side_node->next_node;
+										}
+
+										state->game.door_wall_side = door_wall_side_node->wall_side;
 									}
 
-									state->game.door_wall_side.coordinates   = door_spot_node->coordinates;
-									state->game.door_wall_side.voxel         = door_spot_node->wall_voxel;
-									state->game.door_wall_side.is_antinormal = rng(&state->seed) < 0.5f;
+									{
+										WallSideNode* farthest_node     = 0;
+										f32           farthest_distance = NAN;
+										for (WallSideNode* node = wall_side_node; node; node = node->next_node)
+										{
+											f32 distance = norm(ray_to_closest(node->wall_side.coordinates * WALL_SPACING, state->game.door_wall_side.coordinates * WALL_SPACING));
+
+											if (farthest_node == 0 || farthest_distance < distance)
+											{
+												farthest_node     = node;
+												farthest_distance = distance;
+											}
+										}
+
+										state->game.circuit_breaker_wall_side = farthest_node->wall_side;
+									}
+
+									{
+										WallSideNode* farthest_node     = 0;
+										f32           farthest_distance = NAN;
+										for (WallSideNode* node = wall_side_node; node; node = node->next_node)
+										{
+											f32 distance =
+												min
+												(
+													norm(ray_to_closest(node->wall_side.coordinates * WALL_SPACING, state->game.door_wall_side.coordinates * WALL_SPACING)),
+													norm(ray_to_closest(node->wall_side.coordinates * WALL_SPACING, state->game.circuit_breaker_wall_side.coordinates * WALL_SPACING))
+												);
+
+											if (farthest_node == 0 || farthest_distance < distance)
+											{
+												farthest_node     = node;
+												farthest_distance = distance;
+											}
+										}
+
+										state->game.lucia_position.xy = rng_open_position(state, farthest_node->wall_side.coordinates);
+									}
 								}
 
-								state->game.creepy_sound_countdown = rng(&state->seed, CREEPY_SOUND_MIN_TIME, CREEPY_SOUND_MAX_TIME);
-
-								state->game.lucia_position.xy = rng_open_position(state);
 								state->game.lucia_position.z  = LUCIA_HEIGHT;
 								state->game.lucia_fov         = TAU / 3.0f;
 								state->game.lucia_stamina     = 1.0f;
+
+								state->game.creepy_sound_countdown = rng(&state->seed, CREEPY_SOUND_MIN_TIME, CREEPY_SOUND_MAX_TIME);
+
 
 								state->game.monster_position.xy = rng_open_position(state);
 
@@ -1312,26 +1354,25 @@ extern "C" PROTOTYPE_UPDATE(update)
 								FOR_RANGE(ARRAY_CAPACITY(state->game.item_buffer) - state->game.item_count)
 								{
 									f32 total_weights = 0.0f;
-									FOR_ELEMS(w, ITEM_SPAWN_WEIGHTS)
+									FOR_ELEMS(it, ITEM_DATA)
 									{
-										total_weights += *w;
+										total_weights += it->spawn_weight;
 									}
 
-									f32 n = rng(&state->seed, 0.0f, total_weights);
+									f32 n = rng(&state->seed) * total_weights;
 									i32 i = -1;
-									total_weights = 0.0f;
-									FOR_ELEMS(w, ITEM_SPAWN_WEIGHTS)
+									FOR_ELEMS(it, ITEM_DATA)
 									{
-										if (IN_RANGE(n - total_weights, 0.0f, *w))
+										n -= it->spawn_weight;
+
+										if (n <= 0.0f)
 										{
-											i = w_index;
+											i = it_index;
 											break;
 										}
-										else
-										{
-											total_weights += *w;
-										}
 									}
+
+									ASSERT(i != -1);
 
 									create_item(static_cast<ItemType>(+ItemType::ITEM_START + i));
 								}
@@ -1814,7 +1855,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 				if (+wasd && HOLDING(Input::shift) && !state->game.lucia_out_of_breath)
 				{
 					state->game.lucia_velocity       *= 0.75f;
-					state->game.lucia_stamina         = clamp(state->game.lucia_stamina - SECONDS_PER_UPDATE / 35.0f * (1.0f + (1.0f - square(1.0f - 2.0f * state->game.lucia_sprint_keytime)) * 4.0f), 0.0f, 1.0f);
+					state->game.lucia_stamina         = clamp(state->game.lucia_stamina - SECONDS_PER_UPDATE / 60.0f * (1.0f + (1.0f - square(1.0f - 2.0f * state->game.lucia_sprint_keytime)) * 4.0f), 0.0f, 1.0f);
 					state->game.lucia_sprint_keytime  = clamp(state->game.lucia_sprint_keytime + SECONDS_PER_UPDATE / 1.5f, 0.0f, 1.0f);
 					if (state->game.lucia_stamina == 0.0f)
 					{
@@ -2617,6 +2658,12 @@ extern "C" PROTOTYPE_RENDER(render)
 							overlay_uv_dimensions = { ALIGNED_SPAN, 1.0f };
 						}
 					}
+					else if (wall_coordinates == state->game.circuit_breaker_wall_side.coordinates && wall_voxel == state->game.circuit_breaker_wall_side.voxel && dot(ray_horizontal, wall_normal) * (state->game.circuit_breaker_wall_side.is_antinormal ? -1.0f : 1.0f) < 0.0f)
+					{
+						overlay_img           = &state->game.img.circuit_breaker;
+						overlay_uv_position   = { 0.35f, 0.25f };
+						overlay_uv_dimensions = { 0.30f, 0.50f };
+					}
 					else
 					{
 						const WallVoxelData* intersected_data = get_wall_voxel_data(wall_voxel);
@@ -3051,14 +3098,15 @@ extern "C" PROTOTYPE_RENDER(render)
 			(
 				platform->renderer,
 				state->font.minor,
-				{ 0.0f, 0.0f },
-				1.0f,
+				{ 0.0f, static_cast<f32>(WIN_DIM.y) },
+				0.0f,
 				FC_ALIGN_LEFT,
 				1.0f,
 				{ 1.0f, 1.0f, 1.0f, 1.0f },
-				"%f %f\n",
-				state->game.lucia_position.x,
-				state->game.lucia_position.y
+				"%.2f %.2f\n%.2f %.2f\n%.2f %.2f",
+				state->game.lucia_position.x, state->game.lucia_position.y,
+				state->game.door_wall_side.coordinates.x * WALL_SPACING, state->game.door_wall_side.coordinates.y * WALL_SPACING,
+				state->game.circuit_breaker_wall_side.coordinates.x * WALL_SPACING, state->game.circuit_breaker_wall_side.coordinates.y * WALL_SPACING
 			);
 		} break;
 
@@ -3072,7 +3120,7 @@ extern "C" PROTOTYPE_RENDER(render)
 	}
 
 	set_color(platform->renderer, { 0.0f, 0.0f, 0.0f, blackout });
-	draw_filled_rect(platform->renderer, { 0, 0 }, WIN_DIM);
+	render_filled_rect(platform->renderer, { 0.0f, 0.0f }, vxx(WIN_DIM));
 
 	SDL_RenderPresent(platform->renderer);
 }
