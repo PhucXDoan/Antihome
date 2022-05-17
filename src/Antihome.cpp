@@ -63,7 +63,7 @@
 global constexpr f32 TERMINAL_TASKBAR_HEIGHT            = 50.0f;
 global constexpr f32 TERMINAL_ICON_DIM                  = 50.0f;
 global constexpr vf2 TERMINAL_CREDITS_POSITION          = { 55.0f, WIN_DIM.y - (TERMINAL_ICON_DIM + 50.0f) * 0.75f };
-global constexpr vf2 TERMINAL_ANTIHOME_PROGRAM_POSITION = { 55.0f, WIN_DIM.y - (TERMINAL_ICON_DIM + 50.0f) * 
+global constexpr vf2 TERMINAL_ANTIHOME_PROGRAM_POSITION = { 55.0f, WIN_DIM.y - (TERMINAL_ICON_DIM + 50.0f) * 1.75f };
 global constexpr f32 TERMINAL_TITLE_BAR_HEIGHT          = 25.0f;
 global constexpr vf2 TERMINAL_BUTTON_DIMENSIONS         = { 45.0f, 27.0f };
 
@@ -263,21 +263,8 @@ struct State
 		FC_Font* fonts[sizeof(font) / sizeof(FC_Font*)];
 	};
 
-	union
-	{
-		struct
-		{
-			Mix_Chunk* click;
-			Mix_Chunk* text_type;
-		} audio;
-
-		Mix_Chunk* audios[sizeof(audio) / sizeof(Mix_Chunk*)];
-	};
-
 	u32          seed;
 	f32          time;
-	f32          master_volume;
-	f32          brightness;
 	StateContext context;
 
 	struct
@@ -294,6 +281,16 @@ struct State
 			} texture;
 
 			SDL_Texture* textures[sizeof(texture) / sizeof(SDL_Texture*)];
+		};
+
+		union
+		{
+			struct
+			{
+				Mix_Chunk* ambience;
+			} audio;
+
+			Mix_Chunk* audios[sizeof(audio) / sizeof(Mix_Chunk*)];
 		};
 
 		vf2                cursor_velocity;
@@ -908,7 +905,14 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 			state->title_menu.texture.antihome_program = IMG_LoadTexture(renderer, DATA_DIR "antihome_program.png");
 			state->title_menu.texture.window_close     = IMG_LoadTexture(renderer, DATA_DIR "window_close.png");
 
+			state->title_menu.audio.ambience = Mix_LoadWAV(DATA_DIR "audio/computer.wav");
+
+			#if DEBUG
 			FOR_ELEMS(it, state->title_menu.textures) { ASSERT(*it); }
+			FOR_ELEMS(it, state->title_menu.audios  ) { ASSERT(*it); }
+			#endif
+
+			Mix_PlayChannel(+AudioChannel::r0, state->title_menu.audio.ambience, -1);
 		} break;
 
 		case StateContext::game:
@@ -976,7 +980,6 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 
 			Mix_VolumeChunk(state->game.audio.drone_low, 0);
 			Mix_PlayChannel(+AudioChannel::r1, state->game.audio.drone_low, -1);
-
 		} break;
 	}
 }
@@ -987,9 +990,14 @@ internal void boot_down_state(State* state)
 	{
 		case StateContext::title_menu:
 		{
-			FOR_ELEMS(it, state->game.textures)
+			FOR_ELEMS(it, state->title_menu.textures)
 			{
 				SDL_DestroyTexture(*it);
+			}
+
+			FOR_ELEMS(it, state->title_menu.audios)
+			{
+				Mix_FreeChunk(*it);
 			}
 		} break;
 
@@ -1033,8 +1041,6 @@ extern "C" PROTOTYPE_INITIALIZE(initialize)
 	state->transient_arena.base = platform->memory          + sizeof(State) + state->long_term_arena.size;
 	state->transient_arena.used = 0;
 
-	state->master_volume = 0.5f;
-	state->brightness    = 0.75f;
 
 	state->title_menu.cursor = WIN_DIM / 2.0f;
 
@@ -1055,16 +1061,6 @@ extern "C" PROTOTYPE_BOOT_UP(boot_up)
 	state->font.minor = FC_CreateFont();
 	FC_LoadFont(state->font.minor, platform->renderer, DATA_DIR "Consolas.ttf", 16, FC_MakeColor(255, 255, 255, 255), TTF_STYLE_NORMAL);
 
-	state->audio.click     = Mix_LoadWAV(DATA_DIR "audio/click.wav");
-	state->audio.text_type = Mix_LoadWAV(DATA_DIR "audio/text_type.wav");
-
-	#if DEBUG
-	FOR_ELEMS(it, state->audios)
-	{
-		ASSERT(*it);
-	}
-	#endif
-
 	boot_up_state(platform->renderer, state);
 
 	{
@@ -1084,11 +1080,6 @@ extern "C" PROTOTYPE_BOOT_DOWN(boot_down)
 		FC_FreeFont(*it);
 	}
 
-	FOR_ELEMS(it, state->audios)
-	{
-		Mix_FreeChunk(*it);
-	}
-
 	boot_down_state(state);
 }
 
@@ -1098,8 +1089,6 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 	state->time                 += SECONDS_PER_UPDATE;
 	state->transient_arena.used  = 0;
-
-	Mix_Volume(-1, static_cast<i32>(MIX_MAX_VOLUME * state->master_volume));
 
 	switch (state->context)
 	{
