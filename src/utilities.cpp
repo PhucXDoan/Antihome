@@ -726,31 +726,31 @@ internal i32 iterate_repeated_movement(Platform* platform, Input negative_input,
 
 internal void render_filled_rect(SDL_Renderer* renderer, vf2 bottom_left, vf2 dimensions)
 {
-	SDL_FRect rect = { bottom_left.x, WIN_RES.y - bottom_left.y - dimensions.y, dimensions.x, dimensions.y };
+	SDL_FRect rect = { bottom_left.x, WIN_DIM.y - bottom_left.y - dimensions.y, dimensions.x, dimensions.y };
 	SDL_RenderFillRectF(renderer, &rect);
 }
 
 internal void render_rect(SDL_Renderer* renderer, vf2 bottom_left, vf2 dimensions)
 {
-	SDL_FRect rect = { bottom_left.x, WIN_RES.y - bottom_left.y - dimensions.y, dimensions.x, dimensions.y };
+	SDL_FRect rect = { bottom_left.x, WIN_DIM.y - bottom_left.y - dimensions.y, dimensions.x, dimensions.y };
 	SDL_RenderDrawRectF(renderer, &rect);
 }
 
 internal void render_texture(SDL_Renderer* renderer, SDL_Texture* texture, vf2 position, vf2 dimensions)
 {
-	SDL_FRect rect = { position.x, WIN_RES.y - position.y - dimensions.y, dimensions.x, dimensions.y };
+	SDL_FRect rect = { position.x, WIN_DIM.y - position.y - dimensions.y, dimensions.x, dimensions.y };
 	SDL_RenderCopyF(renderer, texture, 0, &rect);
 }
 
 template <typename... ARGUMENTS>
-internal void render_text(SDL_Renderer* renderer, FC_Font* font, vf2 coordinates, FC_AlignEnum alignment, f32 scalar, vf4 rgba, strlit fstr, ARGUMENTS... arguments)
+internal void render_text(SDL_Renderer* renderer, FC_Font* font, vf2 coordinates, f32 baseline_offset, FC_AlignEnum alignment, f32 scalar, vf4 rgba, strlit fstr, ARGUMENTS... arguments)
 {
 	FC_DrawEffect
 	(
 		font,
 		renderer,
 		coordinates.x,
-		WIN_RES.y - coordinates.y - FC_GetBaseline(font) * scalar,
+		WIN_DIM.y - coordinates.y - FC_GetBaseline(font) * scalar * baseline_offset,
 		FC_MakeEffect
 		(
 			alignment,
@@ -766,4 +766,35 @@ internal void render_text(SDL_Renderer* renderer, FC_Font* font, vf2 coordinates
 		fstr,
 		arguments...
 	);
+}
+
+template <typename... ARGUMENTS>
+internal void render_boxed_text(SDL_Renderer* renderer, FC_Font* font, vf2 coordinates, vf2 dimensions, FC_AlignEnum alignment, f32 scalar, vf4 rgba, strlit fstr, ARGUMENTS... arguments)
+{
+	FC_DrawBoxEffect
+	(
+		font,
+		renderer,
+		{ static_cast<i32>(coordinates.x), static_cast<i32>(WIN_DIM.y - coordinates.y - dimensions.y), static_cast<i32>(dimensions.x / scalar), static_cast<i32>(dimensions.y) },
+		FC_MakeEffect
+		(
+			alignment,
+			FC_MakeScale(scalar, scalar),
+			FC_MakeColor
+			(
+				static_cast<u8>(rgba.x * 255.0f),
+				static_cast<u8>(rgba.y * 255.0f),
+				static_cast<u8>(rgba.z * 255.0f),
+				static_cast<u8>(rgba.w * 255.0f)
+			)
+		),
+		fstr,
+		arguments...
+	);
+}
+
+internal void render_line(SDL_Renderer* renderer, vf2 start, vf2 end)
+{
+	ASSERT(fabsf(start.x - end.x) + fabsf(start.y - end.y) < 4096.0f);
+	SDL_RenderDrawLineF(renderer, start.x, WIN_DIM.y - 1 - start.y, end.x, WIN_DIM.y - 1 - end.y);
 }

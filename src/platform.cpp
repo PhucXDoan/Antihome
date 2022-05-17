@@ -120,8 +120,6 @@ int main(int, char**)
 	boot_up(&platform, window);
 	DEFER { boot_down(&platform); };
 
-	SDL_RenderSetLogicalSize(platform.renderer, WIN_RES.x, WIN_RES.y);
-
 	// @NOTE@ Prevents one frame of cursor delta at start up.
 	{
 		i32 cursor_delta_x;

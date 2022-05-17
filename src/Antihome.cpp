@@ -66,9 +66,16 @@
 #include "platform.h"
 #include "utilities.cpp"
 
-global constexpr i32 PADDING               = 5;
-global constexpr vi2 VIEW_RES              = vxx(vf2 { 1.0f, 0.5f } * (WIN_RES.x - PADDING * 2.0f));
-global constexpr vi2 HUD_RES               = { WIN_RES.x - PADDING * 2, WIN_RES.y - VIEW_RES.y - PADDING * 3 };
+global constexpr f32 TERMINAL_TASKBAR_HEIGHT            = 50.0f;
+global constexpr f32 TERMINAL_ICON_DIM                  = 50.0f;
+global constexpr vf2 TERMINAL_SETTINGS_POSITION         = { 55.0f, WIN_DIM.y - (TERMINAL_ICON_DIM + 50.0f) * 0.75f };
+global constexpr vf2 TERMINAL_CREDITS_POSITION          = { 55.0f, WIN_DIM.y - (TERMINAL_ICON_DIM + 50.0f) * 1.75f };
+global constexpr vf2 TERMINAL_ANTIHOME_PROGRAM_POSITION = { 55.0f, WIN_DIM.y - (TERMINAL_ICON_DIM + 50.0f) * 2.75f };
+global constexpr f32 TERMINAL_TITLE_BAR_HEIGHT          = 25.0f;
+global constexpr vf2 TERMINAL_BUTTON_DIMENSIONS         = { 45.0f, 27.0f };
+
+global constexpr f32 HUD_HEIGHT            = 175.0f;
+global constexpr vi2 VIEW_RES              = vxx(vf2 { static_cast<f32>(WIN_DIM.x), WIN_DIM.y - HUD_HEIGHT } / 3.0f);
 global constexpr f32 HORT_TO_VERT_K        = 0.927295218f * VIEW_RES.x;
 global constexpr f32 WALL_HEIGHT           = 2.7432f;
 global constexpr f32 WALL_THICKNESS        = 0.4f;
@@ -79,14 +86,6 @@ global constexpr i32 INVENTORY_DIM         = 30;
 global constexpr i32 INVENTORY_PADDING     = 5;
 global constexpr f32 CREEPY_SOUND_MIN_TIME = 15.0f;
 global constexpr f32 CREEPY_SOUND_MAX_TIME = 90.0f;
-
-global constexpr f32 TERMINAL_TASKBAR_HEIGHT            = 20.0f;
-global constexpr f32 TERMINAL_ICON_DIM                  = 20.0f;
-global constexpr f32 TERMINAL_ICON_PADDING              = 20.0f;
-global constexpr vf2 TERMINAL_SETTINGS_POSITION         = { TERMINAL_ICON_PADDING, WIN_RES.y - (TERMINAL_ICON_PADDING + TERMINAL_ICON_DIM) * 0.75f };
-global constexpr vf2 TERMINAL_CREDITS_POSITION          = { TERMINAL_ICON_PADDING, WIN_RES.y - (TERMINAL_ICON_PADDING + TERMINAL_ICON_DIM) * 1.75f };
-global constexpr vf2 TERMINAL_ANTIHOME_PROGRAM_POSITION = { TERMINAL_ICON_PADDING, WIN_RES.y - (TERMINAL_ICON_PADDING + TERMINAL_ICON_DIM) * 2.75f };
-global constexpr f32 TERMINAL_TITLE_BAR_HEIGHT          = 10.0f;
 
 global constexpr struct { i32 slide_index; strlit text; } INTRO_DATA[] =
 	{
@@ -197,7 +196,7 @@ global constexpr f32 ITEM_SPAWN_WEIGHTS[ItemType::ITEM_COUNT] =
 	{
 		10.0f,
 		5.0f,
-		1.0f,
+		4.0f,
 		0.0f,
 		3.0f,
 		4.0f,
@@ -401,7 +400,7 @@ struct State
 		PathCoordinatesNode* available_path_coordinates_node;
 		strlit               notification_message;
 		f32                  notification_keytime;
-		f32                  heart_rate_values[50];
+		f32                  heart_rate_values[128];
 		i32                  heart_rate_index;
 		f32                  heart_rate_update_keytime;
 		f32                  heart_rate_velocity;
@@ -1059,7 +1058,7 @@ extern "C" PROTOTYPE_INITIALIZE(initialize)
 	state->master_volume = 0.5f;
 	state->brightness    = 0.75f;
 
-	state->title_menu.cursor = WIN_RES / 2.0f;
+	state->title_menu.cursor = WIN_DIM / 2.0f;
 
 	SDL_SetRelativeMouseMode(SDL_TRUE);
 
@@ -1076,7 +1075,7 @@ extern "C" PROTOTYPE_BOOT_UP(boot_up)
 	FC_LoadFont(state->font.major, platform->renderer, DATA_DIR "Consolas.ttf", 32, FC_MakeColor(255, 255, 255, 255), TTF_STYLE_NORMAL);
 
 	state->font.minor = FC_CreateFont();
-	FC_LoadFont(state->font.minor, platform->renderer, DATA_DIR "Consolas.ttf", 10, FC_MakeColor(255, 255, 255, 255), TTF_STYLE_NORMAL);
+	FC_LoadFont(state->font.minor, platform->renderer, DATA_DIR "Consolas.ttf", 16, FC_MakeColor(255, 255, 255, 255), TTF_STYLE_NORMAL);
 
 	state->audio.click     = Mix_LoadWAV(DATA_DIR "audio/click.wav");
 	state->audio.text_type = Mix_LoadWAV(DATA_DIR "audio/text_type.wav");
@@ -1131,21 +1130,21 @@ extern "C" PROTOTYPE_UPDATE(update)
 			aliasing tm = state->title_menu;
 
 			// @TODO@ Make window and cursor stop together.
-			tm.cursor_velocity += platform->cursor_delta * 24.0f;
+			tm.cursor_velocity += platform->cursor_delta * 50.0f;
 			tm.cursor_velocity *= 0.25f;
 			tm.cursor          += tm.cursor_velocity * SECONDS_PER_UPDATE;
 
 			constexpr f32 CURSOR_PADDING = 2.0f;
-			if (tm.cursor.x < CURSOR_PADDING || tm.cursor.x > WIN_RES.x - CURSOR_PADDING)
+			if (tm.cursor.x < CURSOR_PADDING || tm.cursor.x > WIN_DIM.x - CURSOR_PADDING)
 			{
 				tm.cursor_velocity.x = 0.0f;
-				tm.cursor.x          = clamp(tm.cursor.x, CURSOR_PADDING, static_cast<f32>(WIN_RES.x - CURSOR_PADDING));
+				tm.cursor.x          = clamp(tm.cursor.x, CURSOR_PADDING, static_cast<f32>(WIN_DIM.x - CURSOR_PADDING));
 			}
 
-			if (tm.cursor.y < CURSOR_PADDING || tm.cursor.y > WIN_RES.y - CURSOR_PADDING)
+			if (tm.cursor.y < CURSOR_PADDING || tm.cursor.y > WIN_DIM.y - CURSOR_PADDING)
 			{
 				tm.cursor_velocity.y = 0.0f;
-				tm.cursor.y          = clamp(tm.cursor.y, CURSOR_PADDING, static_cast<f32>(WIN_RES.y - CURSOR_PADDING));
+				tm.cursor.y          = clamp(tm.cursor.y, CURSOR_PADDING, static_cast<f32>(WIN_DIM.y - CURSOR_PADDING));
 			}
 
 			if (PRESSED(Input::left_mouse))
@@ -1160,7 +1159,229 @@ extern "C" PROTOTYPE_UPDATE(update)
 				}
 				else if (tm.window_type != TerminalWindowType::null && in_rect(tm.cursor, tm.window_position, tm.window_dimensions))
 				{
-					DEBUG_printf("meow\n");
+					switch (tm.window_type)
+					{
+						case TerminalWindowType::antihome_program:
+						{
+							boot_down_state(state);
+							state->context = StateContext::game;
+							state->game    = {};
+							boot_up_state(platform->renderer, state);
+
+							FOR_RANGE(MAP_DIM * MAP_DIM / 3)
+							{
+								vi2 start_walk = { rng(&state->seed, 0, MAP_DIM), rng(&state->seed, 0, MAP_DIM) };
+
+								if
+								(
+									!+*get_wall_voxel(state, { start_walk.x, start_walk.y })
+									&& !+(*get_wall_voxel(state, { start_walk.x    , start_walk.y - 1 }) & WallVoxel::left  )
+									&& !+(*get_wall_voxel(state, { start_walk.x - 1, start_walk.y     }) & WallVoxel::bottom)
+								)
+								{
+									vi2 walk = { start_walk.x, start_walk.y };
+									FOR_RANGE(MAP_DIM)
+									{
+										switch (static_cast<i32>(rng(&state->seed) * 4.0f))
+										{
+											case 0:
+											{
+												if (!+*get_wall_voxel(state, walk + vi2 { -1, 0 }) && !+(*get_wall_voxel(state, walk + vi2 { -1, -1 }) & WallVoxel::left) && !+(*get_wall_voxel(state, walk + vi2 { -2, 0 }) & WallVoxel::bottom))
+												{
+													walk.x = mod(walk.x - 1, MAP_DIM);
+													*get_wall_voxel(state, walk) |= WallVoxel::bottom;
+												}
+											} break;
+
+											case 1:
+											{
+												if (!+*get_wall_voxel(state, walk + vi2 { 1, 0 }) && !+(*get_wall_voxel(state, walk) & WallVoxel::bottom) && !+(*get_wall_voxel(state, walk + vi2 { 1, -1 }) & WallVoxel::left))
+												{
+													*get_wall_voxel(state, walk) |= WallVoxel::bottom;
+													walk.x = mod(walk.x + 1, MAP_DIM);
+												}
+											} break;
+
+											case 2:
+											{
+												if (!+*get_wall_voxel(state, walk + vi2 { 0, -1 }) && !+(*get_wall_voxel(state, walk + vi2 { -1, -1 }) & WallVoxel::bottom) && !+(*get_wall_voxel(state, walk + vi2 { 0, -2 }) & WallVoxel::left))
+												{
+													walk.y = mod(walk.y - 1, MAP_DIM);
+													*get_wall_voxel(state, walk) |= WallVoxel::left;
+												}
+											} break;
+
+											case 3:
+											{
+												if (!+*get_wall_voxel(state, walk + vi2 { 0, 1 }) && !+(*get_wall_voxel(state, walk) & WallVoxel::left) && !+(*get_wall_voxel(state, walk + vi2 { -1, 1 }) & WallVoxel::bottom))
+												{
+													*get_wall_voxel(state, walk) |= WallVoxel::left;
+													walk.y = mod(walk.y + 1, MAP_DIM);
+												}
+											} break;
+										}
+
+										if
+										(
+											!(!+*get_wall_voxel(state, walk + vi2 { -1, 0 }) && !+(*get_wall_voxel(state, walk + vi2 { -1, -1 }) & WallVoxel::left) && !+(*get_wall_voxel(state, walk + vi2 { -2, 0 }) & WallVoxel::bottom)) &&
+											!(!+*get_wall_voxel(state, walk + vi2 { 1, 0 }) && !+(*get_wall_voxel(state, walk) & WallVoxel::bottom) && !+(*get_wall_voxel(state, walk + vi2 { 1, -1 }) & WallVoxel::left)) &&
+											!(!+*get_wall_voxel(state, walk + vi2 { 0, -1 }) && !+(*get_wall_voxel(state, walk + vi2 { -1, -1 }) & WallVoxel::bottom) && !+(*get_wall_voxel(state, walk + vi2 { 0, -2 }) & WallVoxel::left)) &&
+											!(!+*get_wall_voxel(state, walk + vi2 { 0, 1 }) && !+(*get_wall_voxel(state, walk) & WallVoxel::left) && !+(*get_wall_voxel(state, walk + vi2 { -1, 1 }) & WallVoxel::bottom))
+										)
+										{
+											break;
+										}
+									}
+								}
+							}
+
+							FOR_RANGE(y, MAP_DIM)
+							{
+								FOR_RANGE(x, MAP_DIM)
+								{
+									if (*get_wall_voxel(state, { x, y }) == (WallVoxel::left | WallVoxel::bottom) && rng(&state->seed) < 0.5f)
+									{
+										*get_wall_voxel(state, { x, y }) = WallVoxel::back_slash;
+									}
+									else if (+(*get_wall_voxel(state, { x + 1, y }) & WallVoxel::left) && +(*get_wall_voxel(state, { x, y + 1 }) & WallVoxel::bottom) && rng(&state->seed) < 0.5f)
+									{
+										*get_wall_voxel(state, { x + 1, y     }) &= ~WallVoxel::left;
+										*get_wall_voxel(state, { x    , y + 1 }) &= ~WallVoxel::bottom;
+										*get_wall_voxel(state, { x    , y     }) |= WallVoxel::back_slash;
+									}
+									else if (+(*get_wall_voxel(state, { x, y }) & WallVoxel::bottom) && *get_wall_voxel(state, { x + 1, y }) == WallVoxel::left && rng(&state->seed) < 0.5f)
+									{
+										*get_wall_voxel(state, { x    , y }) &= ~WallVoxel::bottom;
+										*get_wall_voxel(state, { x + 1, y }) &= ~WallVoxel::left;
+										*get_wall_voxel(state, { x    , y }) |=  WallVoxel::forward_slash;
+									}
+									else if (+(*get_wall_voxel(state, { x, y }) & WallVoxel::left) && *get_wall_voxel(state, { x, y + 1 }) == WallVoxel::bottom && rng(&state->seed) < 0.5f)
+									{
+										*get_wall_voxel(state, { x, y     }) &= ~WallVoxel::left;
+										*get_wall_voxel(state, { x, y + 1 }) &= ~WallVoxel::bottom;
+										*get_wall_voxel(state, { x, y     }) |=  WallVoxel::forward_slash;
+									}
+								}
+							}
+
+							{
+								memory_arena_checkpoint(&state->transient_arena);
+
+								struct DoorSpotNode
+								{
+									vi2           coordinates;
+									WallVoxel     wall_voxel;
+									DoorSpotNode* next_node;
+								};
+
+								DoorSpotNode* door_spot_node  = 0;
+								i32           door_spot_count = 0;
+
+								FOR_RANGE(y, MAP_DIM)
+								{
+									FOR_RANGE(x, MAP_DIM)
+									{
+										FOR_ELEMS(it, WALL_VOXEL_DATA)
+										{
+											if (+(state->game.wall_voxels[y][x] & it->voxel))
+											{
+												DoorSpotNode* node = memory_arena_push<DoorSpotNode>(&state->transient_arena);
+												node->coordinates  = { x, y };
+												node->wall_voxel   = it->voxel;
+												node->next_node    = door_spot_node;
+												door_spot_node     = node;
+												door_spot_count   += 1;
+											}
+										}
+									}
+								}
+
+								ASSERT(door_spot_node);
+
+								for (i32 i = rng(&state->seed, 0, door_spot_count); i; i -= 1)
+								{
+									door_spot_node = door_spot_node->next_node;
+								}
+
+								state->game.door_wall_side.coordinates   = door_spot_node->coordinates;
+								state->game.door_wall_side.voxel         = door_spot_node->wall_voxel;
+								state->game.door_wall_side.is_antinormal = rng(&state->seed) < 0.5f;
+							}
+
+							state->game.creepy_sound_countdown = rng(&state->seed, CREEPY_SOUND_MIN_TIME, CREEPY_SOUND_MAX_TIME);
+
+							state->game.lucia_position.xy = rng_open_position(state);
+							state->game.lucia_position.z  = LUCIA_HEIGHT;
+							state->game.lucia_fov         = TAU / 3.0f;
+							state->game.lucia_stamina     = 1.0f;
+
+							state->game.monster_position.xy = rng_open_position(state);
+
+							lambda create_item =
+								[&](ItemType type)
+								{
+									Item* item = allocate_item(state);
+									*item             = {};
+									item->type        = type;
+									item->position.xy = rng_open_position(state);
+									item->normal      = polar(state->time * 1.5f);
+
+									switch (type)
+									{
+										case ItemType::paper:
+										{
+											item->paper.index = rng(&state->seed, 0, ARRAY_CAPACITY(PAPER_DATA));
+										};
+									}
+								};
+
+							for (ItemType type = ItemType::ITEM_START; type != ItemType::ITEM_END; type = static_cast<ItemType>(+type + 1))
+							{
+								create_item(type);
+							}
+
+							FOR_RANGE(ARRAY_CAPACITY(state->game.item_buffer) - state->game.item_count)
+							{
+								f32 total_weights = 0.0f;
+								FOR_ELEMS(w, ITEM_SPAWN_WEIGHTS)
+								{
+									total_weights += *w;
+								}
+
+								f32 n = rng(&state->seed, 0.0f, total_weights);
+								i32 i = -1;
+								total_weights = 0.0f;
+								FOR_ELEMS(w, ITEM_SPAWN_WEIGHTS)
+								{
+									if (IN_RANGE(n - total_weights, 0.0f, *w))
+									{
+										i = w_index;
+										break;
+									}
+									else
+									{
+										total_weights += *w;
+									}
+								}
+
+								create_item(static_cast<ItemType>(+ItemType::ITEM_START + i));
+							}
+
+							return UpdateCode::resume;
+						} break;
+
+						case TerminalWindowType::power:
+						{
+							if (in_rect(tm.cursor, tm.window_position + vf2 { tm.window_dimensions.x * 0.25f, tm.window_dimensions.y * 0.25f } - TERMINAL_BUTTON_DIMENSIONS / 2.0f, TERMINAL_BUTTON_DIMENSIONS))
+							{
+								return UpdateCode::terminate;
+							}
+							else if (in_rect(tm.cursor, tm.window_position + vf2 { tm.window_dimensions.x * 0.75f, tm.window_dimensions.y * 0.25f } - TERMINAL_BUTTON_DIMENSIONS / 2.0f, TERMINAL_BUTTON_DIMENSIONS))
+							{
+								tm.window_type = TerminalWindowType::null;
+							}
+						} break;
+					}
 				}
 				else
 				{
@@ -1168,19 +1389,23 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 					if (in_rect(tm.cursor, TERMINAL_SETTINGS_POSITION, { TERMINAL_ICON_DIM, TERMINAL_ICON_DIM }))
 					{
-						clicked_window_type = TerminalWindowType::settings;
+						clicked_window_type  = TerminalWindowType::settings;
+						tm.window_dimensions = { 250.0f, 200.0f };
 					}
 					else if (in_rect(tm.cursor, TERMINAL_CREDITS_POSITION, { TERMINAL_ICON_DIM, TERMINAL_ICON_DIM }))
 					{
-						clicked_window_type = TerminalWindowType::credits;
+						clicked_window_type  = TerminalWindowType::credits;
+						tm.window_dimensions = { 250.0f, 300.0f };
 					}
 					else if (in_rect(tm.cursor, TERMINAL_ANTIHOME_PROGRAM_POSITION, { TERMINAL_ICON_DIM, TERMINAL_ICON_DIM }))
 					{
-						clicked_window_type = TerminalWindowType::antihome_program;
+						clicked_window_type  = TerminalWindowType::antihome_program;
+						tm.window_dimensions = { 125.0f, 200.0f };
 					}
 					else if (in_rect(tm.cursor, { 0.0f, 0.0f }, { TERMINAL_TASKBAR_HEIGHT, TERMINAL_TASKBAR_HEIGHT }))
 					{
-						clicked_window_type = TerminalWindowType::power;
+						clicked_window_type  = TerminalWindowType::power;
+						tm.window_dimensions = { 200.0f, 100.0f };
 					}
 
 					if (+clicked_window_type)
@@ -1191,18 +1416,9 @@ extern "C" PROTOTYPE_UPDATE(update)
 						}
 						else
 						{
-							constexpr vf2 WINDOW_DIMENSIONS[TerminalWindowType::TYPE_COUNT] =
-								{
-									{ 125.0f, 150.0f },
-									{ 125.0f, 150.0f },
-									{ 125.0f, 150.0f },
-									{ 100.0f, 50.0f }
-								};
-
 							tm.window_type       = clicked_window_type;
-							tm.window_dimensions = WINDOW_DIMENSIONS[+tm.window_type - +TerminalWindowType::TYPE_START];
 							tm.window_velocity   = { 0.0f, 0.0f };
-							tm.window_position   = (WIN_RES - tm.window_dimensions) / 2.0f;
+							tm.window_position   = (WIN_DIM - tm.window_dimensions) / 2.0f;
 						}
 					}
 				}
@@ -1225,15 +1441,15 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 				tm.window_position += tm.window_velocity * SECONDS_PER_UPDATE;
 
-				if (tm.window_position.x < 2.0f * TERMINAL_TITLE_BAR_HEIGHT - tm.window_dimensions.x || tm.window_position.x > WIN_RES.x - TERMINAL_TITLE_BAR_HEIGHT)
+				if (tm.window_position.x < 2.0f * TERMINAL_TITLE_BAR_HEIGHT - tm.window_dimensions.x || tm.window_position.x > WIN_DIM.x - TERMINAL_TITLE_BAR_HEIGHT)
 				{
-					tm.window_position.x = clamp(tm.window_position.x, 2.0f * TERMINAL_TITLE_BAR_HEIGHT - tm.window_dimensions.x, WIN_RES.x - TERMINAL_TITLE_BAR_HEIGHT);
+					tm.window_position.x = clamp(tm.window_position.x, 2.0f * TERMINAL_TITLE_BAR_HEIGHT - tm.window_dimensions.x, WIN_DIM.x - TERMINAL_TITLE_BAR_HEIGHT);
 					tm.window_velocity.x = 0.0f;
 				}
 
-				if (tm.window_position.y < TERMINAL_TASKBAR_HEIGHT - tm.window_dimensions.y || tm.window_position.y > WIN_RES.y - TERMINAL_TITLE_BAR_HEIGHT)
+				if (tm.window_position.y < TERMINAL_TASKBAR_HEIGHT - tm.window_dimensions.y || tm.window_position.y > WIN_DIM.y - TERMINAL_TITLE_BAR_HEIGHT - tm.window_dimensions.y)
 				{
-					tm.window_position.y = clamp(tm.window_position.y, TERMINAL_TASKBAR_HEIGHT - tm.window_dimensions.y, WIN_RES.y - TERMINAL_TITLE_BAR_HEIGHT);
+					tm.window_position.y = clamp(tm.window_position.y, TERMINAL_TASKBAR_HEIGHT - tm.window_dimensions.y, WIN_DIM.y - TERMINAL_TITLE_BAR_HEIGHT - tm.window_dimensions.y);
 					tm.window_velocity.y = 0.0f;
 				}
 			}
@@ -2126,8 +2342,9 @@ extern "C" PROTOTYPE_RENDER(render)
 					render_text
 					(
 						platform->renderer,
-						state->font.minor,
-						{ position.x + TERMINAL_ICON_DIM / 2.0f, position.y - TERMINAL_ICON_PADDING * 0.35f },
+						state->font.major,
+						{ position.x + TERMINAL_ICON_DIM / 2.0f, position.y - 15.0f },
+						0.5f,
 						FC_ALIGN_CENTER,
 						0.5f,
 						{ 1.0f, 1.0f, 1.0f, 1.0f },
@@ -2158,23 +2375,38 @@ extern "C" PROTOTYPE_RENDER(render)
 
 				switch (tm.window_type)
 				{
-					//case TerminalWindowType::settings:
-					//{
-					//	set_color(platform->renderer, monochrome(0.7f));
-					//	draw_filled_rect(platform->renderer, vxx(tm.window_position), tm.window_dimensionspe::TYPE_START]);
-					//} break;
+					case TerminalWindowType::settings:
+					{
+						set_color(platform->renderer, monochrome(0.2f));
+						render_filled_rect(platform->renderer, tm.window_position, tm.window_dimensions);
+					} break;
 
-					//case TerminalWindowType::credits:
-					//{
-					//	set_color(platform->renderer, { 0.75f, 0.75f, 0.25f, 1.0f });
-					//	draw_filled_rect(platform->renderer, vxx(tm.window_position), tm.window_dimensionspe::TYPE_START]);
-					//} break;
+					case TerminalWindowType::credits:
+					{
+						set_color(platform->renderer, { 0.75f, 0.65f, 0.2f, 1.0f });
+						render_filled_rect(platform->renderer, tm.window_position, tm.window_dimensions);
 
-					//case TerminalWindowType::antihome_program:
-					//{
-					//	set_color(platform->renderer, monochrome(0.7f));
-					//	draw_filled_rect(platform->renderer, vxx(tm.window_position), tm.window_dimensionspe::TYPE_START]);
-					//} break;
+						render_boxed_text
+						(
+							platform->renderer,
+							state->font.minor,
+							tm.window_position   + vf2 { 5.0f, 5.0f },
+							tm.window_dimensions - vf2 { 5.0f, 5.0f } * 2.0f,
+							FC_ALIGN_LEFT,
+							1.0f,
+							{ 1.0f, 1.0f, 1.0f, 1.0f },
+							"Programming done by Phuc Doan.\n\n"
+							"Voice acting performed by Ren Stolebarger.\n\n"
+							"Art drawn by Mila Matthews.\n\n"
+							"Majority of sounds possibly stolen from SCP:CB."
+						);
+					} break;
+
+					case TerminalWindowType::antihome_program:
+					{
+						set_color(platform->renderer, monochrome(0.25f));
+						render_filled_rect(platform->renderer, tm.window_position, tm.window_dimensions);
+					} break;
 
 					case TerminalWindowType::power:
 					{
@@ -2185,29 +2417,49 @@ extern "C" PROTOTYPE_RENDER(render)
 						(
 							platform->renderer,
 							state->font.major,
-							tm.window_position + vf2 { tm.window_dimensions.x * 0.5f, tm.window_dimensions.y * 0.65f },
+							tm.window_position + vf2 { tm.window_dimensions.x * 0.5f, tm.window_dimensions.y * 0.7f },
+							0.5f,
 							FC_ALIGN_CENTER,
-							0.4f,
+							0.8f,
 							{ 1.0f, 1.0f, 1.0f, 1.0f },
 							"Quit?"
 						);
+
+						set_color(platform->renderer, monochrome(0.6f));
+						render_filled_rect(platform->renderer, tm.window_position + vf2 { tm.window_dimensions.x * 0.25f, tm.window_dimensions.y * 0.3f } - TERMINAL_BUTTON_DIMENSIONS / 2.0f, TERMINAL_BUTTON_DIMENSIONS);
 
 						render_text
 						(
 							platform->renderer,
 							state->font.major,
 							tm.window_position + vf2 { tm.window_dimensions.x * 0.25f, tm.window_dimensions.y * 0.3f },
+							0.5f,
 							FC_ALIGN_CENTER,
-							0.3f,
+							0.6f,
 							{ 1.0f, 1.0f, 1.0f, 1.0f },
 							"Yes"
+						);
+
+						set_color(platform->renderer, monochrome(0.6f));
+						render_filled_rect(platform->renderer, tm.window_position + vf2 { tm.window_dimensions.x * 0.75f, tm.window_dimensions.y * 0.3f } - TERMINAL_BUTTON_DIMENSIONS / 2.0f, TERMINAL_BUTTON_DIMENSIONS);
+
+						render_text
+						(
+							platform->renderer,
+							state->font.major,
+							tm.window_position + vf2 { tm.window_dimensions.x * 0.75f, tm.window_dimensions.y * 0.3f },
+							0.5f,
+							FC_ALIGN_CENTER,
+							0.6f,
+							{ 1.0f, 1.0f, 1.0f, 1.0f },
+							"No"
 						);
 					} break;
 				}
 			}
 
 			set_color(platform->renderer, monochrome(0.3f));
-			render_filled_rect(platform->renderer, { 0.0f, 0.0f }, { static_cast<f32>(WIN_RES.x), static_cast<f32>(TERMINAL_TASKBAR_HEIGHT) });
+			render_filled_rect(platform->renderer, { 0.0f, 0.0f }, { static_cast<f32>(WIN_DIM.x), static_cast<f32>(TERMINAL_TASKBAR_HEIGHT) });
 
 			render_texture
 			(
@@ -2221,17 +2473,16 @@ extern "C" PROTOTYPE_RENDER(render)
 			(
 				platform->renderer,
 				state->title_menu.texture.cursor,
-				{ state->title_menu.cursor.x, state->title_menu.cursor.y - 10.0f },
-				{ 5.0f, 10.0f }
+				{ state->title_menu.cursor.x, state->title_menu.cursor.y - 24.0f },
+				{ 12.0f, 24.0f }
 			);
 		} break;
 
 		case StateContext::game:
 		{
-#if 1
 			f32* view_inv_depth_buffer = memory_arena_push<f32>(&state->transient_arena, VIEW_RES.x * VIEW_RES.y);
 
-			set_color(platform->renderer, { 0.05f, 0.1f, 0.15f, 1.0f });
+			set_color(platform->renderer, monochrome(0.0f));
 			SDL_RenderClear(platform->renderer);
 
 			LARGE_INTEGER DEBUG_PERFORMANCE_FREQ;
@@ -2440,7 +2691,7 @@ extern "C" PROTOTYPE_RENDER(render)
 							(
 								clamp((dot(ray, state->game.flashlight_ray) - FLASHLIGHT_OUTER_CUTOFF) / (FLASHLIGHT_INNER_CUTOFF - FLASHLIGHT_OUTER_CUTOFF), 0.0f, 1.0f)
 									/ (square(distance) + 0.1f)
-									* 16.0f
+									* 32.0f
 									* state->game.flashlight_activation,
 								0.0f,
 								1.0f
@@ -2709,17 +2960,18 @@ extern "C" PROTOTYPE_RENDER(render)
 			}
 
 			SDL_UnlockTexture(state->game.texture.view);
-			blit_texture(platform->renderer, state->game.texture.view, { PADDING, PADDING }, VIEW_RES);
+			render_texture(platform->renderer, state->game.texture.view, { 0.0f, HUD_HEIGHT }, { static_cast<f32>(WIN_DIM.x), WIN_DIM.y - HUD_HEIGHT });
 
 			if (state->game.notification_keytime)
 			{
-				draw_text
+				render_text
 				(
 					platform->renderer,
-					state->font.major,
-					{ WIN_RES.x * 0.5f, PADDING + VIEW_RES.y * 0.8f },
+					state->font.minor,
+					{ WIN_DIM.x * 0.5f, HUD_HEIGHT + (WIN_DIM.y - HUD_HEIGHT) * 0.2f },
+					0.5f,
 					FC_ALIGN_CENTER,
-					0.175f,
+					1.0f,
 					{ 1.0f, 1.0f, 1.0f, sinf(TAU / 4.0f * square(state->game.notification_keytime)) },
 					"%s",
 					state->game.notification_message
@@ -2727,33 +2979,34 @@ extern "C" PROTOTYPE_RENDER(render)
 			}
 
 			set_color(platform->renderer, monochrome(0.1f));
-			draw_filled_rect(platform->renderer, { PADDING, VIEW_RES.y + PADDING * 2 }, HUD_RES);
+			render_filled_rect(platform->renderer, { 0.0f, 0.0f }, { static_cast<f32>(WIN_DIM.x), HUD_HEIGHT });
 
-			blit_texture
+			render_texture
 			(
 				platform->renderer,
 				state->game.texture.lucia_normal,
-				{ (WIN_RES.x - HUD_RES.y) / 2, WIN_RES.y - 1 - PADDING - HUD_RES.y },
-				{ HUD_RES.y, HUD_RES.y }
+				{ WIN_DIM.x / 2.0f - HUD_HEIGHT / 2.0f, 0.0f },
+				{ HUD_HEIGHT, HUD_HEIGHT }
 			);
 
-			constexpr i32 BATTERY_LEFT_PADDING       = 10;
-			constexpr i32 BATTERY_TOP_BOTTOM_PADDING = 10;
-			constexpr i32 BATTERY_WIDTH              = 15;
-			constexpr i32 BATTERY_OUTLINE            = 2;
+			constexpr i32 BATTERY_LEFT_PADDING       = 50;
+			constexpr i32 BATTERY_TOP_BOTTOM_PADDING = 35;
+			constexpr i32 BATTERY_WIDTH              = 55;
+			constexpr i32 BATTERY_OUTLINE            = 5;
 
 			set_color(platform->renderer, monochrome(0.25f));
-			draw_filled_rect
+
+			render_filled_rect
 			(
 				platform->renderer,
-				{ PADDING + BATTERY_LEFT_PADDING - BATTERY_OUTLINE, WIN_RES.y - PADDING - HUD_RES.y + BATTERY_TOP_BOTTOM_PADDING - BATTERY_OUTLINE },
-				{ BATTERY_WIDTH + BATTERY_OUTLINE * 2, HUD_RES.y - BATTERY_TOP_BOTTOM_PADDING * 2 + BATTERY_OUTLINE * 2 }
+				{ BATTERY_LEFT_PADDING - BATTERY_OUTLINE, BATTERY_TOP_BOTTOM_PADDING - BATTERY_OUTLINE },
+				{ BATTERY_WIDTH + BATTERY_OUTLINE * 2.0f, HUD_HEIGHT - BATTERY_TOP_BOTTOM_PADDING * 2.0f + BATTERY_OUTLINE * 2.0f }
 			);
-			draw_filled_rect
+			render_filled_rect
 			(
 				platform->renderer,
-				{ PADDING + BATTERY_LEFT_PADDING + BATTERY_WIDTH / 2 - BATTERY_OUTLINE * 2, WIN_RES.y - PADDING - HUD_RES.y + BATTERY_TOP_BOTTOM_PADDING - BATTERY_OUTLINE * 2 },
-				{ BATTERY_OUTLINE * 4, BATTERY_OUTLINE * 2 }
+				{ BATTERY_LEFT_PADDING + BATTERY_WIDTH / 2.0f - BATTERY_OUTLINE, HUD_HEIGHT - BATTERY_TOP_BOTTOM_PADDING + BATTERY_OUTLINE },
+				{ BATTERY_OUTLINE * 2.0f, BATTERY_OUTLINE }
 			);
 
 			constexpr vf3 BATTERY_LEVEL_COLORS[] = { { 0.7f, 0.05f, 0.04f }, { 0.7f, 0.4f, 0.03f }, { 0.4f, 0.7f, 0.04f }, { 0.04f, 0.85f, 0.04f } };
@@ -2772,31 +3025,30 @@ extern "C" PROTOTYPE_RENDER(render)
 					)
 				);
 
-				draw_filled_rect
+				render_filled_rect
 				(
 					platform->renderer,
-					{ PADDING + BATTERY_LEFT_PADDING, static_cast<i32>(WIN_RES.y - PADDING - HUD_RES.y + BATTERY_TOP_BOTTOM_PADDING + (HUD_RES.y - BATTERY_TOP_BOTTOM_PADDING * 2.0f) * (1.0f - (1.0f + level_index) / static_cast<i32>(ARRAY_CAPACITY(BATTERY_LEVEL_COLORS)))) },
-					{ BATTERY_WIDTH, (HUD_RES.y - BATTERY_TOP_BOTTOM_PADDING * 2) / static_cast<i32>(ARRAY_CAPACITY(BATTERY_LEVEL_COLORS)) }
+					{ BATTERY_LEFT_PADDING, BATTERY_TOP_BOTTOM_PADDING + level_index * (HUD_HEIGHT - BATTERY_TOP_BOTTOM_PADDING * 2.0f) / ARRAY_CAPACITY(BATTERY_LEVEL_COLORS) },
+					{ BATTERY_WIDTH, (HUD_HEIGHT - BATTERY_TOP_BOTTOM_PADDING * 2.0f) / ARRAY_CAPACITY(BATTERY_LEVEL_COLORS) }
 				);
 			}
 
-			constexpr vi2 HEART_RATE_MONITOR_DIMENSIONS  = { 50, HUD_RES.y - 20 };
-			constexpr vi2 HEART_RATE_MONITOR_COORDINATES = vi2 { WIN_RES.x - PADDING - 10, WIN_RES.y - PADDING - 10 } - HEART_RATE_MONITOR_DIMENSIONS;
-			static_assert(ARRAY_CAPACITY(state->game.heart_rate_values) <= HEART_RATE_MONITOR_DIMENSIONS.x);
+			constexpr vf2 HEART_RATE_MONITOR_DIMENSIONS  = { 200.0f, HUD_HEIGHT * 0.6f };
+			constexpr vf2 HEART_RATE_MONITOR_COORDINATES = vf2 { WIN_DIM.x - 30.0f - HEART_RATE_MONITOR_DIMENSIONS.x, (HUD_HEIGHT - HEART_RATE_MONITOR_DIMENSIONS.y) / 2.0f };
 
 			set_color(platform->renderer, monochrome(0.15f));
-			draw_filled_rect(platform->renderer, HEART_RATE_MONITOR_COORDINATES, HEART_RATE_MONITOR_DIMENSIONS);
+			render_filled_rect(platform->renderer, HEART_RATE_MONITOR_COORDINATES, HEART_RATE_MONITOR_DIMENSIONS);
 
 			FOR_ELEMS(it, state->game.heart_rate_values, ARRAY_CAPACITY(state->game.heart_rate_values) - 1)
 			{
 				if (it_index + 1 != state->game.heart_rate_index)
 				{
 					set_color(platform->renderer, { mod(it_index - state->game.heart_rate_index, ARRAY_CAPACITY(state->game.heart_rate_values)) / static_cast<f32>(ARRAY_CAPACITY(state->game.heart_rate_values)), 0.0f, 0.0f, 1.0f });
-					draw_line
+					render_line
 					(
 						platform->renderer,
-						HEART_RATE_MONITOR_COORDINATES + vxx(vf2 {  it_index         / static_cast<f32>(ARRAY_CAPACITY(state->game.heart_rate_values)) * HEART_RATE_MONITOR_DIMENSIONS.x, clamp((0.75f - * it      / 2.0f), 0.0f, 1.0f) * HEART_RATE_MONITOR_DIMENSIONS.y }),
-						HEART_RATE_MONITOR_COORDINATES + vxx(vf2 { (it_index + 1.0f) / static_cast<f32>(ARRAY_CAPACITY(state->game.heart_rate_values)) * HEART_RATE_MONITOR_DIMENSIONS.x, clamp((0.75f - *(it + 1) / 2.0f), 0.0f, 1.0f) * HEART_RATE_MONITOR_DIMENSIONS.y })
+						HEART_RATE_MONITOR_COORDINATES + vxx(vf2 {  it_index         / static_cast<f32>(ARRAY_CAPACITY(state->game.heart_rate_values)) * HEART_RATE_MONITOR_DIMENSIONS.x, clamp((* it      / 2.0f + 0.25f), 0.0f, 1.0f) * HEART_RATE_MONITOR_DIMENSIONS.y }),
+						HEART_RATE_MONITOR_COORDINATES + vxx(vf2 { (it_index + 1.0f) / static_cast<f32>(ARRAY_CAPACITY(state->game.heart_rate_values)) * HEART_RATE_MONITOR_DIMENSIONS.x, clamp((*(it + 1) / 2.0f + 0.25f), 0.0f, 1.0f) * HEART_RATE_MONITOR_DIMENSIONS.y })
 					);
 				}
 			}
@@ -2811,11 +3063,12 @@ extern "C" PROTOTYPE_RENDER(render)
 			}
 
 			// @TEMP@
-			draw_text
+			render_text
 			(
 				platform->renderer,
 				state->font.minor,
 				{ 0.0f, 0.0f },
+				1.0f,
 				FC_ALIGN_LEFT,
 				1.0f,
 				{ 1.0f, 1.0f, 1.0f, 1.0f },
@@ -2823,218 +3076,19 @@ extern "C" PROTOTYPE_RENDER(render)
 				state->game.lucia_position.x,
 				state->game.lucia_position.y
 			);
-#elif 1
-			set_color(platform->renderer, monochrome(0.0f));
-			SDL_RenderClear(platform->renderer);
-
-			vf2 camera_position  = state->game.lucia_position.xy;
-			f32 pixels_per_meter = 64.0f;
-
-			set_color(platform->renderer, monochrome(0.1f));
-			draw_filled_rect
-			(
-				platform->renderer,
-				vxx(WIN_RES / 2.0f + vf2 { -camera_position.x * pixels_per_meter, - 1.0f + (camera_position.y - MAP_DIM * WALL_SPACING) * pixels_per_meter }),
-				vxx(vf2 { MAP_DIM * WALL_SPACING, MAP_DIM * WALL_SPACING } * pixels_per_meter)
-			);
-
-			FOR_RANGE(y, MAP_DIM)
-			{
-				FOR_RANGE(x, MAP_DIM)
-				{
-					FOR_ELEMS(it, WALL_VOXEL_DATA)
-					{
-						if (+(state->game.wall_voxels[y][x] & it->voxel))
-						{
-							vf2 start_pos = vf2 { (x + it->start.x) * WALL_SPACING, (y + it->start.y) * WALL_SPACING } - camera_position;
-							vf2 end_pos   = vf2 { (x + it->end.x  ) * WALL_SPACING, (y + it->end.y  ) * WALL_SPACING } - camera_position;
-
-							set_color(platform->renderer, monochrome(0.75f));
-							SDL_RenderDrawLine
-							(
-								platform->renderer,
-								static_cast<i32>(WIN_RES.x / 2.0f + start_pos.x * pixels_per_meter), static_cast<i32>(WIN_RES.y / 2.0f - 1.0f - start_pos.y * pixels_per_meter),
-								static_cast<i32>(WIN_RES.x / 2.0f + end_pos.x   * pixels_per_meter), static_cast<i32>(WIN_RES.y / 2.0f - 1.0f - end_pos.y   * pixels_per_meter)
-							);
-
-							set_color(platform->renderer, { 0.5f, 0.5f, 0.25f, 1.0f });
-							draw_circle(platform->renderer, { static_cast<i32>(WIN_RES.x / 2.0f + start_pos.x * pixels_per_meter), static_cast<i32>(WIN_RES.y / 2.0f - 1.0f - start_pos.y * pixels_per_meter) }, static_cast<i32>(WALL_THICKNESS * pixels_per_meter));
-							draw_circle(platform->renderer, { static_cast<i32>(WIN_RES.x / 2.0f + end_pos.x   * pixels_per_meter), static_cast<i32>(WIN_RES.y / 2.0f - 1.0f - end_pos.y   * pixels_per_meter) }, static_cast<i32>(WALL_THICKNESS * pixels_per_meter));
-
-							start_pos = vf2 { (x + it->start.x) * WALL_SPACING, (y + it->start.y) * WALL_SPACING } - it->normal * WALL_THICKNESS - camera_position;
-							end_pos   = vf2 { (x + it->end.x  ) * WALL_SPACING, (y + it->end.y  ) * WALL_SPACING } - it->normal * WALL_THICKNESS - camera_position;
-							SDL_RenderDrawLine
-							(
-								platform->renderer,
-								static_cast<i32>(WIN_RES.x / 2.0f + start_pos.x * pixels_per_meter), static_cast<i32>(WIN_RES.y / 2.0f - 1.0f - start_pos.y * pixels_per_meter),
-								static_cast<i32>(WIN_RES.x / 2.0f + end_pos.x   * pixels_per_meter), static_cast<i32>(WIN_RES.y / 2.0f - 1.0f - end_pos.y   * pixels_per_meter)
-							);
-
-							start_pos = vf2 { (x + it->start.x) * WALL_SPACING, (y + it->start.y) * WALL_SPACING } + it->normal * WALL_THICKNESS - camera_position;
-							end_pos   = vf2 { (x + it->end.x  ) * WALL_SPACING, (y + it->end.y  ) * WALL_SPACING } + it->normal * WALL_THICKNESS - camera_position;
-							SDL_RenderDrawLine
-							(
-								platform->renderer,
-								static_cast<i32>(WIN_RES.x / 2.0f + start_pos.x * pixels_per_meter), static_cast<i32>(WIN_RES.y / 2.0f - 1.0f - start_pos.y * pixels_per_meter),
-								static_cast<i32>(WIN_RES.x / 2.0f + end_pos.x   * pixels_per_meter), static_cast<i32>(WIN_RES.y / 2.0f - 1.0f - end_pos.y   * pixels_per_meter)
-							);
-						}
-					}
-
-
-					set_color(platform->renderer, monochrome(0.5f));
-					SDL_RenderDrawPoint
-					(
-						platform->renderer,
-						static_cast<i32>(WIN_RES.x / 2.0f + (x * WALL_SPACING - camera_position.x) * pixels_per_meter),
-						static_cast<i32>(WIN_RES.y / 2.0f - 1.0f - (y * WALL_SPACING - camera_position.y) * pixels_per_meter)
-					);
-				}
-			}
-
-			set_color(platform->renderer, { 0.5f, 0.25f, 0.25f, 1.0f });
-			draw_circle
-			(
-				platform->renderer,
-				vxx(WIN_RES / 2.0f + vf2 { (state->game.lucia_position.x - camera_position.x) * pixels_per_meter, -1.0f - (state->game.lucia_position.y - camera_position.y) * pixels_per_meter }),
-				5
-			);
-			set_color(platform->renderer, { 0.5f, 0.25f, 0.25f, 1.0f });
-			SDL_RenderDrawLine
-			(
-				platform->renderer,
-				static_cast<i32>(WIN_RES.x / 2.0f + (state->game.lucia_position.x - camera_position.x) * pixels_per_meter),
-				static_cast<i32>(WIN_RES.y / 2.0f - 1.0f - (state->game.lucia_position.y - camera_position.y) * pixels_per_meter),
-				static_cast<i32>(WIN_RES.x / 2.0f + (state->game.lucia_position.x + cosf(state->game.lucia_angle) * 3.0f - camera_position.x) * pixels_per_meter),
-				static_cast<i32>(WIN_RES.y / 2.0f - 1.0f - (state->game.lucia_position.y + sinf(state->game.lucia_angle) * 3.0f - camera_position.y) * pixels_per_meter)
-			);
-
-			const WallVoxelData* door_data = get_wall_voxel_data(state->game.door_wall_side.voxel);
-			vf2                  door_pos  = (state->game.door_wall_side.coordinates + (door_data->start + door_data->end) / 2.0f) * WALL_SPACING + (state->game.door_wall_side.is_antinormal ? -door_data->normal : door_data->normal);
-			set_color(platform->renderer, { 0.25f, 0.5f, 0.25f, 1.0f });
-			draw_circle
-			(
-				platform->renderer,
-				vxx(WIN_RES / 2.0f + vf2 { (door_pos.x - camera_position.x) * pixels_per_meter, -1.0f - (door_pos.y - camera_position.y) * pixels_per_meter }),
-				5
-			);
-#else
-			set_color(platform->renderer, monochrome(0.0f));
-			SDL_RenderClear(platform->renderer);
-
-			persist vf2 camera_position  = vf2 { MAP_DIM * WALL_SPACING / 2.0f, MAP_DIM * WALL_SPACING / 2.0f };
-			f32 pixels_per_meter = 2.0f;
-
-			constexpr f32 SPEED = 16.0f;
-			if (HOLDING(Input::left))
-			{
-				camera_position.x -= SPEED * SECONDS_PER_UPDATE;
-			}
-			if (HOLDING(Input::right))
-			{
-				camera_position.x += SPEED * SECONDS_PER_UPDATE;
-			}
-			if (HOLDING(Input::down))
-			{
-				camera_position.y -= SPEED * SECONDS_PER_UPDATE;
-			}
-			if (HOLDING(Input::up))
-			{
-				camera_position.y += SPEED * SECONDS_PER_UPDATE;
-			}
-
-			set_color(platform->renderer, monochrome(0.1f));
-			draw_filled_rect
-			(
-				platform->renderer,
-				vxx(WIN_RES / 2.0f + vf2 { -camera_position.x * pixels_per_meter, - 1.0f + (camera_position.y - MAP_DIM * WALL_SPACING) * pixels_per_meter }),
-				vxx(vf2 { MAP_DIM * WALL_SPACING, MAP_DIM * WALL_SPACING } * pixels_per_meter)
-			);
-
-			FOR_RANGE(y, MAP_DIM)
-			{
-				FOR_RANGE(x, MAP_DIM)
-				{
-					FOR_ELEMS(it, WALL_VOXEL_DATA)
-					{
-						if (+(state->game.wall_voxels[y][x] & it->voxel))
-						{
-							set_color(platform->renderer, monochrome(0.75f));
-							SDL_RenderDrawLine
-							(
-								platform->renderer,
-								static_cast<i32>(WIN_RES.x / 2.0f + ((x + it->start.x) * WALL_SPACING - camera_position.x) * pixels_per_meter),
-								static_cast<i32>(WIN_RES.y / 2.0f - 1.0f - ((y + it->start.y) * WALL_SPACING - camera_position.y) * pixels_per_meter),
-								static_cast<i32>(WIN_RES.x / 2.0f + ((x + it->end.x) * WALL_SPACING - camera_position.x) * pixels_per_meter),
-								static_cast<i32>(WIN_RES.y / 2.0f - 1.0f - ((y + it->end.y) * WALL_SPACING - camera_position.y) * pixels_per_meter)
-							);
-						}
-					}
-
-
-					set_color(platform->renderer, monochrome(0.5f));
-					SDL_RenderDrawPoint
-					(
-						platform->renderer,
-						static_cast<i32>(WIN_RES.x / 2.0f + (x * WALL_SPACING - camera_position.x) * pixels_per_meter),
-						static_cast<i32>(WIN_RES.y / 2.0f - 1.0f - (y * WALL_SPACING - camera_position.y) * pixels_per_meter)
-					);
-				}
-			}
-
-			set_color(platform->renderer, { 0.5f, 0.25f, 0.25f, 1.0f });
-			draw_circle
-			(
-				platform->renderer,
-				vxx(WIN_RES / 2.0f + vf2 { (state->game.lucia_position.x - camera_position.x) * pixels_per_meter, -1.0f - (state->game.lucia_position.y - camera_position.y) * pixels_per_meter }),
-				5
-			);
-			set_color(platform->renderer, { 0.5f, 0.25f, 0.25f, 1.0f });
-			SDL_RenderDrawLine
-			(
-				platform->renderer,
-				static_cast<i32>(WIN_RES.x / 2.0f + (state->game.lucia_position.x - camera_position.x) * pixels_per_meter),
-				static_cast<i32>(WIN_RES.y / 2.0f - 1.0f - (state->game.lucia_position.y - camera_position.y) * pixels_per_meter),
-				static_cast<i32>(WIN_RES.x / 2.0f + (state->game.lucia_position.x + cosf(state->game.lucia_angle) * 3.0f - camera_position.x) * pixels_per_meter),
-				static_cast<i32>(WIN_RES.y / 2.0f - 1.0f - (state->game.lucia_position.y + sinf(state->game.lucia_angle) * 3.0f - camera_position.y) * pixels_per_meter)
-			);
-
-			const WallVoxelData* door_data = get_wall_voxel_data(state->game.door_wall_side.voxel);
-			vf2                  door_pos  = (state->game.door_wall_side.coordinates + (door_data->start + door_data->end) / 2.0f) * WALL_SPACING + (state->game.door_wall_side.is_antinormal ? -door_data->normal : door_data->normal);
-			set_color(platform->renderer, { 0.25f, 0.5f, 0.25f, 1.0f });
-			draw_circle
-			(
-				platform->renderer,
-				vxx(WIN_RES / 2.0f + vf2 { (door_pos.x - camera_position.x) * pixels_per_meter, -1.0f - (door_pos.y - camera_position.y) * pixels_per_meter }),
-				5
-			);
-#endif
 		} break;
 
 		case StateContext::end:
 		{
-			aliasing end = state->end;
-
 			set_color(platform->renderer, { 0.1f, 0.05f, 0.05f, 1.0f });
 			SDL_RenderClear(platform->renderer);
 
-			draw_text
-			(
-				platform->renderer,
-				state->font.major,
-				{ WIN_RES.x * 0.5f, WIN_RES.y * 0.5f },
-				FC_ALIGN_CENTER,
-				1.0f,
-				{ 1.0f, 1.0f, 1.0f, 1.0f },
-				"END OF REPORT"
-			);
-
-			blackout = 1.0f - end.entering_keytime;
+			blackout = 1.0f - state->end.entering_keytime;
 		};
 	}
 
 	set_color(platform->renderer, { 0.0f, 0.0f, 0.0f, blackout });
-	draw_filled_rect(platform->renderer, { 0, 0 }, WIN_RES);
+	draw_filled_rect(platform->renderer, { 0, 0 }, WIN_DIM);
 
 	SDL_RenderPresent(platform->renderer);
 }
