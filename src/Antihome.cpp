@@ -558,7 +558,7 @@ internal PathCoordinatesNode* allocate_path_coordinates_node(State* state)
 	}
 	else
 	{
-		return memory_arena_push<PathCoordinatesNode>(&state->long_term_arena);
+		return memory_arena_allocate<PathCoordinatesNode>(&state->long_term_arena);
 	}
 }
 
@@ -688,24 +688,7 @@ internal vf2 ray_to_closest(vf2 position, vf2 target)
 	position.y = mod(position.y, MAP_DIM * WALL_SPACING);
 	target.x   = mod(target  .x, MAP_DIM * WALL_SPACING);
 	target.y   = mod(target  .y, MAP_DIM * WALL_SPACING);
-
-	i32 closest_index = -1;
-	f32 best_distance = NAN;
-	vf2 best_ray      = { NAN, NAN };
-	FOR_RANGE(i, 9)
-	{
-		vf2 ray      = target - position + vi2 { i % 3 - 1, i / 3 - 1 } * MAP_DIM * WALL_SPACING;
-		f32 distance = norm(ray);
-
-		if (closest_index == -1 || best_distance > distance)
-		{
-			closest_index = i;
-			best_distance = distance;
-			best_ray      = ray;
-		}
-	}
-
-	return best_ray;
+	return target - position + vf2 { roundf((position.x - target.x) / (MAP_DIM * WALL_SPACING)), roundf((position.y - target.y) / (MAP_DIM * WALL_SPACING)) } * MAP_DIM * WALL_SPACING;
 }
 
 internal Item* allocate_item(State* state)
@@ -1246,7 +1229,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 												if (+(state->game.wall_voxels[y][x] & it->voxel))
 												{
 													{
-														WallSideNode* node = memory_arena_push<WallSideNode>(&state->transient_arena);
+														WallSideNode* node = memory_arena_allocate<WallSideNode>(&state->transient_arena);
 														node->wall_side.coordinates   = { x, y };
 														node->wall_side.voxel         = it->voxel;
 														node->wall_side.is_antinormal = false;
@@ -1256,7 +1239,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 													}
 
 													{
-														WallSideNode* node = memory_arena_push<WallSideNode>(&state->transient_arena);
+														WallSideNode* node = memory_arena_allocate<WallSideNode>(&state->transient_arena);
 														node->wall_side.coordinates   = { x, y };
 														node->wall_side.voxel         = it->voxel;
 														node->wall_side.is_antinormal = true;
@@ -1949,7 +1932,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 					PathVertex path_vertices[MAP_DIM * 2][MAP_DIM] = {};
 					path_vertices[starting_coordinates.y][starting_coordinates.x].is_set = true;
 
-					PathQueueNode* path_queue = memory_arena_push<PathQueueNode>(&state->transient_arena);
+					PathQueueNode* path_queue = memory_arena_allocate<PathQueueNode>(&state->transient_arena);
 					path_queue->estimated_length = path_distance_function(starting_coordinates, state->game.monster_path_goal);
 					path_queue->prev_coordinates = { -1, -1 };
 					path_queue->coordinates      = starting_coordinates;
@@ -2077,7 +2060,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 								}
 								else
 								{
-									new_node = memory_arena_push<PathQueueNode>(&state->transient_arena);
+									new_node = memory_arena_allocate<PathQueueNode>(&state->transient_arena);
 								}
 
 								new_node->estimated_length = next_estimated_length;
@@ -2184,16 +2167,19 @@ extern "C" PROTOTYPE_UPDATE(update)
 					f32 best_heuristic = 0.0f;
 					FOR_ELEMS(item, state->game.item_buffer, state->game.item_count)
 					{
-						vf2 ray      = ray_to_closest(state->game.lucia_position.xy, item->position.xy);
-						f32 distance = norm(ray);
-
-						if (distance < 1.5f)
+						if (exists_clear_way(state, state->game.lucia_position.xy, item->position.xy))
 						{
-							f32 heuristic = 1.0f / (distance + 0.5f) + square(clamp(dot(ray / distance, polar(state->game.lucia_angle)), 0.0f, 1.0f));
-							if (best_heuristic <= heuristic)
+							vf2 ray      = ray_to_closest(state->game.lucia_position.xy, item->position.xy);
+							f32 distance = norm(ray);
+
+							if (distance < 1.5f)
 							{
-								best_heuristic                = heuristic;
-								state->game.hand_hovered_item = item;
+								f32 heuristic = 1.0f / (distance + 0.5f) + square(clamp(dot(ray / distance, polar(state->game.lucia_angle)), 0.0f, 1.0f));
+								if (best_heuristic <= heuristic)
+								{
+									best_heuristic                = heuristic;
+									state->game.hand_hovered_item = item;
+								}
 							}
 						}
 					}
@@ -2505,8 +2491,6 @@ extern "C" PROTOTYPE_RENDER(render)
 
 		case StateContext::game:
 		{
-			f32* view_inv_depth_buffer = memory_arena_push<f32>(&state->transient_arena, VIEW_RES.x * VIEW_RES.y);
-
 			set_color(platform->renderer, monochrome(0.0f));
 			SDL_RenderClear(platform->renderer);
 
@@ -2519,34 +2503,6 @@ extern "C" PROTOTYPE_RENDER(render)
 
 			FOR_RANGE(x, VIEW_RES.x)
 			{
-				#define PROFILE true
-				#if PROFILE
-				constexpr i32           DEBUG_SCANS       = 10'000;
-				persist   u64           DEBUG_ACCUMULATOR = 0;
-				persist   i32           DEBUG_COUNTER     = 0;
-				persist   LARGE_INTEGER DEBUG_FREQUENCY;
-
-				QueryPerformanceFrequency(&DEBUG_FREQUENCY);
-
-				LARGE_INTEGER DEBUG_LI_0;
-				QueryPerformanceCounter(&DEBUG_LI_0);
-
-				DEFER
-				{
-					LARGE_INTEGER DEBUG_LI_1;
-					QueryPerformanceCounter(&DEBUG_LI_1);
-
-					DEBUG_ACCUMULATOR += DEBUG_LI_1.QuadPart - DEBUG_LI_0.QuadPart;
-					DEBUG_COUNTER     += 1;
-					if (DEBUG_COUNTER > DEBUG_SCANS)
-					{
-						DEBUG_printf("%f\n", DEBUG_ACCUMULATOR / static_cast<f64>(DEBUG_FREQUENCY.QuadPart));
-						DEBUG_ACCUMULATOR = 0;
-						DEBUG_COUNTER     = 0;
-					}
-				};
-				#endif
-
 				vf2 ray_horizontal = polar(state->game.lucia_angle + (0.5f - static_cast<f32>(x) / VIEW_RES.x) * state->game.lucia_fov);
 
 				bool32    wall_exists   = false;
@@ -2749,76 +2705,22 @@ extern "C" PROTOTYPE_RENDER(render)
 						return vf3 { clamp(new_color.x, 0.0f, 1.0f), clamp(new_color.y, 0.0f, 1.0f), clamp(new_color.z, 0.0f, 1.0f) };
 					};
 
-				FOR_RANGE(y, 0, VIEW_RES.y)
-				{
-					vf3 ray = normalize({ ray_horizontal.x, ray_horizontal.y, (y - VIEW_RES.y / 2.0f) * state->game.lucia_fov / HORT_TO_VERT_K });
+				#define PROFILE true
+				#if PROFILE
+				constexpr i32           DEBUG_SCANS       = 10'000;
+				persist   u64           DEBUG_ACCUMULATOR = 0;
+				persist   i32           DEBUG_COUNTER     = 0;
+				persist   LARGE_INTEGER DEBUG_FREQUENCY;
 
-					if (IN_RANGE(y, pixel_starting_y, pixel_ending_y))
-					{
-						f32 y_portion = static_cast<f32>(y - starting_y) / (ending_y - starting_y);
-						f32 distance  = sqrtf(square(wall_distance) + square(y_portion * WALL_HEIGHT - state->game.lucia_position.z));
-						vf3 normal    = vxx(wall_normal, 0.0f);
+				QueryPerformanceFrequency(&DEBUG_FREQUENCY);
 
-						vf4 overlay_color =
-							overlay_img && IN_RANGE(y_portion, overlay_uv_position.y, overlay_uv_position.y + overlay_uv_dimensions.y)
-								? img_color_at(overlay_img, { (wall_portion - overlay_uv_position.x) / overlay_uv_dimensions.x, (y_portion - overlay_uv_position.y) / overlay_uv_dimensions.y })
-								: vf4 { 0.0f, 0.0, 0.0f, 0.0f };
-
-						view_pixels[(VIEW_RES.y - 1 - y) * VIEW_RES.x + x] =
-							pack_color
-							(
-								shader
-								(
-									lerp
-									(
-										mipmap_color_at(&state->game.mipmap.wall, distance / 4.0f + MIPMAP_LEVELS * square(1.0f - fabsf(dot(ray, normal))), { wall_portion, y_portion }),
-										overlay_color.xyz,
-										overlay_color.w
-									),
-									ray,
-									normal,
-									distance
-								)
-							);
-
-						view_inv_depth_buffer[x * VIEW_RES.y + y] = 1.0f / distance;
-					}
-					else if (fabs(ray.z) > 0.0001f)
-					{
-						f32     distance;
-						vf2     uv;
-						vf3     normal;
-						Mipmap* mipmap;
-
-						if (y < VIEW_RES.y / 2)
-						{
-							f32 zk   = -state->game.lucia_position.z / ray.z;
-							uv       = state->game.lucia_position.xy + zk * ray.xy;
-							distance = sqrtf(norm_sq(uv - state->game.lucia_position.xy) + square(state->game.lucia_position.z));
-							normal   = { 0.0f, 0.0f, 1.0f };
-							mipmap   = &state->game.mipmap.floor;
-						}
-						else
-						{
-							f32 zk   = (WALL_HEIGHT - state->game.lucia_position.z) / ray.z;
-							uv       = state->game.lucia_position.xy + zk * ray.xy;
-							distance = sqrtf(norm_sq(uv - state->game.lucia_position.xy) + square(WALL_HEIGHT - state->game.lucia_position.z));
-							normal   = { 0.0f, 0.0f, -1.0f };
-							mipmap   = &state->game.mipmap.ceiling;
-						}
-
-						uv.x = mod(uv.x / 4.0f, 1.0f);
-						uv.y = mod(uv.y / 4.0f, 1.0f);
-
-						view_pixels[(VIEW_RES.y - 1 - y) * VIEW_RES.x + x] = pack_color(shader(mipmap_color_at(mipmap, distance / 16.0f + MIPMAP_LEVELS * square(1.0f - fabsf(dot(ray, normal))), uv), ray, normal, distance));
-						view_inv_depth_buffer[x * VIEW_RES.y + y] = 1.0f / distance;
-					}
-				}
+				LARGE_INTEGER DEBUG_LI_0;
+				QueryPerformanceCounter(&DEBUG_LI_0);
+				#endif
 
 				struct RenderScanNode
 				{
 					Img*            img;
-					vf3             position;
 					vf2             normal;
 					f32             distance;
 					f32             portion;
@@ -2827,8 +2729,8 @@ extern "C" PROTOTYPE_RENDER(render)
 					RenderScanNode* next_node;
 				};
 
-				RenderScanNode* render_scan_node = 0;
 				memory_arena_checkpoint(&state->transient_arena);
+				RenderScanNode* render_scan_node = 0;
 
 				lambda scan =
 					[&](Img* img, vf3 position, vf2 normal, vf2 dimensions)
@@ -2857,6 +2759,7 @@ extern "C" PROTOTYPE_RENDER(render)
 									current_position.xy + rotate90(normal) * dimensions.x / 2.0f
 								)
 								&& IN_RANGE(portion, 0.0f, 1.0f)
+								&& (!wall_exists || wall_distance > distance)
 							)
 							{
 								RenderScanNode** post_node = &render_scan_node;
@@ -2865,9 +2768,8 @@ extern "C" PROTOTYPE_RENDER(render)
 									post_node = &(*post_node)->next_node;
 								}
 
-								RenderScanNode* new_node = memory_arena_push<RenderScanNode>(&state->transient_arena);
+								RenderScanNode* new_node = memory_arena_allocate<RenderScanNode>(&state->transient_arena);
 								new_node->img        = img;
-								new_node->position   = current_position;
 								new_node->normal     = normal;
 								new_node->distance   = distance;
 								new_node->portion    = portion;
@@ -2891,7 +2793,6 @@ extern "C" PROTOTYPE_RENDER(render)
 						}
 					};
 
-
 				scan(&state->game.img.monster, state->game.monster_position, state->game.monster_normal, { 1.0f, 1.0f });
 
 				if (state->game.hand_hovered_item || state->game.hand_on_door)
@@ -2904,39 +2805,116 @@ extern "C" PROTOTYPE_RENDER(render)
 					scan(&state->game.img.default_items[+item->type - +ItemType::ITEM_START], item->position, item->normal, { 0.25f, 0.25f });
 				}
 
+				vf4* scan_line = memory_arena_allocate_zero<vf4>(&state->transient_arena, VIEW_RES.y);
+
 				for (RenderScanNode* node = render_scan_node; node; node = node->next_node)
 				{
-					i32 scan_pixel_starting_y = clamp(node->starting_y, 0, VIEW_RES.y);
-					i32 scan_pixel_ending_y   = clamp(node->ending_y  , 0, VIEW_RES.y);
-
-					FOR_RANGE(y, scan_pixel_starting_y, scan_pixel_ending_y)
+					FOR_RANGE(y, clamp(node->starting_y, 0, VIEW_RES.y), clamp(node->ending_y, 0, VIEW_RES.y))
 					{
-						vf4 scan_pixel = img_color_at(node->img, { node->portion, (static_cast<f32>(y) - node->starting_y) / (node->ending_y - node->starting_y) });
+						vf3 ray          = normalize({ ray_horizontal.x, ray_horizontal.y, (y - VIEW_RES.y / 2.0f) * state->game.lucia_fov / HORT_TO_VERT_K });
+						vf4 sprite_pixel = img_color_at(node->img, { node->portion, (static_cast<f32>(y) - node->starting_y) / (node->ending_y - node->starting_y) });
 
-						if (scan_pixel.w)
+						if (IN_RANGE(state->game.lucia_position.z + ray.z * node->distance, 0.0f, WALL_HEIGHT))
 						{
-							vf3 ray = normalize({ ray_horizontal.x, ray_horizontal.y, (y - VIEW_RES.y / 2.0f) * state->game.lucia_fov / HORT_TO_VERT_K });
-
-							if (IN_RANGE(state->game.lucia_position.z + ray.z * node->distance, 0.0f, WALL_HEIGHT))
-							{
-								if (view_inv_depth_buffer[x * VIEW_RES.y + y] < 1.0f / node->distance)
-								{
-									view_inv_depth_buffer[x * VIEW_RES.y + y] = 1.0f / node->distance;
-									view_pixels[(VIEW_RES.y - 1 - y) * VIEW_RES.x + x] =
-										pack_color
-										(
-											lerp
-											(
-												unpack_color(view_pixels[y * VIEW_RES.x + x]).xyz,
-												shader(scan_pixel.xyz, ray, vx3(node->normal, 0.0f), node->distance),
-												scan_pixel.w
-											)
-										);
-								}
-							}
+							scan_line[y] =
+								vx4
+								(
+									lerp(scan_line[y].xyz, shader(sprite_pixel.xyz, ray, vx3(node->normal, 0.0f), node->distance), sprite_pixel.w),
+									lerp(scan_line[y].w, 1.0f, sprite_pixel.w)
+								);
 						}
 					}
 				}
+
+				FOR_RANGE(y, 0, VIEW_RES.y)
+				{
+					if (scan_line[y].w == 1.0f)
+					{
+						view_pixels[(VIEW_RES.y - 1 - y) * VIEW_RES.x + x] = pack_color(scan_line[y].xyz);
+					}
+					else
+					{
+						vf3 ray = normalize({ ray_horizontal.x, ray_horizontal.y, (y - VIEW_RES.y / 2.0f) * state->game.lucia_fov / HORT_TO_VERT_K });
+						vf3 bg_color;
+
+						if (IN_RANGE(y, pixel_starting_y, pixel_ending_y))
+						{
+							f32 y_portion = static_cast<f32>(y - starting_y) / (ending_y - starting_y);
+							f32 distance  = sqrtf(square(wall_distance) + square(y_portion * WALL_HEIGHT - state->game.lucia_position.z));
+							vf3 normal    = vxx(wall_normal, 0.0f);
+
+							vf4 overlay_color =
+								overlay_img && IN_RANGE(y_portion, overlay_uv_position.y, overlay_uv_position.y + overlay_uv_dimensions.y)
+									? img_color_at(overlay_img, { (wall_portion - overlay_uv_position.x) / overlay_uv_dimensions.x, (y_portion - overlay_uv_position.y) / overlay_uv_dimensions.y })
+									: vf4 { 0.0f, 0.0, 0.0f, 0.0f };
+
+							bg_color =
+								shader
+								(
+									lerp
+									(
+										mipmap_color_at(&state->game.mipmap.wall, distance / 4.0f + MIPMAP_LEVELS * square(1.0f - fabsf(dot(ray, normal))), { wall_portion, y_portion }),
+										overlay_color.xyz,
+										overlay_color.w
+									),
+									ray,
+									normal,
+									distance
+								);
+						}
+						else if (fabs(ray.z) > 0.0001f)
+						{
+							f32     distance;
+							vf2     uv;
+							vf3     normal;
+							Mipmap* mipmap;
+
+							if (y < VIEW_RES.y / 2)
+							{
+								f32 zk   = -state->game.lucia_position.z / ray.z;
+								uv       = state->game.lucia_position.xy + zk * ray.xy;
+								distance = sqrtf(norm_sq(uv - state->game.lucia_position.xy) + square(state->game.lucia_position.z));
+								normal   = { 0.0f, 0.0f, 1.0f };
+								mipmap   = &state->game.mipmap.floor;
+							}
+							else
+							{
+								f32 zk   = (WALL_HEIGHT - state->game.lucia_position.z) / ray.z;
+								uv       = state->game.lucia_position.xy + zk * ray.xy;
+								distance = sqrtf(norm_sq(uv - state->game.lucia_position.xy) + square(WALL_HEIGHT - state->game.lucia_position.z));
+								normal   = { 0.0f, 0.0f, -1.0f };
+								mipmap   = &state->game.mipmap.ceiling;
+							}
+
+							uv.x = mod(uv.x / 4.0f, 1.0f);
+							uv.y = mod(uv.y / 4.0f, 1.0f);
+
+							bg_color = shader(mipmap_color_at(mipmap, distance / 16.0f + MIPMAP_LEVELS * square(1.0f - fabsf(dot(ray, normal))), uv), ray, normal, distance);
+						}
+						else
+						{
+							continue;
+						}
+
+						view_pixels[(VIEW_RES.y - 1 - y) * VIEW_RES.x + x] = pack_color(scan_line[y].w ? lerp(bg_color, scan_line[y].xyz, scan_line[y].w) : bg_color);
+					}
+				}
+
+				#if PROFILE
+				{
+					LARGE_INTEGER DEBUG_LI_1;
+					QueryPerformanceCounter(&DEBUG_LI_1);
+
+					DEBUG_ACCUMULATOR += DEBUG_LI_1.QuadPart - DEBUG_LI_0.QuadPart;
+					DEBUG_COUNTER     += 1;
+					if (DEBUG_COUNTER > DEBUG_SCANS)
+					{
+						DEBUG_printf("%f\n", DEBUG_ACCUMULATOR / static_cast<f64>(DEBUG_FREQUENCY.QuadPart));
+						DEBUG_ACCUMULATOR = 0;
+						DEBUG_COUNTER     = 0;
+					}
+				}
+				#endif
 			}
 
 			if (state->game.holding.paper)

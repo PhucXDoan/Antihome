@@ -137,10 +137,20 @@ struct MemoryArena
 };
 
 template <typename TYPE>
-internal TYPE* memory_arena_push(MemoryArena* arena, i32 count = 1)
+internal TYPE* memory_arena_allocate(MemoryArena* arena, i32 count = 1)
 {
 	ASSERT(arena->used + sizeof(TYPE) * count <= arena->size);
 	byte* allocation = arena->base + arena->used;
+	arena->used += sizeof(TYPE) * count;
+	return reinterpret_cast<TYPE*>(allocation);
+}
+
+template <typename TYPE>
+internal TYPE* memory_arena_allocate_zero(MemoryArena* arena, i32 count = 1)
+{
+	ASSERT(arena->used + sizeof(TYPE) * count <= arena->size);
+	byte* allocation = arena->base + arena->used;
+	memset(allocation, static_cast<unsigned char>(0), sizeof(TYPE) * count);
 	arena->used += sizeof(TYPE) * count;
 	return reinterpret_cast<TYPE*>(allocation);
 }
@@ -276,7 +286,8 @@ internal constexpr vi2&   operator/=(vi2& v, i32 k) { return v = v / k; }
 internal constexpr vi3&   operator/=(vi3& v, i32 k) { return v = v / k; }
 internal constexpr vi4&   operator/=(vi4& v, i32 k) { return v = v / k; }
 
-internal constexpr vf3    vx3(vf2 v, f32 a) { return { v.x, v.y, a }; }
+internal constexpr vf3    vx3(vf2 v, f32 a) { return { v.x, v.y,      a }; }
+internal constexpr vf4    vx4(vf3 v, f32 a) { return { v.x, v.y, v.z, a }; }
 
 internal constexpr vf3    vxx(f32 a) { return { a, a, a }; }
 
