@@ -1,10 +1,4 @@
 /* @TODO@
-	- Monday 2022-5-16:
-		- Revised title menu.
-			- Vintage look.
-			- Settings window.
-			- Terminal prompt of debrief.
-
 	- Tuesday 2022-5-17:
 		- Breaker mechanic.
 		- Better randomization of items, doors, breakers, and RNG system.
@@ -68,9 +62,8 @@
 
 global constexpr f32 TERMINAL_TASKBAR_HEIGHT            = 50.0f;
 global constexpr f32 TERMINAL_ICON_DIM                  = 50.0f;
-global constexpr vf2 TERMINAL_SETTINGS_POSITION         = { 55.0f, WIN_DIM.y - (TERMINAL_ICON_DIM + 50.0f) * 0.75f };
-global constexpr vf2 TERMINAL_CREDITS_POSITION          = { 55.0f, WIN_DIM.y - (TERMINAL_ICON_DIM + 50.0f) * 1.75f };
-global constexpr vf2 TERMINAL_ANTIHOME_PROGRAM_POSITION = { 55.0f, WIN_DIM.y - (TERMINAL_ICON_DIM + 50.0f) * 2.75f };
+global constexpr vf2 TERMINAL_CREDITS_POSITION          = { 55.0f, WIN_DIM.y - (TERMINAL_ICON_DIM + 50.0f) * 0.75f };
+global constexpr vf2 TERMINAL_ANTIHOME_PROGRAM_POSITION = { 55.0f, WIN_DIM.y - (TERMINAL_ICON_DIM + 50.0f) * 
 global constexpr f32 TERMINAL_TITLE_BAR_HEIGHT          = 25.0f;
 global constexpr vf2 TERMINAL_BUTTON_DIMENSIONS         = { 45.0f, 27.0f };
 
@@ -86,18 +79,6 @@ global constexpr i32 INVENTORY_DIM         = 30;
 global constexpr i32 INVENTORY_PADDING     = 5;
 global constexpr f32 CREEPY_SOUND_MIN_TIME = 15.0f;
 global constexpr f32 CREEPY_SOUND_MAX_TIME = 90.0f;
-
-global constexpr struct { i32 slide_index; strlit text; } INTRO_DATA[] =
-	{
-		{ 0, "\"The subject of our debrief goes by the name of Lucia.```````````````` As always,```````` exposition will be the appetizer of the night.\"" },
-		{ 1, "Several chuckles were dispensed." },
-		{ 2, "\"It was a dark and stormy night.````.````.```` and Lucia here is stumbling around drunk,```````` although that's probably just how she walked.\"" },
-		{ 2, "\"Anyways,```` she must've been getting some bad hunger pangs```` 'cause she managed to stumble behind our tagged Thai restaurant.\"" },
-		{ 3, "\"MAN I LOVE PAD THAI!!\"" },
-		{ 4, "\"...\"" },
-		{ 5, "\".``.``.``.``.``.``\"" },
-		{ 6, "\"Ahu -`-`-`\"" }
-	};
 
 enum_loose (AudioChannel, i8)
 {
@@ -260,7 +241,6 @@ enum_loose (TerminalWindowType, u8)
 	null,
 
 	enum_start_region(TYPE)
-		settings,
 		credits,
 		antihome_program,
 		power,
@@ -308,7 +288,6 @@ struct State
 			{
 				SDL_Texture* cursor;
 				SDL_Texture* power_button;
-				SDL_Texture* gear;
 				SDL_Texture* text_file;
 				SDL_Texture* antihome_program;
 				SDL_Texture* window_close;
@@ -925,7 +904,6 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 		{
 			state->title_menu.texture.cursor           = IMG_LoadTexture(renderer, DATA_DIR "cursor.png");
 			state->title_menu.texture.power_button     = IMG_LoadTexture(renderer, DATA_DIR "terminal_power_button.png");
-			state->title_menu.texture.gear             = IMG_LoadTexture(renderer, DATA_DIR "gear.png");
 			state->title_menu.texture.text_file        = IMG_LoadTexture(renderer, DATA_DIR "text_file.png");
 			state->title_menu.texture.antihome_program = IMG_LoadTexture(renderer, DATA_DIR "antihome_program.png");
 			state->title_menu.texture.window_close     = IMG_LoadTexture(renderer, DATA_DIR "window_close.png");
@@ -1163,211 +1141,214 @@ extern "C" PROTOTYPE_UPDATE(update)
 					{
 						case TerminalWindowType::antihome_program:
 						{
-							boot_down_state(state);
-							state->context = StateContext::game;
-							state->game    = {};
-							boot_up_state(platform->renderer, state);
-
-							FOR_RANGE(MAP_DIM * MAP_DIM / 3)
+							if (in_rect(tm.cursor, tm.window_position + vf2 { tm.window_dimensions.x * 0.5f, tm.window_dimensions.y * 0.33f } - TERMINAL_BUTTON_DIMENSIONS / 2.0f, TERMINAL_BUTTON_DIMENSIONS))
 							{
-								vi2 start_walk = { rng(&state->seed, 0, MAP_DIM), rng(&state->seed, 0, MAP_DIM) };
+								boot_down_state(state);
+								state->context = StateContext::game;
+								state->game    = {};
+								boot_up_state(platform->renderer, state);
 
-								if
-								(
-									!+*get_wall_voxel(state, { start_walk.x, start_walk.y })
-									&& !+(*get_wall_voxel(state, { start_walk.x    , start_walk.y - 1 }) & WallVoxel::left  )
-									&& !+(*get_wall_voxel(state, { start_walk.x - 1, start_walk.y     }) & WallVoxel::bottom)
-								)
+								FOR_RANGE(MAP_DIM * MAP_DIM / 3)
 								{
-									vi2 walk = { start_walk.x, start_walk.y };
-									FOR_RANGE(MAP_DIM)
+									vi2 start_walk = { rng(&state->seed, 0, MAP_DIM), rng(&state->seed, 0, MAP_DIM) };
+
+									if
+									(
+										!+*get_wall_voxel(state, { start_walk.x, start_walk.y })
+										&& !+(*get_wall_voxel(state, { start_walk.x    , start_walk.y - 1 }) & WallVoxel::left  )
+										&& !+(*get_wall_voxel(state, { start_walk.x - 1, start_walk.y     }) & WallVoxel::bottom)
+									)
 									{
-										switch (static_cast<i32>(rng(&state->seed) * 4.0f))
+										vi2 walk = { start_walk.x, start_walk.y };
+										FOR_RANGE(MAP_DIM)
 										{
-											case 0:
+											switch (static_cast<i32>(rng(&state->seed) * 4.0f))
 											{
-												if (!+*get_wall_voxel(state, walk + vi2 { -1, 0 }) && !+(*get_wall_voxel(state, walk + vi2 { -1, -1 }) & WallVoxel::left) && !+(*get_wall_voxel(state, walk + vi2 { -2, 0 }) & WallVoxel::bottom))
+												case 0:
 												{
-													walk.x = mod(walk.x - 1, MAP_DIM);
-													*get_wall_voxel(state, walk) |= WallVoxel::bottom;
-												}
-											} break;
+													if (!+*get_wall_voxel(state, walk + vi2 { -1, 0 }) && !+(*get_wall_voxel(state, walk + vi2 { -1, -1 }) & WallVoxel::left) && !+(*get_wall_voxel(state, walk + vi2 { -2, 0 }) & WallVoxel::bottom))
+													{
+														walk.x = mod(walk.x - 1, MAP_DIM);
+														*get_wall_voxel(state, walk) |= WallVoxel::bottom;
+													}
+												} break;
 
-											case 1:
-											{
-												if (!+*get_wall_voxel(state, walk + vi2 { 1, 0 }) && !+(*get_wall_voxel(state, walk) & WallVoxel::bottom) && !+(*get_wall_voxel(state, walk + vi2 { 1, -1 }) & WallVoxel::left))
+												case 1:
 												{
-													*get_wall_voxel(state, walk) |= WallVoxel::bottom;
-													walk.x = mod(walk.x + 1, MAP_DIM);
-												}
-											} break;
+													if (!+*get_wall_voxel(state, walk + vi2 { 1, 0 }) && !+(*get_wall_voxel(state, walk) & WallVoxel::bottom) && !+(*get_wall_voxel(state, walk + vi2 { 1, -1 }) & WallVoxel::left))
+													{
+														*get_wall_voxel(state, walk) |= WallVoxel::bottom;
+														walk.x = mod(walk.x + 1, MAP_DIM);
+													}
+												} break;
 
-											case 2:
-											{
-												if (!+*get_wall_voxel(state, walk + vi2 { 0, -1 }) && !+(*get_wall_voxel(state, walk + vi2 { -1, -1 }) & WallVoxel::bottom) && !+(*get_wall_voxel(state, walk + vi2 { 0, -2 }) & WallVoxel::left))
+												case 2:
 												{
-													walk.y = mod(walk.y - 1, MAP_DIM);
-													*get_wall_voxel(state, walk) |= WallVoxel::left;
-												}
-											} break;
+													if (!+*get_wall_voxel(state, walk + vi2 { 0, -1 }) && !+(*get_wall_voxel(state, walk + vi2 { -1, -1 }) & WallVoxel::bottom) && !+(*get_wall_voxel(state, walk + vi2 { 0, -2 }) & WallVoxel::left))
+													{
+														walk.y = mod(walk.y - 1, MAP_DIM);
+														*get_wall_voxel(state, walk) |= WallVoxel::left;
+													}
+												} break;
 
-											case 3:
-											{
-												if (!+*get_wall_voxel(state, walk + vi2 { 0, 1 }) && !+(*get_wall_voxel(state, walk) & WallVoxel::left) && !+(*get_wall_voxel(state, walk + vi2 { -1, 1 }) & WallVoxel::bottom))
+												case 3:
 												{
-													*get_wall_voxel(state, walk) |= WallVoxel::left;
-													walk.y = mod(walk.y + 1, MAP_DIM);
-												}
-											} break;
-										}
+													if (!+*get_wall_voxel(state, walk + vi2 { 0, 1 }) && !+(*get_wall_voxel(state, walk) & WallVoxel::left) && !+(*get_wall_voxel(state, walk + vi2 { -1, 1 }) & WallVoxel::bottom))
+													{
+														*get_wall_voxel(state, walk) |= WallVoxel::left;
+														walk.y = mod(walk.y + 1, MAP_DIM);
+													}
+												} break;
+											}
 
-										if
-										(
-											!(!+*get_wall_voxel(state, walk + vi2 { -1, 0 }) && !+(*get_wall_voxel(state, walk + vi2 { -1, -1 }) & WallVoxel::left) && !+(*get_wall_voxel(state, walk + vi2 { -2, 0 }) & WallVoxel::bottom)) &&
-											!(!+*get_wall_voxel(state, walk + vi2 { 1, 0 }) && !+(*get_wall_voxel(state, walk) & WallVoxel::bottom) && !+(*get_wall_voxel(state, walk + vi2 { 1, -1 }) & WallVoxel::left)) &&
-											!(!+*get_wall_voxel(state, walk + vi2 { 0, -1 }) && !+(*get_wall_voxel(state, walk + vi2 { -1, -1 }) & WallVoxel::bottom) && !+(*get_wall_voxel(state, walk + vi2 { 0, -2 }) & WallVoxel::left)) &&
-											!(!+*get_wall_voxel(state, walk + vi2 { 0, 1 }) && !+(*get_wall_voxel(state, walk) & WallVoxel::left) && !+(*get_wall_voxel(state, walk + vi2 { -1, 1 }) & WallVoxel::bottom))
-										)
-										{
-											break;
-										}
-									}
-								}
-							}
-
-							FOR_RANGE(y, MAP_DIM)
-							{
-								FOR_RANGE(x, MAP_DIM)
-								{
-									if (*get_wall_voxel(state, { x, y }) == (WallVoxel::left | WallVoxel::bottom) && rng(&state->seed) < 0.5f)
-									{
-										*get_wall_voxel(state, { x, y }) = WallVoxel::back_slash;
-									}
-									else if (+(*get_wall_voxel(state, { x + 1, y }) & WallVoxel::left) && +(*get_wall_voxel(state, { x, y + 1 }) & WallVoxel::bottom) && rng(&state->seed) < 0.5f)
-									{
-										*get_wall_voxel(state, { x + 1, y     }) &= ~WallVoxel::left;
-										*get_wall_voxel(state, { x    , y + 1 }) &= ~WallVoxel::bottom;
-										*get_wall_voxel(state, { x    , y     }) |= WallVoxel::back_slash;
-									}
-									else if (+(*get_wall_voxel(state, { x, y }) & WallVoxel::bottom) && *get_wall_voxel(state, { x + 1, y }) == WallVoxel::left && rng(&state->seed) < 0.5f)
-									{
-										*get_wall_voxel(state, { x    , y }) &= ~WallVoxel::bottom;
-										*get_wall_voxel(state, { x + 1, y }) &= ~WallVoxel::left;
-										*get_wall_voxel(state, { x    , y }) |=  WallVoxel::forward_slash;
-									}
-									else if (+(*get_wall_voxel(state, { x, y }) & WallVoxel::left) && *get_wall_voxel(state, { x, y + 1 }) == WallVoxel::bottom && rng(&state->seed) < 0.5f)
-									{
-										*get_wall_voxel(state, { x, y     }) &= ~WallVoxel::left;
-										*get_wall_voxel(state, { x, y + 1 }) &= ~WallVoxel::bottom;
-										*get_wall_voxel(state, { x, y     }) |=  WallVoxel::forward_slash;
-									}
-								}
-							}
-
-							{
-								memory_arena_checkpoint(&state->transient_arena);
-
-								struct DoorSpotNode
-								{
-									vi2           coordinates;
-									WallVoxel     wall_voxel;
-									DoorSpotNode* next_node;
-								};
-
-								DoorSpotNode* door_spot_node  = 0;
-								i32           door_spot_count = 0;
-
-								FOR_RANGE(y, MAP_DIM)
-								{
-									FOR_RANGE(x, MAP_DIM)
-									{
-										FOR_ELEMS(it, WALL_VOXEL_DATA)
-										{
-											if (+(state->game.wall_voxels[y][x] & it->voxel))
+											if
+											(
+												!(!+*get_wall_voxel(state, walk + vi2 { -1, 0 }) && !+(*get_wall_voxel(state, walk + vi2 { -1, -1 }) & WallVoxel::left) && !+(*get_wall_voxel(state, walk + vi2 { -2, 0 }) & WallVoxel::bottom)) &&
+												!(!+*get_wall_voxel(state, walk + vi2 { 1, 0 }) && !+(*get_wall_voxel(state, walk) & WallVoxel::bottom) && !+(*get_wall_voxel(state, walk + vi2 { 1, -1 }) & WallVoxel::left)) &&
+												!(!+*get_wall_voxel(state, walk + vi2 { 0, -1 }) && !+(*get_wall_voxel(state, walk + vi2 { -1, -1 }) & WallVoxel::bottom) && !+(*get_wall_voxel(state, walk + vi2 { 0, -2 }) & WallVoxel::left)) &&
+												!(!+*get_wall_voxel(state, walk + vi2 { 0, 1 }) && !+(*get_wall_voxel(state, walk) & WallVoxel::left) && !+(*get_wall_voxel(state, walk + vi2 { -1, 1 }) & WallVoxel::bottom))
+											)
 											{
-												DoorSpotNode* node = memory_arena_push<DoorSpotNode>(&state->transient_arena);
-												node->coordinates  = { x, y };
-												node->wall_voxel   = it->voxel;
-												node->next_node    = door_spot_node;
-												door_spot_node     = node;
-												door_spot_count   += 1;
+												break;
 											}
 										}
 									}
 								}
 
-								ASSERT(door_spot_node);
-
-								for (i32 i = rng(&state->seed, 0, door_spot_count); i; i -= 1)
+								FOR_RANGE(y, MAP_DIM)
 								{
-									door_spot_node = door_spot_node->next_node;
-								}
-
-								state->game.door_wall_side.coordinates   = door_spot_node->coordinates;
-								state->game.door_wall_side.voxel         = door_spot_node->wall_voxel;
-								state->game.door_wall_side.is_antinormal = rng(&state->seed) < 0.5f;
-							}
-
-							state->game.creepy_sound_countdown = rng(&state->seed, CREEPY_SOUND_MIN_TIME, CREEPY_SOUND_MAX_TIME);
-
-							state->game.lucia_position.xy = rng_open_position(state);
-							state->game.lucia_position.z  = LUCIA_HEIGHT;
-							state->game.lucia_fov         = TAU / 3.0f;
-							state->game.lucia_stamina     = 1.0f;
-
-							state->game.monster_position.xy = rng_open_position(state);
-
-							lambda create_item =
-								[&](ItemType type)
-								{
-									Item* item = allocate_item(state);
-									*item             = {};
-									item->type        = type;
-									item->position.xy = rng_open_position(state);
-									item->normal      = polar(state->time * 1.5f);
-
-									switch (type)
+									FOR_RANGE(x, MAP_DIM)
 									{
-										case ItemType::paper:
+										if (*get_wall_voxel(state, { x, y }) == (WallVoxel::left | WallVoxel::bottom) && rng(&state->seed) < 0.5f)
 										{
-											item->paper.index = rng(&state->seed, 0, ARRAY_CAPACITY(PAPER_DATA));
-										};
+											*get_wall_voxel(state, { x, y }) = WallVoxel::back_slash;
+										}
+										else if (+(*get_wall_voxel(state, { x + 1, y }) & WallVoxel::left) && +(*get_wall_voxel(state, { x, y + 1 }) & WallVoxel::bottom) && rng(&state->seed) < 0.5f)
+										{
+											*get_wall_voxel(state, { x + 1, y     }) &= ~WallVoxel::left;
+											*get_wall_voxel(state, { x    , y + 1 }) &= ~WallVoxel::bottom;
+											*get_wall_voxel(state, { x    , y     }) |= WallVoxel::back_slash;
+										}
+										else if (+(*get_wall_voxel(state, { x, y }) & WallVoxel::bottom) && *get_wall_voxel(state, { x + 1, y }) == WallVoxel::left && rng(&state->seed) < 0.5f)
+										{
+											*get_wall_voxel(state, { x    , y }) &= ~WallVoxel::bottom;
+											*get_wall_voxel(state, { x + 1, y }) &= ~WallVoxel::left;
+											*get_wall_voxel(state, { x    , y }) |=  WallVoxel::forward_slash;
+										}
+										else if (+(*get_wall_voxel(state, { x, y }) & WallVoxel::left) && *get_wall_voxel(state, { x, y + 1 }) == WallVoxel::bottom && rng(&state->seed) < 0.5f)
+										{
+											*get_wall_voxel(state, { x, y     }) &= ~WallVoxel::left;
+											*get_wall_voxel(state, { x, y + 1 }) &= ~WallVoxel::bottom;
+											*get_wall_voxel(state, { x, y     }) |=  WallVoxel::forward_slash;
+										}
 									}
-								};
-
-							for (ItemType type = ItemType::ITEM_START; type != ItemType::ITEM_END; type = static_cast<ItemType>(+type + 1))
-							{
-								create_item(type);
-							}
-
-							FOR_RANGE(ARRAY_CAPACITY(state->game.item_buffer) - state->game.item_count)
-							{
-								f32 total_weights = 0.0f;
-								FOR_ELEMS(w, ITEM_SPAWN_WEIGHTS)
-								{
-									total_weights += *w;
 								}
 
-								f32 n = rng(&state->seed, 0.0f, total_weights);
-								i32 i = -1;
-								total_weights = 0.0f;
-								FOR_ELEMS(w, ITEM_SPAWN_WEIGHTS)
 								{
-									if (IN_RANGE(n - total_weights, 0.0f, *w))
+									memory_arena_checkpoint(&state->transient_arena);
+
+									struct DoorSpotNode
 									{
-										i = w_index;
-										break;
+										vi2           coordinates;
+										WallVoxel     wall_voxel;
+										DoorSpotNode* next_node;
+									};
+
+									DoorSpotNode* door_spot_node  = 0;
+									i32           door_spot_count = 0;
+
+									FOR_RANGE(y, MAP_DIM)
+									{
+										FOR_RANGE(x, MAP_DIM)
+										{
+											FOR_ELEMS(it, WALL_VOXEL_DATA)
+											{
+												if (+(state->game.wall_voxels[y][x] & it->voxel))
+												{
+													DoorSpotNode* node = memory_arena_push<DoorSpotNode>(&state->transient_arena);
+													node->coordinates  = { x, y };
+													node->wall_voxel   = it->voxel;
+													node->next_node    = door_spot_node;
+													door_spot_node     = node;
+													door_spot_count   += 1;
+												}
+											}
+										}
 									}
-									else
+
+									ASSERT(door_spot_node);
+
+									for (i32 i = rng(&state->seed, 0, door_spot_count); i; i -= 1)
+									{
+										door_spot_node = door_spot_node->next_node;
+									}
+
+									state->game.door_wall_side.coordinates   = door_spot_node->coordinates;
+									state->game.door_wall_side.voxel         = door_spot_node->wall_voxel;
+									state->game.door_wall_side.is_antinormal = rng(&state->seed) < 0.5f;
+								}
+
+								state->game.creepy_sound_countdown = rng(&state->seed, CREEPY_SOUND_MIN_TIME, CREEPY_SOUND_MAX_TIME);
+
+								state->game.lucia_position.xy = rng_open_position(state);
+								state->game.lucia_position.z  = LUCIA_HEIGHT;
+								state->game.lucia_fov         = TAU / 3.0f;
+								state->game.lucia_stamina     = 1.0f;
+
+								state->game.monster_position.xy = rng_open_position(state);
+
+								lambda create_item =
+									[&](ItemType type)
+									{
+										Item* item = allocate_item(state);
+										*item             = {};
+										item->type        = type;
+										item->position.xy = rng_open_position(state);
+										item->normal      = polar(state->time * 1.5f);
+
+										switch (type)
+										{
+											case ItemType::paper:
+											{
+												item->paper.index = rng(&state->seed, 0, ARRAY_CAPACITY(PAPER_DATA));
+											};
+										}
+									};
+
+								for (ItemType type = ItemType::ITEM_START; type != ItemType::ITEM_END; type = static_cast<ItemType>(+type + 1))
+								{
+									create_item(type);
+								}
+
+								FOR_RANGE(ARRAY_CAPACITY(state->game.item_buffer) - state->game.item_count)
+								{
+									f32 total_weights = 0.0f;
+									FOR_ELEMS(w, ITEM_SPAWN_WEIGHTS)
 									{
 										total_weights += *w;
 									}
+
+									f32 n = rng(&state->seed, 0.0f, total_weights);
+									i32 i = -1;
+									total_weights = 0.0f;
+									FOR_ELEMS(w, ITEM_SPAWN_WEIGHTS)
+									{
+										if (IN_RANGE(n - total_weights, 0.0f, *w))
+										{
+											i = w_index;
+											break;
+										}
+										else
+										{
+											total_weights += *w;
+										}
+									}
+
+									create_item(static_cast<ItemType>(+ItemType::ITEM_START + i));
 								}
 
-								create_item(static_cast<ItemType>(+ItemType::ITEM_START + i));
+								return UpdateCode::resume;
 							}
-
-							return UpdateCode::resume;
 						} break;
 
 						case TerminalWindowType::power:
@@ -1387,12 +1368,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 				{
 					TerminalWindowType clicked_window_type = TerminalWindowType::null;
 
-					if (in_rect(tm.cursor, TERMINAL_SETTINGS_POSITION, { TERMINAL_ICON_DIM, TERMINAL_ICON_DIM }))
-					{
-						clicked_window_type  = TerminalWindowType::settings;
-						tm.window_dimensions = { 250.0f, 200.0f };
-					}
-					else if (in_rect(tm.cursor, TERMINAL_CREDITS_POSITION, { TERMINAL_ICON_DIM, TERMINAL_ICON_DIM }))
+					if (in_rect(tm.cursor, TERMINAL_CREDITS_POSITION, { TERMINAL_ICON_DIM, TERMINAL_ICON_DIM }))
 					{
 						clicked_window_type  = TerminalWindowType::credits;
 						tm.window_dimensions = { 250.0f, 300.0f };
@@ -1400,7 +1376,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 					else if (in_rect(tm.cursor, TERMINAL_ANTIHOME_PROGRAM_POSITION, { TERMINAL_ICON_DIM, TERMINAL_ICON_DIM }))
 					{
 						clicked_window_type  = TerminalWindowType::antihome_program;
-						tm.window_dimensions = { 125.0f, 200.0f };
+						tm.window_dimensions = { 275.0f, 250.0f };
 					}
 					else if (in_rect(tm.cursor, { 0.0f, 0.0f }, { TERMINAL_TASKBAR_HEIGHT, TERMINAL_TASKBAR_HEIGHT }))
 					{
@@ -2353,7 +2329,6 @@ extern "C" PROTOTYPE_RENDER(render)
 					);
 				};
 
-			draw_icon(tm.texture.gear            , TERMINAL_SETTINGS_POSITION        , "Settings");
 			draw_icon(tm.texture.text_file       , TERMINAL_CREDITS_POSITION         , "credits.txt");
 			draw_icon(tm.texture.antihome_program, TERMINAL_ANTIHOME_PROGRAM_POSITION, "Antihome");
 
@@ -2375,12 +2350,6 @@ extern "C" PROTOTYPE_RENDER(render)
 
 				switch (tm.window_type)
 				{
-					case TerminalWindowType::settings:
-					{
-						set_color(platform->renderer, monochrome(0.2f));
-						render_filled_rect(platform->renderer, tm.window_position, tm.window_dimensions);
-					} break;
-
 					case TerminalWindowType::credits:
 					{
 						set_color(platform->renderer, { 0.75f, 0.65f, 0.2f, 1.0f });
@@ -2406,6 +2375,32 @@ extern "C" PROTOTYPE_RENDER(render)
 					{
 						set_color(platform->renderer, monochrome(0.25f));
 						render_filled_rect(platform->renderer, tm.window_position, tm.window_dimensions);
+
+						render_text
+						(
+							platform->renderer,
+							state->font.major,
+							tm.window_position + vf2 { tm.window_dimensions.x * 0.5f, tm.window_dimensions.y * 0.7f },
+							0.5f,
+							FC_ALIGN_CENTER,
+							1.25f,
+							{ 1.0f, 1.0f, 1.0f, 1.0f },
+							"ANTIHOME"
+						);
+
+						set_color(platform->renderer, { 1.0f, 0.0f, 0.0f, 1.0f });
+						render_filled_rect(platform->renderer, tm.window_position + vf2 { tm.window_dimensions.x * 0.5f, tm.window_dimensions.y * 0.33f } - TERMINAL_BUTTON_DIMENSIONS / 2.0f, TERMINAL_BUTTON_DIMENSIONS);
+						render_text
+						(
+							platform->renderer,
+							state->font.major,
+							tm.window_position + vf2 { tm.window_dimensions.x * 0.5f, tm.window_dimensions.y * 0.33f },
+							0.5f,
+							FC_ALIGN_CENTER,
+							0.55f,
+							{ 1.0f, 1.0f, 1.0f, 1.0f },
+							"Lure"
+						);
 					} break;
 
 					case TerminalWindowType::power:
