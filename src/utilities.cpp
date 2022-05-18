@@ -47,8 +47,9 @@ global constexpr u16 RAND_TABLE[] =
 
 struct Img
 {
-	vi2  dim;
-	vf4* rgba;
+	vi2          dim;
+	vf4*         rgba;
+	SDL_Texture* texture;
 };
 
 struct RGB
@@ -150,13 +151,13 @@ internal constexpr vf4 unpack_color(u32 pixel)
 		};
 }
 
-internal Img init_img(strlit filepath)
+internal Img init_img(SDL_Renderer* renderer, strlit file_path)
 {
 	Img img;
 
 	i32  iw;
 	i32  ih;
-	u32* stbimg = reinterpret_cast<u32*>(stbi_load(filepath, &iw, &ih, 0, STBI_rgb_alpha));
+	u32* stbimg = reinterpret_cast<u32*>(stbi_load(file_path, &iw, &ih, 0, STBI_rgb_alpha));
 	DEFER { stbi_image_free(stbimg); };
 	ASSERT(stbimg);
 
@@ -178,12 +179,16 @@ internal Img init_img(strlit filepath)
 		}
 	}
 
+	img.texture = IMG_LoadTexture(renderer, file_path);
+	ASSERT(img.texture);
+
 	return img;
 }
 
 internal void deinit_img(Img* img)
 {
 	free(img->rgba);
+	SDL_DestroyTexture(img->texture);
 }
 
 internal vf4 img_color_at(Img* img, vf2 uv)
@@ -239,7 +244,7 @@ internal vf3 mipmap_color_at(Mipmap* mipmap, f32 level, vf2 uv)
 	ASSERT(0.0f <= uv.x && uv.x <= 1.0f);
 	ASSERT(0.0f <= uv.y && uv.y <= 1.0f);
 
-	i32 l = static_cast<i32>(clamp(level, 0.0f, MIPMAP_LEVELS - 1.0f));
+	i32 l = static_cast<i32>(CLAMP(level, 0.0f, MIPMAP_LEVELS - 1.0f));
 	RGB p =
 		*(
 			mipmap->data
@@ -549,6 +554,40 @@ internal void set_color(SDL_Renderer* renderer, vf4 color)
 	);
 }
 
+internal i32 iterate_repeated_movement(Platform* platform, Input negative_input, Input positive_input, f32* current_repeat_countdown, f32 repeat_threshold = 0.3f, f32 repeat_frequency = 0.1f)
+{
+	i32 delta = 0;
+
+	if (HOLDING(negative_input) != HOLDING(positive_input))
+	{
+		if (*current_repeat_countdown <= 0.0f)
+		{
+			if (HOLDING(negative_input))
+			{
+				delta                     = -1;
+				*current_repeat_countdown =
+					PRESSED(negative_input)
+						? repeat_threshold
+						: repeat_frequency;
+			}
+			else
+			{
+				delta                     = 1;
+				*current_repeat_countdown =
+					PRESSED(positive_input)
+						? repeat_threshold
+						: repeat_frequency;
+			}
+		}
+	}
+	else
+	{
+		*current_repeat_countdown = 0.0f;
+	}
+
+	return delta;
+}
+
 internal void render_circle(SDL_Renderer* renderer, vf2 center, f32 radius)
 {
 	ASSERT(radius < 256.0f);
@@ -615,55 +654,21 @@ internal void render_filled_circle(SDL_Renderer* renderer, vf2 center, f32 radiu
 	}
 }
 
-internal i32 iterate_repeated_movement(Platform* platform, Input negative_input, Input positive_input, f32* current_repeat_countdown, f32 repeat_threshold = 0.3f, f32 repeat_frequency = 0.1f)
-{
-	i32 delta = 0;
-
-	if (HOLDING(negative_input) != HOLDING(positive_input))
-	{
-		if (*current_repeat_countdown <= 0.0f)
-		{
-			if (HOLDING(negative_input))
-			{
-				delta                     = -1;
-				*current_repeat_countdown =
-					PRESSED(negative_input)
-						? repeat_threshold
-						: repeat_frequency;
-			}
-			else
-			{
-				delta                     = 1;
-				*current_repeat_countdown =
-					PRESSED(positive_input)
-						? repeat_threshold
-						: repeat_frequency;
-			}
-		}
-	}
-	else
-	{
-		*current_repeat_countdown = 0.0f;
-	}
-
-	return delta;
-}
-
 internal void render_filled_rect(SDL_Renderer* renderer, vf2 bottom_left, vf2 dimensions)
 {
-	SDL_FRect rect = { bottom_left.x, WIN_DIM.y - bottom_left.y - dimensions.y, dimensions.x, dimensions.y };
+	SDL_FRect rect = { bottom_left.x, bottom_left.y, dimensions.x, dimensions.y };
 	SDL_RenderFillRectF(renderer, &rect);
 }
 
 internal void render_rect(SDL_Renderer* renderer, vf2 bottom_left, vf2 dimensions)
 {
-	SDL_FRect rect = { bottom_left.x, WIN_DIM.y - bottom_left.y - dimensions.y, dimensions.x, dimensions.y };
+	SDL_FRect rect = { bottom_left.x, bottom_left.y, dimensions.x, dimensions.y };
 	SDL_RenderDrawRectF(renderer, &rect);
 }
 
 internal void render_texture(SDL_Renderer* renderer, SDL_Texture* texture, vf2 position, vf2 dimensions)
 {
-	SDL_FRect rect = { position.x, WIN_DIM.y - position.y - dimensions.y, dimensions.x, dimensions.y };
+	SDL_FRect rect = { position.x, position.y, dimensions.x, dimensions.y };
 	SDL_RenderCopyF(renderer, texture, 0, &rect);
 }
 
@@ -675,7 +680,7 @@ internal void render_text(SDL_Renderer* renderer, FC_Font* font, vf2 coordinates
 		font,
 		renderer,
 		coordinates.x,
-		WIN_DIM.y - coordinates.y - FC_GetBaseline(font) * scalar * baseline_offset,
+		coordinates.y - FC_GetBaseline(font) * scalar * baseline_offset,
 		FC_MakeEffect
 		(
 			alignment,
@@ -700,7 +705,7 @@ internal void render_boxed_text(SDL_Renderer* renderer, FC_Font* font, vf2 coord
 	(
 		font,
 		renderer,
-		{ static_cast<i32>(coordinates.x), static_cast<i32>(WIN_DIM.y - coordinates.y - dimensions.y), static_cast<i32>(dimensions.x / scalar), static_cast<i32>(dimensions.y) },
+		{ static_cast<i32>(coordinates.x), static_cast<i32>(coordinates.y), static_cast<i32>(dimensions.x / scalar), static_cast<i32>(dimensions.y) },
 		FC_MakeEffect
 		(
 			alignment,
@@ -721,5 +726,5 @@ internal void render_boxed_text(SDL_Renderer* renderer, FC_Font* font, vf2 coord
 internal void render_line(SDL_Renderer* renderer, vf2 start, vf2 end)
 {
 	ASSERT(fabsf(start.x - end.x) + fabsf(start.y - end.y) < 4096.0f);
-	SDL_RenderDrawLineF(renderer, start.x, WIN_DIM.y - 1 - start.y, end.x, WIN_DIM.y - 1 - end.y);
+	SDL_RenderDrawLineF(renderer, start.x, start.y, end.x, end.y);
 }

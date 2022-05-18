@@ -60,15 +60,17 @@
 #include "platform.h"
 #include "utilities.cpp"
 
-global constexpr f32 COMPUTER_TASKBAR_HEIGHT            = 50.0f;
-global constexpr f32 COMPUTER_ICON_DIM                  = 50.0f;
-global constexpr vf2 COMPUTER_CREDITS_POSITION          = { 55.0f, WIN_DIM.y - (COMPUTER_ICON_DIM + 50.0f) * 0.75f };
-global constexpr vf2 COMPUTER_ANTIHOME_PROGRAM_POSITION = { 55.0f, WIN_DIM.y - (COMPUTER_ICON_DIM + 50.0f) * 1.75f };
-global constexpr f32 COMPUTER_TITLE_BAR_HEIGHT          = 25.0f;
-global constexpr vf2 COMPUTER_BUTTON_DIMENSIONS         = { 45.0f, 27.0f };
+global constexpr i32 COMPUTER_TASKBAR_HEIGHT            = 50;
+global constexpr i32 COMPUTER_ICON_DIM                  = 50;
+global constexpr vi2 COMPUTER_CREDITS_POSITION          = { 55, static_cast<i32>(WIN_DIM.y - (COMPUTER_ICON_DIM + 50) * 0.75f) };
+global constexpr vi2 COMPUTER_ANTIHOME_PROGRAM_POSITION = { 55, static_cast<i32>(WIN_DIM.y - (COMPUTER_ICON_DIM + 50) * 1.75f) };
+global constexpr i32 COMPUTER_TITLE_BAR_HEIGHT          = 25;
+global constexpr vi2 COMPUTER_BUTTON_DIMENSIONS         = { 45, 27 };
 
-global constexpr f32 HUD_HEIGHT                     = 175.0f;
-global constexpr vi2 VIEW_RES                       = vxx(vf2 { static_cast<f32>(WIN_DIM.x), WIN_DIM.y - HUD_HEIGHT } / 3.0f);
+global constexpr vi2 SCREEN_RES        = WIN_DIM / 3;
+global constexpr i32 STATUS_HUD_HEIGHT = SCREEN_RES.y / 4;
+global constexpr vi2 VIEW_RES          = { SCREEN_RES.x, SCREEN_RES.y - STATUS_HUD_HEIGHT };
+
 global constexpr f32 HORT_TO_VERT_K                 = 0.927295218f * VIEW_RES.x;
 global constexpr f32 WALL_HEIGHT                    = 2.7432f;
 global constexpr f32 WALL_THICKNESS                 = 0.4f;
@@ -353,12 +355,13 @@ struct State
 		{
 			struct
 			{
+				SDL_Texture* screen;
+				SDL_Texture* view;
 				SDL_Texture* lucia_haunted;
 				SDL_Texture* lucia_healed;
 				SDL_Texture* lucia_hit;
 				SDL_Texture* lucia_normal;
 				SDL_Texture* lucia_wounded;
-				SDL_Texture* view;
 			} texture;
 
 			SDL_Texture* textures[sizeof(texture) / sizeof(SDL_Texture*)];
@@ -392,10 +395,11 @@ struct State
 		PathCoordinatesNode* available_path_coordinates_node;
 		strlit               notification_message;
 		f32                  notification_keytime;
-		f32                  heart_rate_values[128];
+		f32                  heart_rate_values[32];
 		i32                  heart_rate_index;
 		f32                  heart_rate_update_keytime;
 		f32                  heart_rate_velocity;
+		f32                  heart_rate_current_value;
 		f32                  heart_rate_beat_keytime;
 		f32                  heart_rate_bpm;
 
@@ -885,30 +889,31 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 			state->game.mipmap.floor   = init_mipmap(DATA_DIR "room/floor.png");
 			state->game.mipmap.ceiling = init_mipmap(DATA_DIR "room/ceiling.png");
 
-			state->game.img.monster          = init_img(DATA_DIR "eye.png");
-			state->game.img.hand             = init_img(DATA_DIR "hand.png");
-			state->game.img.flashlight_on    = init_img(DATA_DIR "items/flashlight_on.png");
-			state->game.img.door             = init_img(DATA_DIR "overlays/door.png");
-			state->game.img.circuit_breaker  = init_img(DATA_DIR "overlays/circuit_breaker.png");
-			state->game.img.wall_left_arrow  = init_img(DATA_DIR "overlays/streak_left_0.png");
-			state->game.img.wall_right_arrow = init_img(DATA_DIR "overlays/streak_right_0.png");
+			state->game.img.monster          = init_img(renderer, DATA_DIR "eye.png");
+			state->game.img.hand             = init_img(renderer, DATA_DIR "hand.png");
+			state->game.img.flashlight_on    = init_img(renderer, DATA_DIR "items/flashlight_on.png");
+			state->game.img.door             = init_img(renderer, DATA_DIR "overlays/door.png");
+			state->game.img.circuit_breaker  = init_img(renderer, DATA_DIR "overlays/circuit_breaker.png");
+			state->game.img.wall_left_arrow  = init_img(renderer, DATA_DIR "overlays/streak_left_0.png");
+			state->game.img.wall_right_arrow = init_img(renderer, DATA_DIR "overlays/streak_right_0.png");
 
 			FOR_ELEMS(it, ITEM_DATA)
 			{
-				state->game.img.default_items[it_index] = init_img(it->img_file_path);
+				state->game.img.default_items[it_index] = init_img(renderer, it->img_file_path);
 			}
 
 			FOR_ELEMS(it, state->game.img.papers)
 			{
-				*it = init_img(PAPER_DATA[it_index].file_path);
+				*it = init_img(renderer, PAPER_DATA[it_index].file_path);
 			}
 
+			state->game.texture.screen        = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET   , SCREEN_RES.x, SCREEN_RES.y);
+			state->game.texture.view          = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_STREAMING, VIEW_RES.x  , VIEW_RES.y  );
 			state->game.texture.lucia_haunted = IMG_LoadTexture(renderer, DATA_DIR "hud/lucia_haunted.png");
 			state->game.texture.lucia_healed  = IMG_LoadTexture(renderer, DATA_DIR "hud/lucia_healed.png");
 			state->game.texture.lucia_hit     = IMG_LoadTexture(renderer, DATA_DIR "hud/lucia_hit.png");
 			state->game.texture.lucia_normal  = IMG_LoadTexture(renderer, DATA_DIR "hud/lucia_normal.png");
 			state->game.texture.lucia_wounded = IMG_LoadTexture(renderer, DATA_DIR "hud/lucia_wounded.png");
-			state->game.texture.view          = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_STREAMING, VIEW_RES.x, VIEW_RES.y);
 
 			state->game.audio.drone         = Mix_LoadWAV(DATA_DIR "audio/drone.wav");
 			state->game.audio.drone_low     = Mix_LoadWAV(DATA_DIR "audio/drone_low.wav");
@@ -939,6 +944,8 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 			FOR_ELEMS(it, state->game.textures) { ASSERT(*it); }
 			FOR_ELEMS(it, state->game.audios  ) { ASSERT(*it); }
 			#endif
+
+			SDL_SetTextureBlendMode(state->game.texture.screen, SDL_BLENDMODE_BLEND);
 
 			Mix_VolumeChunk(state->game.audio.drone, 0);
 			Mix_PlayChannel(+AudioChannel::r0, state->game.audio.drone, -1);
@@ -1069,13 +1076,13 @@ extern "C" PROTOTYPE_UPDATE(update)
 			if (tm.cursor.x < CURSOR_PADDING || tm.cursor.x > WIN_DIM.x - CURSOR_PADDING)
 			{
 				tm.cursor_velocity.x = 0.0f;
-				tm.cursor.x          = clamp(tm.cursor.x, CURSOR_PADDING, static_cast<f32>(WIN_DIM.x - CURSOR_PADDING));
+				tm.cursor.x          = CLAMP(tm.cursor.x, CURSOR_PADDING, static_cast<f32>(WIN_DIM.x - CURSOR_PADDING));
 			}
 
 			if (tm.cursor.y < CURSOR_PADDING || tm.cursor.y > WIN_DIM.y - CURSOR_PADDING)
 			{
 				tm.cursor_velocity.y = 0.0f;
-				tm.cursor.y          = clamp(tm.cursor.y, CURSOR_PADDING, static_cast<f32>(WIN_DIM.y - CURSOR_PADDING));
+				tm.cursor.y          = CLAMP(tm.cursor.y, CURSOR_PADDING, static_cast<f32>(WIN_DIM.y - CURSOR_PADDING));
 			}
 
 			if (PRESSED(Input::left_mouse))
@@ -1094,7 +1101,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 					{
 						case ComputerWindowType::antihome_program:
 						{
-							if (in_rect(tm.cursor, tm.window_position + vf2 { tm.window_dimensions.x * 0.5f, tm.window_dimensions.y * 0.33f } - COMPUTER_BUTTON_DIMENSIONS / 2.0f, COMPUTER_BUTTON_DIMENSIONS))
+							if (in_rect(tm.cursor, tm.window_position + vf2 { tm.window_dimensions.x * 0.5f, tm.window_dimensions.y * 0.33f } - COMPUTER_BUTTON_DIMENSIONS / 2.0f, vxx(COMPUTER_BUTTON_DIMENSIONS)))
 							{
 								boot_down_state(state);
 								state->context = StateContext::game;
@@ -1356,11 +1363,11 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 						case ComputerWindowType::power:
 						{
-							if (in_rect(tm.cursor, tm.window_position + vf2 { tm.window_dimensions.x * 0.25f, tm.window_dimensions.y * 0.25f } - COMPUTER_BUTTON_DIMENSIONS / 2.0f, COMPUTER_BUTTON_DIMENSIONS))
+							if (in_rect(tm.cursor, tm.window_position + vf2 { tm.window_dimensions.x * 0.25f, tm.window_dimensions.y * 0.25f } - COMPUTER_BUTTON_DIMENSIONS / 2.0f, vxx(COMPUTER_BUTTON_DIMENSIONS)))
 							{
 								return UpdateCode::terminate;
 							}
-							else if (in_rect(tm.cursor, tm.window_position + vf2 { tm.window_dimensions.x * 0.75f, tm.window_dimensions.y * 0.25f } - COMPUTER_BUTTON_DIMENSIONS / 2.0f, COMPUTER_BUTTON_DIMENSIONS))
+							else if (in_rect(tm.cursor, tm.window_position + vf2 { tm.window_dimensions.x * 0.75f, tm.window_dimensions.y * 0.25f } - COMPUTER_BUTTON_DIMENSIONS / 2.0f, vxx(COMPUTER_BUTTON_DIMENSIONS)))
 							{
 								tm.window_type = ComputerWindowType::null;
 							}
@@ -1371,17 +1378,17 @@ extern "C" PROTOTYPE_UPDATE(update)
 				{
 					ComputerWindowType clicked_window_type = ComputerWindowType::null;
 
-					if (in_rect(tm.cursor, COMPUTER_CREDITS_POSITION, { COMPUTER_ICON_DIM, COMPUTER_ICON_DIM }))
+					if (in_rect(tm.cursor, vxx(COMPUTER_CREDITS_POSITION), vxx(vx2(COMPUTER_ICON_DIM))))
 					{
 						clicked_window_type  = ComputerWindowType::credits;
 						tm.window_dimensions = { 250.0f, 300.0f };
 					}
-					else if (in_rect(tm.cursor, COMPUTER_ANTIHOME_PROGRAM_POSITION, { COMPUTER_ICON_DIM, COMPUTER_ICON_DIM }))
+					else if (in_rect(tm.cursor, vxx(COMPUTER_ANTIHOME_PROGRAM_POSITION), vxx(vx2(COMPUTER_ICON_DIM))))
 					{
 						clicked_window_type  = ComputerWindowType::antihome_program;
 						tm.window_dimensions = { 275.0f, 250.0f };
 					}
-					else if (in_rect(tm.cursor, { 0.0f, 0.0f }, { COMPUTER_TASKBAR_HEIGHT, COMPUTER_TASKBAR_HEIGHT }))
+					else if (in_rect(tm.cursor, { 0.0f, 0.0f }, vxx(vx2(COMPUTER_TASKBAR_HEIGHT))))
 					{
 						clicked_window_type  = ComputerWindowType::power;
 						tm.window_dimensions = { 200.0f, 100.0f };
@@ -1422,13 +1429,13 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 				if (tm.window_position.x < 2.0f * COMPUTER_TITLE_BAR_HEIGHT - tm.window_dimensions.x || tm.window_position.x > WIN_DIM.x - COMPUTER_TITLE_BAR_HEIGHT)
 				{
-					tm.window_position.x = clamp(tm.window_position.x, 2.0f * COMPUTER_TITLE_BAR_HEIGHT - tm.window_dimensions.x, WIN_DIM.x - COMPUTER_TITLE_BAR_HEIGHT);
+					tm.window_position.x = CLAMP(tm.window_position.x, 2.0f * COMPUTER_TITLE_BAR_HEIGHT - tm.window_dimensions.x, WIN_DIM.x - COMPUTER_TITLE_BAR_HEIGHT);
 					tm.window_velocity.x = 0.0f;
 				}
 
 				if (tm.window_position.y < COMPUTER_TASKBAR_HEIGHT - tm.window_dimensions.y || tm.window_position.y > WIN_DIM.y - COMPUTER_TITLE_BAR_HEIGHT - tm.window_dimensions.y)
 				{
-					tm.window_position.y = clamp(tm.window_position.y, COMPUTER_TASKBAR_HEIGHT - tm.window_dimensions.y, WIN_DIM.y - COMPUTER_TITLE_BAR_HEIGHT - tm.window_dimensions.y);
+					tm.window_position.y = CLAMP(tm.window_position.y, COMPUTER_TASKBAR_HEIGHT - tm.window_dimensions.y, WIN_DIM.y - COMPUTER_TITLE_BAR_HEIGHT - tm.window_dimensions.y);
 					tm.window_velocity.y = 0.0f;
 				}
 			}
@@ -1455,7 +1462,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 				Mix_VolumeChunk(state->game.audio.drone    , static_cast<i32>(MIX_MAX_VOLUME *         state->game.ceiling_lights_keytime ));
 				Mix_VolumeChunk(state->game.audio.drone_low, static_cast<i32>(MIX_MAX_VOLUME * (1.0f - state->game.ceiling_lights_keytime)));
 
-				state->game.entering_keytime = clamp(state->game.entering_keytime + SECONDS_PER_UPDATE / 1.0f, 0.0f, 1.0f);
+				state->game.entering_keytime = CLAMP(state->game.entering_keytime + SECONDS_PER_UPDATE / 1.0f, 0.0f, 1.0f);
 
 				if (state->game.blacked_out)
 				{
@@ -1492,12 +1499,12 @@ extern "C" PROTOTYPE_UPDATE(update)
 					state->game.hud.cursor          += state->game.hud.cursor_velocity * SECONDS_PER_UPDATE;
 					if (state->game.hud.cursor.x < 0.0f || state->game.hud.cursor.x > VIEW_RES.x)
 					{
-						state->game.hud.cursor.x          = clamp(state->game.hud.cursor.x, 0.0f, static_cast<f32>(VIEW_RES.x));
+						state->game.hud.cursor.x          = CLAMP(state->game.hud.cursor.x, 0.0f, static_cast<f32>(VIEW_RES.x));
 						state->game.hud.cursor_velocity.x = 0.0f;
 					}
 					if (state->game.hud.cursor.y < 0.0f || state->game.hud.cursor.y > VIEW_RES.y)
 					{
-						state->game.hud.cursor.y          = clamp(state->game.hud.cursor.y, 0.0f, static_cast<f32>(VIEW_RES.y));
+						state->game.hud.cursor.y          = CLAMP(state->game.hud.cursor.y, 0.0f, static_cast<f32>(VIEW_RES.y));
 						state->game.hud.cursor_velocity.y = 0.0f;
 					}
 				}
@@ -1747,7 +1754,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 							if (PAPER_DATA[state->game.hud.paper.index].min_scalar > state->game.hud.paper.scalar || state->game.hud.paper.scalar > PAPER_DATA[state->game.hud.paper.index].max_scalar)
 							{
-								state->game.hud.paper.scalar          = clamp(state->game.hud.paper.scalar, PAPER_DATA[state->game.hud.paper.index].min_scalar, PAPER_DATA[state->game.hud.paper.index].max_scalar);
+								state->game.hud.paper.scalar          = CLAMP(state->game.hud.paper.scalar, PAPER_DATA[state->game.hud.paper.index].min_scalar, PAPER_DATA[state->game.hud.paper.index].max_scalar);
 								state->game.hud.paper.scalar_velocity = 0.0f;
 							}
 
@@ -1762,12 +1769,12 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 							if (fabsf(state->game.hud.paper.delta_position.x) > region.x)
 							{
-								state->game.hud.paper.delta_position.x = clamp(state->game.hud.paper.delta_position.x, -region.x, region.x);
+								state->game.hud.paper.delta_position.x = CLAMP(state->game.hud.paper.delta_position.x, -region.x, region.x);
 								state->game.hud.paper.velocity.x       = 0.0f;
 							}
 							if (fabsf(state->game.hud.paper.delta_position.y) > region.y)
 							{
-								state->game.hud.paper.delta_position.y = clamp(state->game.hud.paper.delta_position.y, -region.y, region.y);
+								state->game.hud.paper.delta_position.y = CLAMP(state->game.hud.paper.delta_position.y, -region.y, region.y);
 								state->game.hud.paper.velocity.y       = 0.0f;
 							}
 						}
@@ -1865,8 +1872,8 @@ extern "C" PROTOTYPE_UPDATE(update)
 				if (+wasd && HOLDING(Input::shift) && !state->game.lucia_out_of_breath)
 				{
 					state->game.lucia_velocity       *= 0.75f;
-					state->game.lucia_stamina         = clamp(state->game.lucia_stamina - SECONDS_PER_UPDATE / 60.0f * (1.0f + (1.0f - square(1.0f - 2.0f * state->game.lucia_sprint_keytime)) * 4.0f), 0.0f, 1.0f);
-					state->game.lucia_sprint_keytime  = clamp(state->game.lucia_sprint_keytime + SECONDS_PER_UPDATE / 1.5f, 0.0f, 1.0f);
+					state->game.lucia_stamina         = CLAMP(state->game.lucia_stamina - SECONDS_PER_UPDATE / 60.0f * (1.0f + (1.0f - square(1.0f - 2.0f * state->game.lucia_sprint_keytime)) * 4.0f), 0.0f, 1.0f);
+					state->game.lucia_sprint_keytime  = CLAMP(state->game.lucia_sprint_keytime + SECONDS_PER_UPDATE / 1.5f, 0.0f, 1.0f);
 					if (state->game.lucia_stamina == 0.0f)
 					{
 						state->game.lucia_out_of_breath = true;
@@ -1879,8 +1886,8 @@ extern "C" PROTOTYPE_UPDATE(update)
 				else
 				{
 					state->game.lucia_velocity       *= 0.6f;
-					state->game.lucia_stamina         = clamp(state->game.lucia_stamina + SECONDS_PER_UPDATE / 10.0f * square(1.0f - state->game.lucia_sprint_keytime) * (state->game.lucia_out_of_breath ? 0.5f : 1.0f), 0.0f, 1.0f);
-					state->game.lucia_sprint_keytime  = clamp(state->game.lucia_sprint_keytime - SECONDS_PER_UPDATE / 1.0f, 0.0f, 1.0f);
+					state->game.lucia_stamina         = CLAMP(state->game.lucia_stamina + SECONDS_PER_UPDATE / 10.0f * square(1.0f - state->game.lucia_sprint_keytime) * (state->game.lucia_out_of_breath ? 0.5f : 1.0f), 0.0f, 1.0f);
+					state->game.lucia_sprint_keytime  = CLAMP(state->game.lucia_sprint_keytime - SECONDS_PER_UPDATE / 1.0f, 0.0f, 1.0f);
 
 					if (state->game.lucia_out_of_breath)
 					{
@@ -1906,7 +1913,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 					{
 						it->position.xy = move(state, it->position.xy, it->velocity * SECONDS_PER_UPDATE);
 					}
-					it->position.z = lerp(0.15f, state->game.lucia_position.z, clamp(1.0f - norm_sq(ray_to_closest(state->game.lucia_position.xy, it->position.xy)) / 36.0f, 0.0f, 1.0f)) + sinf(state->time * 3.0f) * 0.025f;
+					it->position.z = lerp(0.15f, state->game.lucia_position.z, CLAMP(1.0f - norm_sq(ray_to_closest(state->game.lucia_position.xy, it->position.xy)) / 36.0f, 0.0f, 1.0f)) + sinf(state->time * 3.0f) * 0.025f;
 					it->normal     = polar(state->time * 0.7f);
 				}
 
@@ -2218,7 +2225,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 								f32 distance = norm(ray);
 								if (distance < 1.5f)
 								{
-									f32 heuristic = 1.0f / (distance + 0.5f) + square(clamp(dot(ray / distance, polar(state->game.lucia_angle)), 0.0f, 1.0f));
+									f32 heuristic = 1.0f / (distance + 0.5f) + square(CLAMP(dot(ray / distance, polar(state->game.lucia_angle)), 0.0f, 1.0f));
 									if (best_heuristic <= heuristic)
 									{
 										best_heuristic                = heuristic;
@@ -2244,7 +2251,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 				if (state->game.holding.flashlight)
 				{
-					state->game.holding.flashlight->flashlight.power = clamp(state->game.holding.flashlight->flashlight.power - SECONDS_PER_UPDATE / 150.0f, 0.0f, 1.0f);
+					state->game.holding.flashlight->flashlight.power = CLAMP(state->game.holding.flashlight->flashlight.power - SECONDS_PER_UPDATE / 150.0f, 0.0f, 1.0f);
 					state->game.flashlight_activation                = dampen(state->game.flashlight_activation, sinf(TAU / 4.0f * (1.0f - powf(1.0f - state->game.holding.flashlight->flashlight.power, 16.0f))), 25.0f, SECONDS_PER_UPDATE);
 
 					if (state->game.holding.flashlight->flashlight.power == 0.0f)
@@ -2273,35 +2280,30 @@ extern "C" PROTOTYPE_UPDATE(update)
 				state->game.flashlight_ray.z   = sinf(state->game.flashlight_keytime * TAU * 36.0f) * 0.05f;
 				state->game.flashlight_ray     = normalize(state->game.flashlight_ray);
 
-				state->game.notification_keytime = clamp(state->game.notification_keytime - SECONDS_PER_UPDATE / 8.0f, 0.0f, 1.0f);
+				state->game.notification_keytime = CLAMP(state->game.notification_keytime - SECONDS_PER_UPDATE / 8.0f, 0.0f, 1.0f);
 
 				state->game.heart_rate_bpm = 63.5f + 80.0f * (1.0f - state->game.lucia_stamina);
-				if (state->game.heart_rate_bpm)
+				if (state->game.heart_rate_bpm > 0.001f)
 				{
 					state->game.heart_rate_beat_keytime += SECONDS_PER_UPDATE * state->game.heart_rate_bpm / 60.0f;
 				}
 
 				if (state->game.heart_rate_beat_keytime >= 1.0f)
 				{
-					state->game.heart_rate_beat_keytime -= 1.0f;
-					state->game.heart_rate_velocity     += 64.0f;
+					state->game.heart_rate_beat_keytime  = 0.0f;
+					state->game.heart_rate_velocity      = 64.0f;
 				}
 
-				state->game.heart_rate_update_keytime += SECONDS_PER_UPDATE / 0.02f;
-				FOR_RANGE(8)
+				state->game.heart_rate_velocity      -= state->game.heart_rate_current_value * 640.0f * SECONDS_PER_UPDATE;
+				state->game.heart_rate_velocity      *= 0.5f;
+				state->game.heart_rate_current_value += state->game.heart_rate_velocity * SECONDS_PER_UPDATE;
+
+				state->game.heart_rate_update_keytime += SECONDS_PER_UPDATE / 0.05f;
+				if (state->game.heart_rate_update_keytime >= 1.0f)
 				{
-					if (state->game.heart_rate_update_keytime >= 1.0f)
-					{
-						state->game.heart_rate_update_keytime                       -= 1.0f;
-						state->game.heart_rate_velocity                             -= state->game.heart_rate_values[mod(state->game.heart_rate_index - 1, ARRAY_CAPACITY(state->game.heart_rate_values))] * 32.0f;
-						state->game.heart_rate_velocity                             *= 0.45f;
-						state->game.heart_rate_values[state->game.heart_rate_index]  = state->game.heart_rate_values[mod(state->game.heart_rate_index - 1, ARRAY_CAPACITY(state->game.heart_rate_values))] + state->game.heart_rate_velocity * SECONDS_PER_UPDATE;
-						state->game.heart_rate_index                                 = (state->game.heart_rate_index + 1) % ARRAY_CAPACITY(state->game.heart_rate_values);
-					}
-					else
-					{
-						break;
-					}
+					state->game.heart_rate_update_keytime                        = 0.0f;
+					state->game.heart_rate_values[state->game.heart_rate_index]  = state->game.heart_rate_current_value;
+					state->game.heart_rate_index                                 = (state->game.heart_rate_index + 1) % ARRAY_CAPACITY(state->game.heart_rate_values);
 				}
 
 				if (PRESSED(Input::left)) // @TEMP@
@@ -2321,11 +2323,11 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 				if (state->game.blacked_out)
 				{
-					state->game.ceiling_lights_keytime = clamp(state->game.ceiling_lights_keytime - SECONDS_PER_UPDATE / 1.0f, 0.0f, 1.0f);
+					state->game.ceiling_lights_keytime = CLAMP(state->game.ceiling_lights_keytime - SECONDS_PER_UPDATE / 1.0f, 0.0f, 1.0f);
 				}
 				else
 				{
-					state->game.ceiling_lights_keytime = clamp(state->game.ceiling_lights_keytime + SECONDS_PER_UPDATE / 2.0f, 0.0f, 1.0f);
+					state->game.ceiling_lights_keytime = CLAMP(state->game.ceiling_lights_keytime + SECONDS_PER_UPDATE / 2.0f, 0.0f, 1.0f);
 				}
 			}
 		} break;
@@ -2334,7 +2336,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 		{
 			aliasing end = state->end;
 
-			end.entering_keytime = clamp(end.entering_keytime + SECONDS_PER_UPDATE / 1.0f, 0.0f, 1.0f);
+			end.entering_keytime = CLAMP(end.entering_keytime + SECONDS_PER_UPDATE / 1.0f, 0.0f, 1.0f);
 
 			if (end.entering_keytime == 1.0f)
 			{
@@ -2368,18 +2370,18 @@ extern "C" PROTOTYPE_RENDER(render)
 
 			SDL_RenderClear(platform->renderer);
 
-			render_texture(platform->renderer, tm.texture.desktop, { 0.0f, COMPUTER_TASKBAR_HEIGHT }, vxx(WIN_DIM));
+			render_texture(platform->renderer, tm.texture.desktop, { 0.0f, 0.0f }, vxx(WIN_DIM));
 
 			lambda draw_icon =
 				[&](SDL_Texture* texture, vf2 position, strlit name)
 				{
-					render_texture(platform->renderer, texture, position, { COMPUTER_ICON_DIM, COMPUTER_ICON_DIM });
+					render_texture(platform->renderer, texture, { position.x, WIN_DIM.y - COMPUTER_ICON_DIM - position.y }, { COMPUTER_ICON_DIM, COMPUTER_ICON_DIM });
 					render_text
 					(
 						platform->renderer,
 						state->font.major,
-						{ position.x + COMPUTER_ICON_DIM / 2.0f, position.y - 15.0f },
-						0.5f,
+						{ position.x + COMPUTER_ICON_DIM / 2.0f, WIN_DIM.y - position.y },
+						-0.75f,
 						FC_ALIGN_CENTER,
 						0.5f,
 						{ 1.0f, 1.0f, 1.0f, 1.0f },
@@ -2388,13 +2390,13 @@ extern "C" PROTOTYPE_RENDER(render)
 					);
 				};
 
-			draw_icon(tm.texture.text_file       , COMPUTER_CREDITS_POSITION         , "credits.txt");
-			draw_icon(tm.texture.antihome_program, COMPUTER_ANTIHOME_PROGRAM_POSITION, "Antihome");
+			draw_icon(tm.texture.text_file       , vxx(COMPUTER_CREDITS_POSITION         ), "credits.txt");
+			draw_icon(tm.texture.antihome_program, vxx(COMPUTER_ANTIHOME_PROGRAM_POSITION), "Antihome");
 
 			if (+tm.window_type)
 			{
 				set_color(platform->renderer, monochrome(0.5f));
-				render_filled_rect(platform->renderer, tm.window_position + vf2 { 0.0f, tm.window_dimensions.y }, { tm.window_dimensions.x, COMPUTER_TITLE_BAR_HEIGHT });
+				render_filled_rect(platform->renderer, vf2 { tm.window_position.x, WIN_DIM.y - COMPUTER_TITLE_BAR_HEIGHT - tm.window_position.y - tm.window_dimensions.y }, { tm.window_dimensions.x, COMPUTER_TITLE_BAR_HEIGHT });
 
 				render_texture
 				(
@@ -2402,7 +2404,7 @@ extern "C" PROTOTYPE_RENDER(render)
 					tm.texture.window_close,
 					{
 						tm.window_position.x + tm.window_dimensions.x - COMPUTER_TITLE_BAR_HEIGHT,
-						tm.window_position.y + tm.window_dimensions.y,
+						WIN_DIM.y - COMPUTER_TITLE_BAR_HEIGHT - tm.window_position.y - tm.window_dimensions.y,
 					},
 					{ COMPUTER_TITLE_BAR_HEIGHT, COMPUTER_TITLE_BAR_HEIGHT }
 				);
@@ -2412,13 +2414,13 @@ extern "C" PROTOTYPE_RENDER(render)
 					case ComputerWindowType::credits:
 					{
 						set_color(platform->renderer, { 0.75f, 0.65f, 0.2f, 1.0f });
-						render_filled_rect(platform->renderer, tm.window_position, tm.window_dimensions);
+						render_filled_rect(platform->renderer, { tm.window_position.x, WIN_DIM.y - tm.window_dimensions.y - tm.window_position.y }, tm.window_dimensions);
 
 						render_boxed_text
 						(
 							platform->renderer,
 							state->font.minor,
-							tm.window_position   + vf2 { 5.0f, 5.0f },
+							{ tm.window_position.x + 5.0f, WIN_DIM.y - tm.window_dimensions.y - tm.window_position.y + 5.0f },
 							tm.window_dimensions - vf2 { 5.0f, 5.0f } * 2.0f,
 							FC_ALIGN_LEFT,
 							1.0f,
@@ -2433,13 +2435,13 @@ extern "C" PROTOTYPE_RENDER(render)
 					case ComputerWindowType::antihome_program:
 					{
 						set_color(platform->renderer, monochrome(0.25f));
-						render_filled_rect(platform->renderer, tm.window_position, tm.window_dimensions);
+						render_filled_rect(platform->renderer, { tm.window_position.x, WIN_DIM.y - tm.window_dimensions.y - tm.window_position.y }, tm.window_dimensions);
 
 						render_text
 						(
 							platform->renderer,
 							state->font.major,
-							tm.window_position + vf2 { tm.window_dimensions.x * 0.5f, tm.window_dimensions.y * 0.7f },
+							{ tm.window_position.x + tm.window_dimensions.x * 0.5f, WIN_DIM.y - tm.window_position.y - tm.window_dimensions.y * 0.7f },
 							0.5f,
 							FC_ALIGN_CENTER,
 							1.25f,
@@ -2448,12 +2450,12 @@ extern "C" PROTOTYPE_RENDER(render)
 						);
 
 						set_color(platform->renderer, { 1.0f, 0.0f, 0.0f, 1.0f });
-						render_filled_rect(platform->renderer, tm.window_position + vf2 { tm.window_dimensions.x * 0.5f, tm.window_dimensions.y * 0.33f } - COMPUTER_BUTTON_DIMENSIONS / 2.0f, COMPUTER_BUTTON_DIMENSIONS);
+						render_filled_rect(platform->renderer, vf2 { tm.window_position.x + tm.window_dimensions.x * 0.5f, WIN_DIM.y - tm.window_position.y - tm.window_dimensions.y * 0.33f } - COMPUTER_BUTTON_DIMENSIONS / 2.0f, vxx(COMPUTER_BUTTON_DIMENSIONS));
 						render_text
 						(
 							platform->renderer,
 							state->font.major,
-							tm.window_position + vf2 { tm.window_dimensions.x * 0.5f, tm.window_dimensions.y * 0.33f },
+							{ tm.window_position.x + tm.window_dimensions.x * 0.5f, WIN_DIM.y - tm.window_position.y - tm.window_dimensions.y * 0.33f },
 							0.5f,
 							FC_ALIGN_CENTER,
 							0.55f,
@@ -2465,13 +2467,13 @@ extern "C" PROTOTYPE_RENDER(render)
 					case ComputerWindowType::power:
 					{
 						set_color(platform->renderer, monochrome(0.8f));
-						render_filled_rect(platform->renderer, tm.window_position, tm.window_dimensions);
+						render_filled_rect(platform->renderer, { tm.window_position.x, WIN_DIM.y - tm.window_dimensions.y - tm.window_position.y }, tm.window_dimensions);
 
 						render_text
 						(
 							platform->renderer,
 							state->font.major,
-							tm.window_position + vf2 { tm.window_dimensions.x * 0.5f, tm.window_dimensions.y * 0.7f },
+							{ tm.window_position.x + tm.window_dimensions.x * 0.5f, WIN_DIM.y - tm.window_position.y - tm.window_dimensions.y * 0.75f },
 							0.5f,
 							FC_ALIGN_CENTER,
 							0.8f,
@@ -2480,13 +2482,13 @@ extern "C" PROTOTYPE_RENDER(render)
 						);
 
 						set_color(platform->renderer, monochrome(0.6f));
-						render_filled_rect(platform->renderer, tm.window_position + vf2 { tm.window_dimensions.x * 0.25f, tm.window_dimensions.y * 0.3f } - COMPUTER_BUTTON_DIMENSIONS / 2.0f, COMPUTER_BUTTON_DIMENSIONS);
+						render_filled_rect(platform->renderer, vf2 { tm.window_position.x + tm.window_dimensions.x * 0.25f, WIN_DIM.y - tm.window_position.y - tm.window_dimensions.y * 0.3f } - COMPUTER_BUTTON_DIMENSIONS / 2.0f, vxx(COMPUTER_BUTTON_DIMENSIONS));
 
 						render_text
 						(
 							platform->renderer,
 							state->font.major,
-							tm.window_position + vf2 { tm.window_dimensions.x * 0.25f, tm.window_dimensions.y * 0.3f },
+							{ tm.window_position.x + tm.window_dimensions.x * 0.25f, WIN_DIM.y - tm.window_position.y - tm.window_dimensions.y * 0.3f },
 							0.5f,
 							FC_ALIGN_CENTER,
 							0.6f,
@@ -2495,13 +2497,13 @@ extern "C" PROTOTYPE_RENDER(render)
 						);
 
 						set_color(platform->renderer, monochrome(0.6f));
-						render_filled_rect(platform->renderer, tm.window_position + vf2 { tm.window_dimensions.x * 0.75f, tm.window_dimensions.y * 0.3f } - COMPUTER_BUTTON_DIMENSIONS / 2.0f, COMPUTER_BUTTON_DIMENSIONS);
+						render_filled_rect(platform->renderer, vf2 { tm.window_position.x + tm.window_dimensions.x * 0.75f, WIN_DIM.y - tm.window_position.y - tm.window_dimensions.y * 0.3f } - COMPUTER_BUTTON_DIMENSIONS / 2.0f, vxx(COMPUTER_BUTTON_DIMENSIONS));
 
 						render_text
 						(
 							platform->renderer,
 							state->font.major,
-							tm.window_position + vf2 { tm.window_dimensions.x * 0.75f, tm.window_dimensions.y * 0.3f },
+							{ tm.window_position.x + tm.window_dimensions.x * 0.75f, WIN_DIM.y - tm.window_position.y - tm.window_dimensions.y * 0.3f },
 							0.5f,
 							FC_ALIGN_CENTER,
 							0.6f,
@@ -2513,13 +2515,13 @@ extern "C" PROTOTYPE_RENDER(render)
 			}
 
 			set_color(platform->renderer, monochrome(0.3f));
-			render_filled_rect(platform->renderer, { 0.0f, 0.0f }, { static_cast<f32>(WIN_DIM.x), static_cast<f32>(COMPUTER_TASKBAR_HEIGHT) });
+			render_filled_rect(platform->renderer, { 0.0f, static_cast<f32>(WIN_DIM.y - COMPUTER_TASKBAR_HEIGHT) }, { static_cast<f32>(WIN_DIM.x), static_cast<f32>(COMPUTER_TASKBAR_HEIGHT) });
 
 			render_texture
 			(
 				platform->renderer,
 				state->title_menu.texture.power_button,
-				{ 0.0f, 0.0f },
+				{ 0.0f, static_cast<f32>(WIN_DIM.y - COMPUTER_TASKBAR_HEIGHT) },
 				{ COMPUTER_TASKBAR_HEIGHT, COMPUTER_TASKBAR_HEIGHT }
 			);
 
@@ -2527,7 +2529,7 @@ extern "C" PROTOTYPE_RENDER(render)
 			(
 				platform->renderer,
 				state->title_menu.texture.cursor,
-				{ state->title_menu.cursor.x, state->title_menu.cursor.y - 24.0f },
+				{ state->title_menu.cursor.x, WIN_DIM.y - state->title_menu.cursor.y },
 				{ 12.0f, 24.0f }
 			);
 		} break;
@@ -2745,9 +2747,9 @@ extern "C" PROTOTYPE_RENDER(render)
 						constexpr f32 FLASHLIGHT_OUTER_CUTOFF = 0.91f;
 
 						f32 flashlight_k =
-							clamp
+							CLAMP
 							(
-								clamp((dot(ray, state->game.flashlight_ray) - FLASHLIGHT_OUTER_CUTOFF) / (FLASHLIGHT_INNER_CUTOFF - FLASHLIGHT_OUTER_CUTOFF), 0.0f, 1.0f)
+								CLAMP((dot(ray, state->game.flashlight_ray) - FLASHLIGHT_OUTER_CUTOFF) / (FLASHLIGHT_INNER_CUTOFF - FLASHLIGHT_OUTER_CUTOFF), 0.0f, 1.0f)
 									/ (square(distance) + 0.1f)
 									* 32.0f
 									* state->game.flashlight_activation,
@@ -2759,21 +2761,21 @@ extern "C" PROTOTYPE_RENDER(render)
 
 						vf3 new_color =
 							color
-								* clamp
+								* CLAMP
 									(
 										(
 											0.30f
 												- fabsf(dot(ray, normal)) * 0.01f
 												+ ((state->game.lucia_position.z + ray.z * distance) / WALL_HEIGHT + 0.95f) * 0.7f * ceiling_lights_t
 										)
-											* clamp(1.0f - distance / lerp(8.0f, 48.0f, ceiling_lights_t), 0.0f, 1.0f)
+											* CLAMP(1.0f - distance / lerp(8.0f, 48.0f, ceiling_lights_t), 0.0f, 1.0f)
 											+ flashlight_k,
 										0.0f,
 										1.0f
 									)
 								+ vxx(powf(square(dot(ray, normal)), 64) * square(dot(ray, state->game.flashlight_ray)) * 0.4f * flashlight_k);
 
-						return vf3 { clamp(new_color.x, 0.0f, 1.0f), clamp(new_color.y, 0.0f, 1.0f), clamp(new_color.z, 0.0f, 1.0f) };
+						return vf3 { CLAMP(new_color.x, 0.0f, 1.0f), CLAMP(new_color.y, 0.0f, 1.0f), CLAMP(new_color.z, 0.0f, 1.0f) };
 					};
 
 				struct RenderScanNode
@@ -2867,7 +2869,7 @@ extern "C" PROTOTYPE_RENDER(render)
 
 				for (RenderScanNode* node = render_scan_node; node; node = node->next_node)
 				{
-					FOR_RANGE(y, clamp(node->starting_y, 0, VIEW_RES.y), clamp(node->ending_y, 0, VIEW_RES.y))
+					FOR_RANGE(y, CLAMP(node->starting_y, 0, VIEW_RES.y), CLAMP(node->ending_y, 0, VIEW_RES.y))
 					{
 						vf3 ray          = normalize({ ray_horizontal.x, ray_horizontal.y, (y - VIEW_RES.y / 2.0f) * state->game.lucia_fov / HORT_TO_VERT_K });
 						vf4 sprite_pixel = img_color_at(node->img, { node->portion, (static_cast<f32>(y) - node->starting_y) / (node->ending_y - node->starting_y) });
@@ -2959,159 +2961,108 @@ extern "C" PROTOTYPE_RENDER(render)
 				}
 			}
 
-			lambda draw_img =
-				[&](u32* view_pixels, Img* img, vi2 position, i32 dimension)
-				{
-					FOR_RANGE(x, clamp(position.x, 0, VIEW_RES.x), clamp(position.x + dimension, 0, VIEW_RES.x))
-					{
-						FOR_RANGE(y, clamp(position.y, 0, VIEW_RES.y), clamp(position.y + dimension, 0, VIEW_RES.y))
-						{
-							vf4 color = img_color_at(img, { static_cast<f32>(x - position.x) / dimension, (1.0f - static_cast<f32>(y - position.y) / dimension) });
-							view_pixels[y * VIEW_RES.x + x] = pack_color(lerp(unpack_color(view_pixels[y * VIEW_RES.x + x]).xyz, color.xyz, color.w));
-						}
-					}
-				};
+			SDL_UnlockTexture(state->game.texture.view);
+			render_texture(platform->renderer, state->game.texture.view, { 0.0f, 0.0f }, { static_cast<f32>(VIEW_RES.x) / SCREEN_RES.x * WIN_DIM.x, static_cast<f32>(VIEW_RES.y) / SCREEN_RES.y * WIN_DIM.y });
+
+			SDL_SetRenderTarget(platform->renderer, state->game.texture.screen);
+			set_color(platform->renderer, { 0.0f, 0.0f, 0.0f, 0.0f });
+			SDL_RenderClear(platform->renderer);
 
 			switch (state->game.hud.type)
 			{
-				case HudType::paper:
-				{
-					vi2 paper_dimensions  = vxx(state->game.img.papers[state->game.hud.paper.index].dim * state->game.hud.paper.scalar);
-					vi2 paper_coordinates = vxx(VIEW_RES / 2.0f + (conjugate(state->game.hud.paper.delta_position) - state->game.img.papers[state->game.hud.paper.index].dim / 2.0f) * state->game.hud.paper.scalar);
-
-					FOR_RANGE(x, clamp(paper_coordinates.x, 0, VIEW_RES.x), clamp(paper_coordinates.x + paper_dimensions.x, 0, VIEW_RES.x))
-					{
-						FOR_RANGE(y, clamp(paper_coordinates.y, 0, VIEW_RES.y), clamp(paper_coordinates.y + paper_dimensions.y, 0, VIEW_RES.y))
-						{
-							vf4 color = img_color_at(&state->game.img.papers[state->game.hud.paper.index], { static_cast<f32>(x - paper_coordinates.x) / paper_dimensions.x, (1.0f - static_cast<f32>(y - paper_coordinates.y) / paper_dimensions.y) });
-							view_pixels[y * VIEW_RES.x + x] = pack_color(lerp(unpack_color(view_pixels[y * VIEW_RES.x + x]).xyz, color.xyz, color.w));
-						}
-					}
-				} break;
-
 				case HudType::inventory:
 				{
 					FOR_RANGE(y, ARRAY_CAPACITY(state->game.hud.inventory.array))
 					{
 						FOR_RANGE(x, ARRAY_CAPACITY(state->game.hud.inventory.array[y]))
 						{
-							constexpr u32 BG = pack_color({ 0.2f, 0.2f, 0.2f, 1.0f });
-
-							u32 border   = pack_color(&state->game.hud.inventory.array[y][x] == state->game.hud.inventory.selected_item ? vf3 { 0.7f, 0.7f, 0.25f } : vf3 { 0.5f, 0.5f, 0.5f });
-							vi2 position =
+							vf2 position =
 								{
-									VIEW_RES.x / 2 + x * (INVENTORY_DIM + INVENTORY_PADDING) - static_cast<i32>(ARRAY_CAPACITY(state->game.hud.inventory.array[y]) * (INVENTORY_DIM + INVENTORY_PADDING) - INVENTORY_PADDING) / 2,
-									VIEW_RES.y / 2 + y * (INVENTORY_DIM + INVENTORY_PADDING) - static_cast<i32>(ARRAY_CAPACITY(state->game.hud.inventory.array   ) * (INVENTORY_DIM + INVENTORY_PADDING) - INVENTORY_PADDING) / 2
+									(VIEW_RES.x - (ARRAY_CAPACITY(state->game.hud.inventory.array[y]) * (INVENTORY_DIM + INVENTORY_PADDING) - INVENTORY_PADDING)) / 2.0f + x * (INVENTORY_DIM + INVENTORY_PADDING),
+									(VIEW_RES.y - (ARRAY_CAPACITY(state->game.hud.inventory.array   ) * (INVENTORY_DIM + INVENTORY_PADDING) - INVENTORY_PADDING)) / 2.0f + y * (INVENTORY_DIM + INVENTORY_PADDING)
 								};
 
-							FOR_RANGE(i, INVENTORY_DIM)
-							{
-								view_pixels[position.y * VIEW_RES.x + position.x + i]                   = border;
-								view_pixels[(position.y + INVENTORY_DIM - 1) * VIEW_RES.x + position.x + i] = border;
-								view_pixels[(position.y + i) * VIEW_RES.x + position.x]                 = border;
-								view_pixels[(position.y + i) * VIEW_RES.x + position.x + INVENTORY_DIM - 1] = border;
-							}
+							set_color(platform->renderer, &state->game.hud.inventory.array[y][x] == state->game.hud.inventory.selected_item ? vf3 { 0.7f, 0.7f, 0.25f } : monochrome(0.5f));
+							render_rect(platform->renderer, position, vxx(vx2(INVENTORY_DIM)));
 
-							FOR_RANGE(iy, INVENTORY_DIM - 2)
-							{
-								FOR_RANGE(ix, INVENTORY_DIM - 2)
-								{
-									view_pixels[(position.y + 1 + iy) * VIEW_RES.x + position.x + 1 + ix] = BG;
-								}
-							}
+							set_color(platform->renderer, monochrome(0.3f));
+							render_filled_rect(platform->renderer, position + vf2 { 1.0f, 1.0f }, vx2(INVENTORY_DIM) - vf2 { 2.0f, 2.0f });
 
-							if ( state->game.hud.inventory.grabbing && state->game.hud.inventory.selected_item == &state->game.hud.inventory.array[y][x])
+							Img* img = get_corresponding_item_img(state, &state->game.hud.inventory.array[y][x]);
+							if (img && !(state->game.hud.inventory.grabbing && &state->game.hud.inventory.array[y][x] == state->game.hud.inventory.selected_item))
 							{
-								draw_img(view_pixels, get_corresponding_item_img(state, &state->game.hud.inventory.array[y][x]), position + vi2 { 1, 1 }, INVENTORY_DIM - 2);
+								render_texture(platform->renderer, img->texture, position, vx2(INVENTORY_DIM) - vf2 { 2.0f, 2.0f });
 							}
 						}
 					}
 
 					if (state->game.hud.inventory.grabbing)
 					{
-						draw_img
+						constexpr f32 ITEM_SCALAR = 0.75f;
+						render_texture
 						(
-							view_pixels,
-							get_corresponding_item_img(state, state->game.hud.inventory.selected_item),
-							vxx(vf2 { state->game.hud.cursor.x, VIEW_RES.y - 1.0f - state->game.hud.cursor.y }) - vi2 { INVENTORY_DIM, INVENTORY_DIM } * 3 / 4 / 2,
-							INVENTORY_DIM * 3 / 4
+							platform->renderer,
+							get_corresponding_item_img(state, state->game.hud.inventory.selected_item)->texture,
+							vf2 { state->game.hud.cursor.x, VIEW_RES.y - state->game.hud.cursor.y } - vx2(INVENTORY_DIM) / 2.0f * ITEM_SCALAR,
+							vx2(INVENTORY_DIM) * ITEM_SCALAR
 						);
 					}
 				} break;
 
+				case HudType::paper:
+				{
+					render_texture
+					(
+						platform->renderer,
+						state->game.img.papers[state->game.hud.paper.index].texture,
+						VIEW_RES / 2.0f + conjugate(state->game.hud.paper.delta_position) * state->game.hud.paper.scalar - state->game.img.papers[state->game.hud.paper.index].dim * state->game.hud.paper.scalar / 2.0f,
+						state->game.img.papers[state->game.hud.paper.index].dim * state->game.hud.paper.scalar
+					);
+				} break;
+
 				case HudType::circuit_breaker:
 				{
-					lambda draw_rect =
-						[&](vf3 color, vi2 coordinates, vi2 dimensions)
-						{
-							u32 COLOR = pack_color(color);
-							FOR_RANGE(y, clamp(coordinates.y, 0, VIEW_RES.y), clamp(coordinates.y + dimensions.y, 0, VIEW_RES.y))
-							{
-								FOR_RANGE(x, clamp(coordinates.x, 0, VIEW_RES.x), clamp(coordinates.x + dimensions.x, 0, VIEW_RES.x))
-								{
-									view_pixels[(VIEW_RES.y - y) * VIEW_RES.x + x] = COLOR;
-								}
-							}
-						};
-
-					draw_rect(monochrome(0.2f), (VIEW_RES - CIRCUIT_BREAKER_HUD_DIMENSIONS) / 2, CIRCUIT_BREAKER_HUD_DIMENSIONS);
+					set_color(platform->renderer, monochrome(0.2f));
+					render_filled_rect(platform->renderer, (VIEW_RES - CIRCUIT_BREAKER_HUD_DIMENSIONS) / 2.0f, vxx(CIRCUIT_BREAKER_HUD_DIMENSIONS));
 				} break;
 			}
 
 			if (state->game.hud.type != HudType::null)
 			{
-				i32 cursor_dim = HOLDING(Input::left_mouse) ? 10 : 15;
-				draw_img(view_pixels, &state->game.img.hand, vxx(vf2 { state->game.hud.cursor.x - cursor_dim / 2.0f, VIEW_RES.y - 1.0f - state->game.hud.cursor.y - cursor_dim / 2.0f }), cursor_dim);
-			}
-
-			SDL_UnlockTexture(state->game.texture.view);
-			render_texture(platform->renderer, state->game.texture.view, { 0.0f, HUD_HEIGHT }, { static_cast<f32>(WIN_DIM.x), WIN_DIM.y - HUD_HEIGHT });
-
-			if (state->game.notification_keytime)
-			{
-				render_text
-				(
-					platform->renderer,
-					state->font.minor,
-					{ WIN_DIM.x * 0.5f, HUD_HEIGHT + (WIN_DIM.y - HUD_HEIGHT) * 0.2f },
-					0.5f,
-					FC_ALIGN_CENTER,
-					1.0f,
-					{ 1.0f, 1.0f, 1.0f, sinf(TAU / 4.0f * square(state->game.notification_keytime)) },
-					"%s",
-					state->game.notification_message
-				);
+				f32 cursor_dim = HOLDING(Input::left_mouse) ? 10.0f : 15.0f;
+				render_texture(platform->renderer, state->game.img.hand.texture, vf2 { state->game.hud.cursor.x, VIEW_RES.y - state->game.hud.cursor.y } - vx2(cursor_dim) / 2.0f, vx2(cursor_dim));
 			}
 
 			set_color(platform->renderer, monochrome(0.1f));
-			render_filled_rect(platform->renderer, { 0.0f, 0.0f }, { static_cast<f32>(WIN_DIM.x), HUD_HEIGHT });
+			render_filled_rect(platform->renderer, { 0.0f, static_cast<f32>(SCREEN_RES.y - STATUS_HUD_HEIGHT) }, vxx(vi2 { SCREEN_RES.x, STATUS_HUD_HEIGHT }));
 
 			render_texture
 			(
 				platform->renderer,
 				state->game.texture.lucia_normal,
-				{ WIN_DIM.x / 2.0f - HUD_HEIGHT / 2.0f, 0.0f },
-				{ HUD_HEIGHT, HUD_HEIGHT }
+				{ SCREEN_RES.x / 2.0f - STATUS_HUD_HEIGHT / 2.0f, static_cast<f32>(SCREEN_RES.y - STATUS_HUD_HEIGHT) },
+				{ STATUS_HUD_HEIGHT, STATUS_HUD_HEIGHT }
 			);
 
-			constexpr i32 BATTERY_LEFT_PADDING       = 50;
-			constexpr i32 BATTERY_TOP_BOTTOM_PADDING = 35;
-			constexpr i32 BATTERY_WIDTH              = 55;
-			constexpr i32 BATTERY_OUTLINE            = 5;
+			constexpr f32 BATTERY_LEFT_PADDING = 15.0f;
+			constexpr vf2 BATTERY_DIMENSIONS   = { 20.0f, STATUS_HUD_HEIGHT * 0.65f };
+			constexpr vf2 NODE_DIMENSIONS      = { BATTERY_DIMENSIONS.x * 0.25f, BATTERY_DIMENSIONS.y * 0.1f };
+			constexpr f32 BATTERY_OUTLINE      = 2.0f;
 
 			set_color(platform->renderer, monochrome(0.25f));
 
 			render_filled_rect
 			(
 				platform->renderer,
-				{ BATTERY_LEFT_PADDING - BATTERY_OUTLINE, BATTERY_TOP_BOTTOM_PADDING - BATTERY_OUTLINE },
-				{ BATTERY_WIDTH + BATTERY_OUTLINE * 2.0f, HUD_HEIGHT - BATTERY_TOP_BOTTOM_PADDING * 2.0f + BATTERY_OUTLINE * 2.0f }
+				{ BATTERY_LEFT_PADDING - BATTERY_OUTLINE, SCREEN_RES.y - (STATUS_HUD_HEIGHT + BATTERY_DIMENSIONS.y - NODE_DIMENSIONS.y) / 2.0f - BATTERY_OUTLINE },
+				BATTERY_DIMENSIONS + vx2(BATTERY_OUTLINE) * 2.0f
 			);
+
 			render_filled_rect
 			(
 				platform->renderer,
-				{ BATTERY_LEFT_PADDING + BATTERY_WIDTH / 2.0f - BATTERY_OUTLINE, HUD_HEIGHT - BATTERY_TOP_BOTTOM_PADDING + BATTERY_OUTLINE },
-				{ BATTERY_OUTLINE * 2.0f, BATTERY_OUTLINE }
+				{ BATTERY_LEFT_PADDING + (BATTERY_DIMENSIONS.x - NODE_DIMENSIONS.x) / 2.0f, SCREEN_RES.y - (STATUS_HUD_HEIGHT + BATTERY_DIMENSIONS.y - NODE_DIMENSIONS.y) / 2.0f - BATTERY_OUTLINE - NODE_DIMENSIONS.y },
+				NODE_DIMENSIONS
 			);
 
 			constexpr vf3 BATTERY_LEVEL_COLORS[] = { { 0.7f, 0.05f, 0.04f }, { 0.7f, 0.4f, 0.03f }, { 0.4f, 0.7f, 0.04f }, { 0.04f, 0.85f, 0.04f } };
@@ -3125,7 +3076,7 @@ extern "C" PROTOTYPE_RENDER(render)
 						monochrome((level->x + level->y + level->z) / (3.0f + level_index)),
 						*level,
 						state->game.holding.flashlight
-							? clamp((state->game.holding.flashlight->flashlight.power - static_cast<f32>(level_index) / ARRAY_CAPACITY(BATTERY_LEVEL_COLORS)) * ARRAY_CAPACITY(BATTERY_LEVEL_COLORS), 0.0f, 1.0f)
+							? CLAMP((state->game.holding.flashlight->flashlight.power - static_cast<f32>(level_index) / ARRAY_CAPACITY(BATTERY_LEVEL_COLORS)) * ARRAY_CAPACITY(BATTERY_LEVEL_COLORS), 0.0f, 1.0f)
 							: 0.0f
 					)
 				);
@@ -3133,13 +3084,13 @@ extern "C" PROTOTYPE_RENDER(render)
 				render_filled_rect
 				(
 					platform->renderer,
-					{ BATTERY_LEFT_PADDING, BATTERY_TOP_BOTTOM_PADDING + level_index * (HUD_HEIGHT - BATTERY_TOP_BOTTOM_PADDING * 2.0f) / ARRAY_CAPACITY(BATTERY_LEVEL_COLORS) },
-					{ BATTERY_WIDTH, (HUD_HEIGHT - BATTERY_TOP_BOTTOM_PADDING * 2.0f) / ARRAY_CAPACITY(BATTERY_LEVEL_COLORS) }
+					{ BATTERY_LEFT_PADDING, SCREEN_RES.y - (STATUS_HUD_HEIGHT + BATTERY_DIMENSIONS.y - NODE_DIMENSIONS.y) / 2.0f + BATTERY_DIMENSIONS.y * (1.0f - (1.0f + level_index) / ARRAY_CAPACITY(BATTERY_LEVEL_COLORS)) },
+					{ BATTERY_DIMENSIONS.x, BATTERY_DIMENSIONS.y / ARRAY_CAPACITY(BATTERY_LEVEL_COLORS) }
 				);
 			}
 
-			constexpr vf2 HEART_RATE_MONITOR_DIMENSIONS  = { 200.0f, HUD_HEIGHT * 0.6f };
-			constexpr vf2 HEART_RATE_MONITOR_COORDINATES = vf2 { WIN_DIM.x - 30.0f - HEART_RATE_MONITOR_DIMENSIONS.x, (HUD_HEIGHT - HEART_RATE_MONITOR_DIMENSIONS.y) / 2.0f };
+			constexpr vf2 HEART_RATE_MONITOR_DIMENSIONS  = { 50.0f, STATUS_HUD_HEIGHT * 0.6f };
+			constexpr vf2 HEART_RATE_MONITOR_COORDINATES = vf2 { SCREEN_RES.x - 15.0f - HEART_RATE_MONITOR_DIMENSIONS.x, SCREEN_RES.y - (STATUS_HUD_HEIGHT + HEART_RATE_MONITOR_DIMENSIONS.y) / 2.0f };
 
 			set_color(platform->renderer, monochrome(0.15f));
 			render_filled_rect(platform->renderer, HEART_RATE_MONITOR_COORDINATES, HEART_RATE_MONITOR_DIMENSIONS);
@@ -3152,8 +3103,8 @@ extern "C" PROTOTYPE_RENDER(render)
 					render_line
 					(
 						platform->renderer,
-						HEART_RATE_MONITOR_COORDINATES + vxx(vf2 {  it_index         / static_cast<f32>(ARRAY_CAPACITY(state->game.heart_rate_values)) * HEART_RATE_MONITOR_DIMENSIONS.x, clamp((* it      / 2.0f + 0.25f), 0.0f, 1.0f) * HEART_RATE_MONITOR_DIMENSIONS.y }),
-						HEART_RATE_MONITOR_COORDINATES + vxx(vf2 { (it_index + 1.0f) / static_cast<f32>(ARRAY_CAPACITY(state->game.heart_rate_values)) * HEART_RATE_MONITOR_DIMENSIONS.x, clamp((*(it + 1) / 2.0f + 0.25f), 0.0f, 1.0f) * HEART_RATE_MONITOR_DIMENSIONS.y })
+						HEART_RATE_MONITOR_COORDINATES + vxx(vf2 {  it_index         / static_cast<f32>(ARRAY_CAPACITY(state->game.heart_rate_values)) * HEART_RATE_MONITOR_DIMENSIONS.x, CLAMP(0.75f - * it      / 2.0f, 0.0f, 1.0f) * HEART_RATE_MONITOR_DIMENSIONS.y }),
+						HEART_RATE_MONITOR_COORDINATES + vxx(vf2 { (it_index + 1.0f) / static_cast<f32>(ARRAY_CAPACITY(state->game.heart_rate_values)) * HEART_RATE_MONITOR_DIMENSIONS.x, CLAMP(0.75f - *(it + 1) / 2.0f, 0.0f, 1.0f) * HEART_RATE_MONITOR_DIMENSIONS.y })
 					);
 				}
 			}
@@ -3167,12 +3118,31 @@ extern "C" PROTOTYPE_RENDER(render)
 				blackout = 1.0f - state->game.entering_keytime;
 			}
 
+			SDL_SetRenderTarget(platform->renderer, 0);
+			render_texture(platform->renderer, state->game.texture.screen, { 0.0f, 0.0f }, vxx(WIN_DIM));
+
+			if (state->game.notification_keytime)
+			{
+				render_text
+				(
+					platform->renderer,
+					state->font.minor,
+					{ WIN_DIM.x * 0.5f, WIN_DIM.y * 0.6f },
+					0.5f,
+					FC_ALIGN_CENTER,
+					1.0f,
+					{ 1.0f, 1.0f, 1.0f, sinf(TAU / 4.0f * square(state->game.notification_keytime)) },
+					"%s",
+					state->game.notification_message
+				);
+			}
+
 			// @TEMP@
 			render_text
 			(
 				platform->renderer,
 				state->font.minor,
-				{ 0.0f, static_cast<f32>(WIN_DIM.y) },
+				{ 0.0f, 0.0f },
 				0.0f,
 				FC_ALIGN_LEFT,
 				1.0f,

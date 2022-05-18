@@ -159,16 +159,7 @@ internal TYPE* memory_arena_allocate_zero(MemoryArena* arena, i32 count = 1)
 // Math.
 //
 
-internal u8  clamp(u8  x, u8  a, u8  b) { return x < a ? a : x > b ? b : x; }
-internal u16 clamp(u16 x, u16 a, u16 b) { return x < a ? a : x > b ? b : x; }
-internal u32 clamp(u32 x, u32 a, u32 b) { return x < a ? a : x > b ? b : x; }
-internal u64 clamp(u64 x, u64 a, u64 b) { return x < a ? a : x > b ? b : x; }
-internal i8  clamp(i8  x, i8  a, i8  b) { return x < a ? a : x > b ? b : x; }
-internal i16 clamp(i16 x, i16 a, i16 b) { return x < a ? a : x > b ? b : x; }
-internal i32 clamp(i32 x, i32 a, i32 b) { return x < a ? a : x > b ? b : x; }
-internal i64 clamp(i64 x, i64 a, i64 b) { return x < a ? a : x > b ? b : x; }
-internal f32 clamp(f32 x, f32 a, f32 b) { return x < a ? a : x > b ? b : x; }
-internal f64 clamp(f64 x, f64 a, f64 b) { return x < a ? a : x > b ? b : x; }
+#define CLAMP(X, A, B) ((X) < (A) ? (A) : (X) > (B) ? (B) : (X))
 
 struct vf2
 {
@@ -286,6 +277,8 @@ internal constexpr vi2&   operator/=(vi2& v, i32 k) { return v = v / k; }
 internal constexpr vi3&   operator/=(vi3& v, i32 k) { return v = v / k; }
 internal constexpr vi4&   operator/=(vi4& v, i32 k) { return v = v / k; }
 
+internal constexpr vf2    vx2(f32 a)        { return {   a,   a         }; }
+internal constexpr vi2    vx2(i32 a)        { return {   a,   a         }; }
 internal constexpr vf3    vx3(vf2 v, f32 a) { return { v.x, v.y,      a }; }
 internal constexpr vf4    vx4(vf3 v, f32 a) { return { v.x, v.y, v.z, a }; }
 
