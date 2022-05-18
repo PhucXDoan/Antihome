@@ -67,18 +67,19 @@ global constexpr vf2 COMPUTER_ANTIHOME_PROGRAM_POSITION = { 55.0f, WIN_DIM.y - (
 global constexpr f32 COMPUTER_TITLE_BAR_HEIGHT          = 25.0f;
 global constexpr vf2 COMPUTER_BUTTON_DIMENSIONS         = { 45.0f, 27.0f };
 
-global constexpr f32 HUD_HEIGHT            = 175.0f;
-global constexpr vi2 VIEW_RES              = vxx(vf2 { static_cast<f32>(WIN_DIM.x), WIN_DIM.y - HUD_HEIGHT } / 3.0f);
-global constexpr f32 HORT_TO_VERT_K        = 0.927295218f * VIEW_RES.x;
-global constexpr f32 WALL_HEIGHT           = 2.7432f;
-global constexpr f32 WALL_THICKNESS        = 0.4f;
-global constexpr f32 LUCIA_HEIGHT          = 1.4986f;
-global constexpr i32 MAP_DIM               = 32;
-global constexpr f32 WALL_SPACING          = 3.0f;
-global constexpr i32 INVENTORY_DIM         = 30;
-global constexpr i32 INVENTORY_PADDING     = 5;
-global constexpr f32 CREEPY_SOUND_MIN_TIME = 15.0f;
-global constexpr f32 CREEPY_SOUND_MAX_TIME = 90.0f;
+global constexpr f32 HUD_HEIGHT                     = 175.0f;
+global constexpr vi2 VIEW_RES                       = vxx(vf2 { static_cast<f32>(WIN_DIM.x), WIN_DIM.y - HUD_HEIGHT } / 3.0f);
+global constexpr f32 HORT_TO_VERT_K                 = 0.927295218f * VIEW_RES.x;
+global constexpr f32 WALL_HEIGHT                    = 2.7432f;
+global constexpr f32 WALL_THICKNESS                 = 0.4f;
+global constexpr f32 LUCIA_HEIGHT                   = 1.4986f;
+global constexpr i32 MAP_DIM                        = 32;
+global constexpr f32 WALL_SPACING                   = 3.0f;
+global constexpr i32 INVENTORY_DIM                  = 30;
+global constexpr i32 INVENTORY_PADDING              = 5;
+global constexpr f32 CREEPY_SOUND_MIN_TIME          = 15.0f;
+global constexpr f32 CREEPY_SOUND_MAX_TIME          = 90.0f;
+global constexpr vi2 CIRCUIT_BREAKER_HUD_DIMENSIONS = { 125, 100 };
 
 enum_loose (AudioChannel, i8)
 {
@@ -157,6 +158,7 @@ enum_loose (ItemType, u8)
 		nightvision_goggles,
 		pills,
 		military_grade_batteries,
+		radio,
 	enum_end_region(ITEM)
 };
 
@@ -170,7 +172,8 @@ global constexpr struct { strlit img_file_path; f32 spawn_weight; } ITEM_DATA[It
 		{ DATA_DIR "items/first_aid_kit.png"            ,  4.0f },
 		{ DATA_DIR "items/nightvision_goggles.png"      ,  2.0f },
 		{ DATA_DIR "items/pills.png"                    ,  6.0f },
-		{ DATA_DIR "items/military_grade_batteries.png" ,  4.0f }
+		{ DATA_DIR "items/military_grade_batteries.png" ,  4.0f },
+		{ DATA_DIR "items/radio.png"                    ,  4.0f }
 	};
 
 struct Item
@@ -284,6 +287,7 @@ struct State
 		{
 			struct
 			{
+				SDL_Texture* desktop;
 				SDL_Texture* cursor;
 				SDL_Texture* power_button;
 				SDL_Texture* text_file;
@@ -447,6 +451,10 @@ struct State
 				f32 scalar_velocity;
 				f32 scalar;
 			} paper;
+
+			struct
+			{
+			} circuit_breaker;
 		} hud;
 
 		union
@@ -522,46 +530,6 @@ internal bool32 check_combine(Item** out_a, ItemType a_type, Item** out_b, ItemT
 	else
 	{
 		return false;
-	}
-}
-
-internal void draw_img(u32* view_pixels, Img* img, vi2 position, i32 dimension)
-{
-	FOR_RANGE(x, clamp(position.x, 0, VIEW_RES.x), clamp(position.x + dimension, 0, VIEW_RES.x))
-	{
-		FOR_RANGE(y, clamp(position.y, 0, VIEW_RES.y), clamp(position.y + dimension, 0, VIEW_RES.y))
-		{
-			vf4 color = img_color_at(img, { static_cast<f32>(x - position.x) / dimension, (1.0f - static_cast<f32>(y - position.y) / dimension) });
-			view_pixels[y * VIEW_RES.x + x] = pack_color(lerp(unpack_color(view_pixels[y * VIEW_RES.x + x]).xyz, color.xyz, color.w));
-		}
-	}
-}
-
-internal void draw_img_box(u32* view_pixels, Img* img, vf3 border_color, vi2 position, i32 dimension)
-{
-	constexpr u32 BG = pack_color({ 0.2f, 0.2f, 0.2f, 1.0f });
-
-	u32 border = pack_color(border_color);
-
-	FOR_RANGE(i, dimension)
-	{
-		view_pixels[position.y * VIEW_RES.x + position.x + i]                   = border;
-		view_pixels[(position.y + dimension - 1) * VIEW_RES.x + position.x + i] = border;
-		view_pixels[(position.y + i) * VIEW_RES.x + position.x]                 = border;
-		view_pixels[(position.y + i) * VIEW_RES.x + position.x + dimension - 1] = border;
-	}
-
-	FOR_RANGE(iy, dimension - 2)
-	{
-		FOR_RANGE(ix, dimension - 2)
-		{
-			view_pixels[(position.y + 1 + iy) * VIEW_RES.x + position.x + 1 + ix] = BG;
-		}
-	}
-
-	if (img)
-	{
-		draw_img(view_pixels, img, position + vi2 { 1, 1 }, dimension - 2);
 	}
 }
 
@@ -894,6 +862,7 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 	{
 		case StateContext::title_menu:
 		{
+			state->title_menu.texture.desktop          = IMG_LoadTexture(renderer, DATA_DIR "computer/desktop.png");
 			state->title_menu.texture.cursor           = IMG_LoadTexture(renderer, DATA_DIR "computer/cursor.png");
 			state->title_menu.texture.power_button     = IMG_LoadTexture(renderer, DATA_DIR "computer/terminal_power_button.png");
 			state->title_menu.texture.text_file        = IMG_LoadTexture(renderer, DATA_DIR "computer/text_file.png");
@@ -916,7 +885,7 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 			state->game.mipmap.floor   = init_mipmap(DATA_DIR "room/floor.png");
 			state->game.mipmap.ceiling = init_mipmap(DATA_DIR "room/ceiling.png");
 
-			state->game.img.monster          = init_img(DATA_DIR "monster.png");
+			state->game.img.monster          = init_img(DATA_DIR "eye.png");
 			state->game.img.hand             = init_img(DATA_DIR "hand.png");
 			state->game.img.flashlight_on    = init_img(DATA_DIR "items/flashlight_on.png");
 			state->game.img.door             = init_img(DATA_DIR "overlays/door.png");
@@ -1508,8 +1477,6 @@ extern "C" PROTOTYPE_UPDATE(update)
 					{
 						if (state->game.hud.type == HudType::null)
 						{
-							state->game.hud.cursor_velocity         = { 0.0f, 0.0f };
-							state->game.hud.cursor                  = VIEW_RES / 2.0f;
 							state->game.hud.inventory.selected_item = 0;
 							state->game.hud.inventory.grabbing      = false;
 						}
@@ -1806,8 +1773,15 @@ extern "C" PROTOTYPE_UPDATE(update)
 						}
 					} break;
 
+					case HudType::circuit_breaker:
+					{
+					} break;
+
 					default:
 					{
+						state->game.hud.cursor_velocity = { 0.0f, 0.0f };
+						state->game.hud.cursor          = VIEW_RES / 2.0f;
+
 						state->game.lucia_angle_velocity -= platform->cursor_delta.x * 0.01f / SECONDS_PER_UPDATE;
 
 						if (PRESSED(Input::space) || PRESSED(Input::left_mouse))
@@ -1821,8 +1795,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 								case HandOnState::circuit_breaker:
 								{
-									state->game.notification_message = "\"Meow\"";
-									state->game.notification_keytime = 1.0f;
+									state->game.hud.type = HudType::circuit_breaker;
 								} break;
 
 								case HandOnState::item:
@@ -2393,8 +2366,9 @@ extern "C" PROTOTYPE_RENDER(render)
 		{
 			aliasing tm = state->title_menu;
 
-			set_color(platform->renderer, { 0.003f, 0.51f, 0.5, 1.0f });
 			SDL_RenderClear(platform->renderer);
+
+			render_texture(platform->renderer, tm.texture.desktop, { 0.0f, COMPUTER_TASKBAR_HEIGHT }, vxx(WIN_DIM));
 
 			lambda draw_icon =
 				[&](SDL_Texture* texture, vf2 position, strlit name)
@@ -2985,6 +2959,19 @@ extern "C" PROTOTYPE_RENDER(render)
 				}
 			}
 
+			lambda draw_img =
+				[&](u32* view_pixels, Img* img, vi2 position, i32 dimension)
+				{
+					FOR_RANGE(x, clamp(position.x, 0, VIEW_RES.x), clamp(position.x + dimension, 0, VIEW_RES.x))
+					{
+						FOR_RANGE(y, clamp(position.y, 0, VIEW_RES.y), clamp(position.y + dimension, 0, VIEW_RES.y))
+						{
+							vf4 color = img_color_at(img, { static_cast<f32>(x - position.x) / dimension, (1.0f - static_cast<f32>(y - position.y) / dimension) });
+							view_pixels[y * VIEW_RES.x + x] = pack_color(lerp(unpack_color(view_pixels[y * VIEW_RES.x + x]).xyz, color.xyz, color.w));
+						}
+					}
+				};
+
 			switch (state->game.hud.type)
 			{
 				case HudType::paper:
@@ -3008,28 +2995,66 @@ extern "C" PROTOTYPE_RENDER(render)
 					{
 						FOR_RANGE(x, ARRAY_CAPACITY(state->game.hud.inventory.array[y]))
 						{
-							draw_img_box
-							(
-								view_pixels,
-								state->game.hud.inventory.grabbing && state->game.hud.inventory.selected_item == &state->game.hud.inventory.array[y][x]
-									? 0
-									: get_corresponding_item_img(state, &state->game.hud.inventory.array[y][x]),
-								&state->game.hud.inventory.array[y][x] == state->game.hud.inventory.selected_item
-									? vf3 { 0.7f, 0.7f, 0.25f }
-									: vf3 { 0.5f, 0.5f, 0.5f },
+							constexpr u32 BG = pack_color({ 0.2f, 0.2f, 0.2f, 1.0f });
+
+							u32 border   = pack_color(&state->game.hud.inventory.array[y][x] == state->game.hud.inventory.selected_item ? vf3 { 0.7f, 0.7f, 0.25f } : vf3 { 0.5f, 0.5f, 0.5f });
+							vi2 position =
 								{
 									VIEW_RES.x / 2 + x * (INVENTORY_DIM + INVENTORY_PADDING) - static_cast<i32>(ARRAY_CAPACITY(state->game.hud.inventory.array[y]) * (INVENTORY_DIM + INVENTORY_PADDING) - INVENTORY_PADDING) / 2,
 									VIEW_RES.y / 2 + y * (INVENTORY_DIM + INVENTORY_PADDING) - static_cast<i32>(ARRAY_CAPACITY(state->game.hud.inventory.array   ) * (INVENTORY_DIM + INVENTORY_PADDING) - INVENTORY_PADDING) / 2
-								},
-								INVENTORY_DIM
-							);
+								};
+
+							FOR_RANGE(i, INVENTORY_DIM)
+							{
+								view_pixels[position.y * VIEW_RES.x + position.x + i]                   = border;
+								view_pixels[(position.y + INVENTORY_DIM - 1) * VIEW_RES.x + position.x + i] = border;
+								view_pixels[(position.y + i) * VIEW_RES.x + position.x]                 = border;
+								view_pixels[(position.y + i) * VIEW_RES.x + position.x + INVENTORY_DIM - 1] = border;
+							}
+
+							FOR_RANGE(iy, INVENTORY_DIM - 2)
+							{
+								FOR_RANGE(ix, INVENTORY_DIM - 2)
+								{
+									view_pixels[(position.y + 1 + iy) * VIEW_RES.x + position.x + 1 + ix] = BG;
+								}
+							}
+
+							if ( state->game.hud.inventory.grabbing && state->game.hud.inventory.selected_item == &state->game.hud.inventory.array[y][x])
+							{
+								draw_img(view_pixels, get_corresponding_item_img(state, &state->game.hud.inventory.array[y][x]), position + vi2 { 1, 1 }, INVENTORY_DIM - 2);
+							}
 						}
 					}
 
 					if (state->game.hud.inventory.grabbing)
 					{
-						draw_img(view_pixels, get_corresponding_item_img(state, state->game.hud.inventory.selected_item), vxx(vf2 { state->game.hud.cursor.x, VIEW_RES.y - 1.0f - state->game.hud.cursor.y }) - vi2 { INVENTORY_DIM, INVENTORY_DIM } * 3 / 4 / 2, INVENTORY_DIM * 3 / 4);
+						draw_img
+						(
+							view_pixels,
+							get_corresponding_item_img(state, state->game.hud.inventory.selected_item),
+							vxx(vf2 { state->game.hud.cursor.x, VIEW_RES.y - 1.0f - state->game.hud.cursor.y }) - vi2 { INVENTORY_DIM, INVENTORY_DIM } * 3 / 4 / 2,
+							INVENTORY_DIM * 3 / 4
+						);
 					}
+				} break;
+
+				case HudType::circuit_breaker:
+				{
+					lambda draw_rect =
+						[&](vf3 color, vi2 coordinates, vi2 dimensions)
+						{
+							u32 COLOR = pack_color(color);
+							FOR_RANGE(y, clamp(coordinates.y, 0, VIEW_RES.y), clamp(coordinates.y + dimensions.y, 0, VIEW_RES.y))
+							{
+								FOR_RANGE(x, clamp(coordinates.x, 0, VIEW_RES.x), clamp(coordinates.x + dimensions.x, 0, VIEW_RES.x))
+								{
+									view_pixels[(VIEW_RES.y - y) * VIEW_RES.x + x] = COLOR;
+								}
+							}
+						};
+
+					draw_rect(monochrome(0.2f), (VIEW_RES - CIRCUIT_BREAKER_HUD_DIMENSIONS) / 2, CIRCUIT_BREAKER_HUD_DIMENSIONS);
 				} break;
 			}
 
