@@ -398,10 +398,10 @@ struct State
 				Mix_Chunk* switch_toggle;
 				Mix_Chunk* circuit_breaker_switch;
 				Mix_Chunk* door_budge;
-				Mix_Chunk* door_enter;
 				Mix_Chunk* panel_open;
 				Mix_Chunk* panel_close;
 				Mix_Chunk* generator;
+				Mix_Chunk* heartbeats   [2];
 				Mix_Chunk* walk_steps   [ARRAY_CAPACITY(WALK_STEP_WAV_FILE_PATHS)];
 				Mix_Chunk* run_steps    [ARRAY_CAPACITY(RUN_STEP_WAV_FILE_PATHS)];
 				Mix_Chunk* creepy_sounds[ARRAY_CAPACITY(CREEPY_SOUND_WAV_FILE_PATHS)];
@@ -413,7 +413,6 @@ struct State
 		GameGoal             goal;
 
 		f32                  entering_keytime;
-		bool32               is_exiting;
 		f32                  exiting_keytime;
 
 		PathCoordinatesNode* available_path_coordinates_node;
@@ -426,6 +425,7 @@ struct State
 		f32                  heart_rate_current_value;
 		f32                  heart_rate_beat_keytime;
 		f32                  heart_rate_bpm;
+		i32                  heartbeat_sfx_index;
 
 		WallVoxel            wall_voxels[MAP_DIM][MAP_DIM];
 		WallSide             door_wall_side;
@@ -512,7 +512,20 @@ struct State
 
 	struct
 	{
-		f32 entering_keytime;
+		union
+		{
+			struct
+			{
+				Mix_Chunk* door_enter;
+				Mix_Chunk* shooting;
+			} audio;
+
+			Mix_Chunk* audios[sizeof(audio) / sizeof(Mix_Chunk*)];
+		};
+
+		f32    entering_keytime;
+		bool32 is_exiting;
+		f32    exiting_keytime;
 	} end;
 };
 
@@ -977,10 +990,11 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 			state->game.audio.switch_toggle          = Mix_LoadWAV(DATA_DIR "audio/switch_toggle.wav");
 			state->game.audio.circuit_breaker_switch = Mix_LoadWAV(DATA_DIR "audio/lever_flip.wav");
 			state->game.audio.door_budge             = Mix_LoadWAV(DATA_DIR "audio/door_budge.wav");
-			state->game.audio.door_enter             = Mix_LoadWAV(DATA_DIR "audio/door_enter.wav");
 			state->game.audio.panel_open             = Mix_LoadWAV(DATA_DIR "audio/panel_open.wav");
 			state->game.audio.panel_close            = Mix_LoadWAV(DATA_DIR "audio/panel_close.wav");
 			state->game.audio.generator              = Mix_LoadWAV(DATA_DIR "audio/generator.wav");
+			state->game.audio.heartbeats[0]          = Mix_LoadWAV(DATA_DIR "audio/heartbeat_0.wav");
+			state->game.audio.heartbeats[1]          = Mix_LoadWAV(DATA_DIR "audio/heartbeat_1.wav");
 
 			FOR_ELEMS(it, state->game.audio.walk_steps)
 			{
@@ -1013,6 +1027,18 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 			Mix_VolumeChunk(state->game.audio.generator, 0);
 			Mix_PlayChannel(+AudioChannel::r2, state->game.audio.generator, -1);
 		} break;
+
+		case StateContext::end:
+		{
+			state->end.audio.door_enter = Mix_LoadWAV(DATA_DIR "audio/door_enter.wav");
+			state->end.audio.shooting   = Mix_LoadWAV(DATA_DIR "audio/shooting.wav");
+
+			Mix_PlayChannel(+AudioChannel::r2, state->end.audio.door_enter, 0);
+
+			#if DEBUG
+			FOR_ELEMS(it, state->game.audios) { ASSERT(*it); }
+			#endif
+		};
 	}
 }
 
@@ -1022,38 +1048,21 @@ internal void boot_down_state(State* state)
 	{
 		case StateContext::title_menu:
 		{
-			FOR_ELEMS(it, state->title_menu.textures)
-			{
-				SDL_DestroyTexture(*it);
-			}
-
-			FOR_ELEMS(it, state->title_menu.audios)
-			{
-				Mix_FreeChunk(*it);
-			}
+			FOR_ELEMS(it, state->title_menu.textures) { SDL_DestroyTexture(*it); }
+			FOR_ELEMS(it, state->title_menu.audios  ) { Mix_FreeChunk(*it);      }
 		} break;
 
 		case StateContext::game:
 		{
-			FOR_ELEMS(it, state->game.mipmaps)
-			{
-				deinit_mipmap(it);
-			}
+			FOR_ELEMS(it, state->game.mipmaps ) { deinit_mipmap(it);       }
+			FOR_ELEMS(it, state->game.imgs    ) { deinit_img(it);          }
+			FOR_ELEMS(it, state->game.textures) { SDL_DestroyTexture(*it); }
+			FOR_ELEMS(it, state->game.audios  ) { Mix_FreeChunk(*it);      }
+		} break;
 
-			FOR_ELEMS(it, state->game.imgs)
-			{
-				deinit_img(it);
-			}
-
-			FOR_ELEMS(it, state->game.textures)
-			{
-				SDL_DestroyTexture(*it);
-			}
-
-			FOR_ELEMS(it, state->game.audios)
-			{
-				Mix_FreeChunk(*it);
-			}
+		case StateContext::end:
+		{
+			FOR_ELEMS(it, state->end.audios) { Mix_FreeChunk(*it); }
 		} break;
 	}
 }
@@ -1522,723 +1531,689 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 		case StateContext::game:
 		{
-			if (state->game.is_exiting)
+			Mix_VolumeChunk(state->game.audio.drone    , static_cast<i32>(MIX_MAX_VOLUME *         state->game.ceiling_lights_keytime  * (1.0f - state->game.exiting_keytime)));
+			Mix_VolumeChunk(state->game.audio.drone_low, static_cast<i32>(MIX_MAX_VOLUME * (1.0f - state->game.ceiling_lights_keytime) * (1.0f - state->game.exiting_keytime)));
+
+			f32 circuit_breaker_volume = 2.0f / (norm(ray_to_closest(state->game.lucia_position.xy, get_position_of_wall_side(state->game.circuit_breaker_wall_side, 0.25f))) + 0.25f);
+			Mix_VolumeChunk(state->game.audio.generator, static_cast<i32>(MIX_MAX_VOLUME * CLAMP(circuit_breaker_volume, 0.0f, 1.0f)));
+
+			state->game.entering_keytime = CLAMP(state->game.entering_keytime + SECONDS_PER_UPDATE / 1.0f, 0.0f, 1.0f);
+
+			if (PRESSED(Input::tab))
 			{
-				state->game.exiting_keytime += SECONDS_PER_UPDATE / 1.5f;
-
-				if (state->game.exiting_keytime >= 1.0f)
+				if (state->game.hud.type == HudType::inventory)
 				{
-					boot_down_state(state);
-					state->context = StateContext::end;
-					state->end     = {};
-					boot_up_state(platform->renderer, state);
+					state->game.hud.type = HudType::null;
+				}
+				else
+				{
+					if (state->game.hud.type == HudType::circuit_breaker)
+					{
+						Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.panel_close, 0);
+					}
 
-					return UpdateCode::resume;
+					state->game.hud.type                    = HudType::inventory;
+					state->game.hud.inventory.selected_item = 0;
+					state->game.hud.inventory.grabbing      = false;
 				}
 			}
-			else
+
+			if (state->game.hud.type != HudType::null)
 			{
-				Mix_VolumeChunk(state->game.audio.drone    , static_cast<i32>(MIX_MAX_VOLUME *         state->game.ceiling_lights_keytime ));
-				Mix_VolumeChunk(state->game.audio.drone_low, static_cast<i32>(MIX_MAX_VOLUME * (1.0f - state->game.ceiling_lights_keytime)));
-
-				f32 circuit_breaker_volume = 2.0f / (norm(ray_to_closest(state->game.lucia_position.xy, get_position_of_wall_side(state->game.circuit_breaker_wall_side, 0.25f))) + 0.25f);
-				Mix_VolumeChunk(state->game.audio.generator, static_cast<i32>(MIX_MAX_VOLUME * CLAMP(circuit_breaker_volume, 0.0f, 1.0f)));
-
-				state->game.entering_keytime = CLAMP(state->game.entering_keytime + SECONDS_PER_UPDATE / 1.0f, 0.0f, 1.0f);
-
-				if (PRESSED(Input::tab))
+				state->game.hud.cursor_velocity += platform->cursor_delta * 16.0f;
+				state->game.hud.cursor_velocity *= 0.3f;
+				state->game.hud.cursor          += state->game.hud.cursor_velocity * SECONDS_PER_UPDATE;
+				if (state->game.hud.cursor.x < 0.0f || state->game.hud.cursor.x > VIEW_RES.x)
 				{
-					if (state->game.hud.type == HudType::inventory)
+					state->game.hud.cursor.x          = CLAMP(state->game.hud.cursor.x, 0.0f, static_cast<f32>(VIEW_RES.x));
+					state->game.hud.cursor_velocity.x = 0.0f;
+				}
+				if (state->game.hud.cursor.y < 0.0f || state->game.hud.cursor.y > VIEW_RES.y)
+				{
+					state->game.hud.cursor.y          = CLAMP(state->game.hud.cursor.y, 0.0f, static_cast<f32>(VIEW_RES.y));
+					state->game.hud.cursor_velocity.y = 0.0f;
+				}
+			}
+
+			switch (state->game.hud.type)
+			{
+				case HudType::inventory:
+				{
+					if (PRESSED(Input::left_mouse))
+					{
+						constexpr vf2 INVENTORY_HUD_DIMENSIONS = vf2 { static_cast<f32>(ARRAY_CAPACITY(state->game.hud.inventory.array[0])), static_cast<f32>(ARRAY_CAPACITY(state->game.hud.inventory.array)) } * (INVENTORY_DIM + INVENTORY_PADDING);
+						if (in_rect(state->game.hud.cursor, VIEW_RES / 2.0f - INVENTORY_HUD_DIMENSIONS / 2.0f, INVENTORY_HUD_DIMENSIONS))
+						{
+							state->game.hud.inventory.click_position = state->game.hud.cursor;
+
+							FOR_RANGE(y, ARRAY_CAPACITY(state->game.hud.inventory.array)) // @TODO@ Optimize this
+							{
+								FOR_RANGE(x, ARRAY_CAPACITY(state->game.hud.inventory.array[y]))
+								{
+									if
+									(
+										in_rect
+										(
+											state->game.hud.cursor,
+											VIEW_RES / 2.0f + vf2 { x - ARRAY_CAPACITY(state->game.hud.inventory.array[y]) / 2.0f, ARRAY_CAPACITY(state->game.hud.inventory.array) / 2.0f - y - 1.0f } * (INVENTORY_DIM + INVENTORY_PADDING),
+											{ INVENTORY_DIM, INVENTORY_DIM }
+										)
+									)
+									{
+										if (state->game.hud.inventory.array[y][x].type != ItemType::null)
+										{
+											state->game.hud.inventory.selected_item = &state->game.hud.inventory.array[y][x];
+										}
+
+										break;
+									}
+								}
+							}
+						}
+						else
+						{
+							state->game.hud.type = HudType::null;
+						}
+					}
+
+					if (state->game.hud.inventory.selected_item)
+					{
+						if (HOLDING(Input::left_mouse))
+						{
+							if (!state->game.hud.inventory.grabbing && norm_sq(state->game.hud.cursor - state->game.hud.inventory.click_position) > 25.0f)
+							{
+								state->game.hud.inventory.grabbing = true;
+							}
+						}
+						else if (RELEASED(Input::left_mouse))
+						{
+							if (state->game.hud.inventory.grabbing)
+							{
+								if
+								(
+									fabs(state->game.hud.cursor.x * 2.0f - VIEW_RES.x) < ARRAY_CAPACITY(state->game.hud.inventory.array[0]) * (INVENTORY_DIM + INVENTORY_PADDING) &&
+									fabs(state->game.hud.cursor.y * 2.0f - VIEW_RES.y) < ARRAY_CAPACITY(state->game.hud.inventory.array   ) * (INVENTORY_DIM + INVENTORY_PADDING)
+								)
+								{
+									FOR_RANGE(y, ARRAY_CAPACITY(state->game.hud.inventory.array))
+									{
+										FOR_RANGE(x, ARRAY_CAPACITY(state->game.hud.inventory.array[y]))
+										{
+											// @TODO@ Simplify
+											if
+											(
+												fabsf(VIEW_RES.x / 2.0f + (x + (1.0f - ARRAY_CAPACITY(state->game.hud.inventory.array[y])) / 2.0f) * (INVENTORY_DIM + INVENTORY_PADDING) - state->game.hud.cursor.x) < INVENTORY_DIM / 2.0f &&
+												fabsf(VIEW_RES.y / 2.0f - (y + (1.0f - ARRAY_CAPACITY(state->game.hud.inventory.array   )) / 2.0f) * (INVENTORY_DIM + INVENTORY_PADDING) - state->game.hud.cursor.y) < INVENTORY_DIM / 2.0f
+											)
+											{
+												if (&state->game.hud.inventory.array[y][x] != state->game.hud.inventory.selected_item)
+												{
+													if (state->game.hud.inventory.array[y][x].type == ItemType::null)
+													{
+														// @NOTE@ Item move.
+
+														state->game.hud.inventory.array[y][x]        = *state->game.hud.inventory.selected_item;
+														state->game.hud.inventory.selected_item->type = ItemType::null;
+
+														FOR_ELEMS(it, state->game.holdings)
+														{
+															if (*it == state->game.hud.inventory.selected_item)
+															{
+																*it = &state->game.hud.inventory.array[y][x];
+																break;
+															}
+														}
+													}
+													else
+													{
+														// @NOTE@ Item combine.
+
+														bool32 combined        = false;
+														Item   combined_result = {};
+
+														{
+															Item* cheap_batteries;
+															Item* flashlight;
+															if (check_combine(&cheap_batteries, ItemType::cheap_batteries, &flashlight, ItemType::flashlight, &state->game.hud.inventory.array[y][x], state->game.hud.inventory.selected_item))
+															{
+																combined = true;
+
+																Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.eletronical, 0);
+																state->game.notification_message = "(You replaced the batteries in the flashlight.)";
+																state->game.notification_keytime = 1.0f;
+
+																combined_result = *flashlight;
+																combined_result.flashlight.power = 1.0f;
+
+																if (state->game.holding.flashlight == state->game.hud.inventory.selected_item)
+																{
+																	state->game.holding.flashlight = &state->game.hud.inventory.array[y][x];
+																}
+															}
+															else
+															{
+																state->game.notification_message = "\"I'm not sure how these fit.\"";
+																state->game.notification_keytime = 1.0f;
+															}
+														}
+
+														if (combined)
+														{
+															state->game.hud.inventory.selected_item->type = ItemType::null;
+															state->game.hud.inventory.array[y][x]          = combined_result;
+														}
+													}
+												}
+
+												goto DONE_SEARCH;
+											}
+										}
+									}
+
+									DONE_SEARCH:;
+								}
+								else
+								{
+									// @NOTE@ Item drop.
+
+									Item* dropped = allocate_item(state);
+									*dropped = *state->game.hud.inventory.selected_item;
+									dropped->position = state->game.lucia_position;
+									dropped->velocity = polar(state->game.lucia_angle + rng(&state->seed, -0.5f, 0.5f) * 1.0f) * rng(&state->seed, 2.5f, 6.0f);
+
+									state->game.hud.inventory.selected_item->type = ItemType::null;
+
+									FOR_ELEMS(it, state->game.holdings)
+									{
+										if (*it == state->game.hud.inventory.selected_item)
+										{
+											*it = 0;
+											break;
+										}
+									}
+								}
+							}
+							else
+							{
+								// @NOTE@ Item use.
+
+								switch (state->game.hud.inventory.selected_item->type)
+								{
+									case ItemType::cheap_batteries:
+									{
+										state->game.notification_message = "\"Some batteries. They feel cheap.\"";
+										state->game.notification_keytime = 1.0f;
+									} break;
+
+									case ItemType::paper:
+									{
+										Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.pick_up_paper, 0);
+										state->game.hud.type         = HudType::paper;
+										state->game.hud.paper        = {};
+										state->game.hud.paper.index  = state->game.hud.inventory.selected_item->paper.index;
+										state->game.hud.paper.scalar = PAPER_DATA[state->game.hud.paper.index].min_scalar;
+									} break;
+
+									case ItemType::flashlight:
+									{
+										Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.switch_toggle, 0);
+										if (state->game.hud.inventory.selected_item == state->game.holding.flashlight)
+										{
+											state->game.holding.flashlight = 0;
+										}
+										else if (state->game.hud.inventory.selected_item->flashlight.power)
+										{
+											state->game.holding.flashlight = state->game.hud.inventory.selected_item;
+										}
+										else
+										{
+											state->game.notification_message = "\"The flashlight is dead.\"";
+											state->game.notification_keytime = 1.0f;
+										}
+									};
+								}
+
+								if (state->game.hud.type == HudType::inventory)
+								{
+									state->game.hud.type = HudType::null;
+								}
+							}
+
+							state->game.hud.inventory.selected_item = 0;
+							state->game.hud.inventory.grabbing      = false;
+						}
+					}
+				} break;
+
+				case HudType::paper:
+				{
+					// @TODO@ Clean up
+					if
+					(
+						PRESSED(Input::left_mouse) &&
+						!in_rect
+						(
+							state->game.hud.cursor,
+							VIEW_RES / 2.0f + (state->game.hud.paper.delta_position - state->game.img.papers[state->game.hud.paper.index].dim / 2.0f) * state->game.hud.paper.scalar,
+							state->game.img.papers[state->game.hud.paper.index].dim * state->game.hud.paper.scalar
+						)
+					)
 					{
 						state->game.hud.type = HudType::null;
 					}
 					else
 					{
-						if (state->game.hud.type == HudType::circuit_breaker)
+						state->game.hud.paper.scalar_velocity += platform->scroll * 2.0f;
+						state->game.hud.paper.scalar_velocity *= 0.5f;
+
+						if (HOLDING(Input::left_mouse))
 						{
-							Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.panel_close, 0);
-						}
-
-						state->game.hud.type                    = HudType::inventory;
-						state->game.hud.inventory.selected_item = 0;
-						state->game.hud.inventory.grabbing      = false;
-					}
-				}
-
-				if (state->game.hud.type != HudType::null)
-				{
-					state->game.hud.cursor_velocity += platform->cursor_delta * 16.0f;
-					state->game.hud.cursor_velocity *= 0.3f;
-					state->game.hud.cursor          += state->game.hud.cursor_velocity * SECONDS_PER_UPDATE;
-					if (state->game.hud.cursor.x < 0.0f || state->game.hud.cursor.x > VIEW_RES.x)
-					{
-						state->game.hud.cursor.x          = CLAMP(state->game.hud.cursor.x, 0.0f, static_cast<f32>(VIEW_RES.x));
-						state->game.hud.cursor_velocity.x = 0.0f;
-					}
-					if (state->game.hud.cursor.y < 0.0f || state->game.hud.cursor.y > VIEW_RES.y)
-					{
-						state->game.hud.cursor.y          = CLAMP(state->game.hud.cursor.y, 0.0f, static_cast<f32>(VIEW_RES.y));
-						state->game.hud.cursor_velocity.y = 0.0f;
-					}
-				}
-
-				switch (state->game.hud.type)
-				{
-					case HudType::inventory:
-					{
-						if (PRESSED(Input::left_mouse))
-						{
-							constexpr vf2 INVENTORY_HUD_DIMENSIONS = vf2 { static_cast<f32>(ARRAY_CAPACITY(state->game.hud.inventory.array[0])), static_cast<f32>(ARRAY_CAPACITY(state->game.hud.inventory.array)) } * (INVENTORY_DIM + INVENTORY_PADDING);
-							if (in_rect(state->game.hud.cursor, VIEW_RES / 2.0f - INVENTORY_HUD_DIMENSIONS / 2.0f, INVENTORY_HUD_DIMENSIONS))
-							{
-								state->game.hud.inventory.click_position = state->game.hud.cursor;
-
-								FOR_RANGE(y, ARRAY_CAPACITY(state->game.hud.inventory.array)) // @TODO@ Optimize this
-								{
-									FOR_RANGE(x, ARRAY_CAPACITY(state->game.hud.inventory.array[y]))
-									{
-										if
-										(
-											in_rect
-											(
-												state->game.hud.cursor,
-												VIEW_RES / 2.0f + vf2 { x - ARRAY_CAPACITY(state->game.hud.inventory.array[y]) / 2.0f, ARRAY_CAPACITY(state->game.hud.inventory.array) / 2.0f - y - 1.0f } * (INVENTORY_DIM + INVENTORY_PADDING),
-												{ INVENTORY_DIM, INVENTORY_DIM }
-											)
-										)
-										{
-											if (state->game.hud.inventory.array[y][x].type != ItemType::null)
-											{
-												state->game.hud.inventory.selected_item = &state->game.hud.inventory.array[y][x];
-											}
-
-											break;
-										}
-									}
-								}
-							}
-							else
-							{
-								state->game.hud.type = HudType::null;
-							}
-						}
-
-						if (state->game.hud.inventory.selected_item)
-						{
-							if (HOLDING(Input::left_mouse))
-							{
-								if (!state->game.hud.inventory.grabbing && norm_sq(state->game.hud.cursor - state->game.hud.inventory.click_position) > 25.0f)
-								{
-									state->game.hud.inventory.grabbing = true;
-								}
-							}
-							else if (RELEASED(Input::left_mouse))
-							{
-								if (state->game.hud.inventory.grabbing)
-								{
-									if
-									(
-										fabs(state->game.hud.cursor.x * 2.0f - VIEW_RES.x) < ARRAY_CAPACITY(state->game.hud.inventory.array[0]) * (INVENTORY_DIM + INVENTORY_PADDING) &&
-										fabs(state->game.hud.cursor.y * 2.0f - VIEW_RES.y) < ARRAY_CAPACITY(state->game.hud.inventory.array   ) * (INVENTORY_DIM + INVENTORY_PADDING)
-									)
-									{
-										FOR_RANGE(y, ARRAY_CAPACITY(state->game.hud.inventory.array))
-										{
-											FOR_RANGE(x, ARRAY_CAPACITY(state->game.hud.inventory.array[y]))
-											{
-												// @TODO@ Simplify
-												if
-												(
-													fabsf(VIEW_RES.x / 2.0f + (x + (1.0f - ARRAY_CAPACITY(state->game.hud.inventory.array[y])) / 2.0f) * (INVENTORY_DIM + INVENTORY_PADDING) - state->game.hud.cursor.x) < INVENTORY_DIM / 2.0f &&
-													fabsf(VIEW_RES.y / 2.0f - (y + (1.0f - ARRAY_CAPACITY(state->game.hud.inventory.array   )) / 2.0f) * (INVENTORY_DIM + INVENTORY_PADDING) - state->game.hud.cursor.y) < INVENTORY_DIM / 2.0f
-												)
-												{
-													if (&state->game.hud.inventory.array[y][x] != state->game.hud.inventory.selected_item)
-													{
-														if (state->game.hud.inventory.array[y][x].type == ItemType::null)
-														{
-															// @NOTE@ Item move.
-
-															state->game.hud.inventory.array[y][x]        = *state->game.hud.inventory.selected_item;
-															state->game.hud.inventory.selected_item->type = ItemType::null;
-
-															FOR_ELEMS(it, state->game.holdings)
-															{
-																if (*it == state->game.hud.inventory.selected_item)
-																{
-																	*it = &state->game.hud.inventory.array[y][x];
-																	break;
-																}
-															}
-														}
-														else
-														{
-															// @NOTE@ Item combine.
-
-															bool32 combined        = false;
-															Item   combined_result = {};
-
-															{
-																Item* cheap_batteries;
-																Item* flashlight;
-																if (check_combine(&cheap_batteries, ItemType::cheap_batteries, &flashlight, ItemType::flashlight, &state->game.hud.inventory.array[y][x], state->game.hud.inventory.selected_item))
-																{
-																	combined = true;
-
-																	Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.eletronical, 0);
-																	state->game.notification_message = "(You replaced the batteries in the flashlight.)";
-																	state->game.notification_keytime = 1.0f;
-
-																	combined_result = *flashlight;
-																	combined_result.flashlight.power = 1.0f;
-
-																	if (state->game.holding.flashlight == state->game.hud.inventory.selected_item)
-																	{
-																		state->game.holding.flashlight = &state->game.hud.inventory.array[y][x];
-																	}
-																}
-																else
-																{
-																	state->game.notification_message = "\"I'm not sure how these fit.\"";
-																	state->game.notification_keytime = 1.0f;
-																}
-															}
-
-															if (combined)
-															{
-																state->game.hud.inventory.selected_item->type = ItemType::null;
-																state->game.hud.inventory.array[y][x]          = combined_result;
-															}
-														}
-													}
-
-													goto DONE_SEARCH;
-												}
-											}
-										}
-
-										DONE_SEARCH:;
-									}
-									else
-									{
-										// @NOTE@ Item drop.
-
-										Item* dropped = allocate_item(state);
-										*dropped = *state->game.hud.inventory.selected_item;
-										dropped->position = state->game.lucia_position;
-										dropped->velocity = polar(state->game.lucia_angle + rng(&state->seed, -0.5f, 0.5f) * 1.0f) * rng(&state->seed, 2.5f, 6.0f);
-
-										state->game.hud.inventory.selected_item->type = ItemType::null;
-
-										FOR_ELEMS(it, state->game.holdings)
-										{
-											if (*it == state->game.hud.inventory.selected_item)
-											{
-												*it = 0;
-												break;
-											}
-										}
-									}
-								}
-								else
-								{
-									// @NOTE@ Item use.
-
-									switch (state->game.hud.inventory.selected_item->type)
-									{
-										case ItemType::cheap_batteries:
-										{
-											state->game.notification_message = "\"Some batteries. They feel cheap.\"";
-											state->game.notification_keytime = 1.0f;
-										} break;
-
-										case ItemType::paper:
-										{
-											Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.pick_up_paper, 0);
-											state->game.hud.type         = HudType::paper;
-											state->game.hud.paper        = {};
-											state->game.hud.paper.index  = state->game.hud.inventory.selected_item->paper.index;
-											state->game.hud.paper.scalar = PAPER_DATA[state->game.hud.paper.index].min_scalar;
-										} break;
-
-										case ItemType::flashlight:
-										{
-											Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.switch_toggle, 0);
-											if (state->game.hud.inventory.selected_item == state->game.holding.flashlight)
-											{
-												state->game.holding.flashlight = 0;
-											}
-											else if (state->game.hud.inventory.selected_item->flashlight.power)
-											{
-												state->game.holding.flashlight = state->game.hud.inventory.selected_item;
-											}
-											else
-											{
-												state->game.notification_message = "\"The flashlight is dead.\"";
-												state->game.notification_keytime = 1.0f;
-											}
-										};
-									}
-
-									if (state->game.hud.type == HudType::inventory)
-									{
-										state->game.hud.type = HudType::null;
-									}
-								}
-
-								state->game.hud.inventory.selected_item = 0;
-								state->game.hud.inventory.grabbing      = false;
-							}
-						}
-					} break;
-
-					case HudType::paper:
-					{
-						// @TODO@ Clean up
-						if
-						(
-							PRESSED(Input::left_mouse) &&
-							!in_rect
-							(
-								state->game.hud.cursor,
-								VIEW_RES / 2.0f + (state->game.hud.paper.delta_position - state->game.img.papers[state->game.hud.paper.index].dim / 2.0f) * state->game.hud.paper.scalar,
-								state->game.img.papers[state->game.hud.paper.index].dim * state->game.hud.paper.scalar
-							)
-						)
-						{
-							state->game.hud.type = HudType::null;
+							state->game.hud.paper.velocity        = state->game.hud.cursor_velocity;
+							state->game.hud.paper.scalar_velocity = 0.0f;
 						}
 						else
 						{
-							state->game.hud.paper.scalar_velocity += platform->scroll * 2.0f;
-							state->game.hud.paper.scalar_velocity *= 0.5f;
-
-							if (HOLDING(Input::left_mouse))
-							{
-								state->game.hud.paper.velocity        = state->game.hud.cursor_velocity;
-								state->game.hud.paper.scalar_velocity = 0.0f;
-							}
-							else
-							{
-								state->game.hud.paper.velocity *= 0.5f;
-							}
-
-							state->game.hud.paper.scalar = state->game.hud.paper.scalar + state->game.hud.paper.scalar_velocity * state->game.hud.paper.scalar * SECONDS_PER_UPDATE;
-
-							if (PAPER_DATA[state->game.hud.paper.index].min_scalar > state->game.hud.paper.scalar || state->game.hud.paper.scalar > PAPER_DATA[state->game.hud.paper.index].max_scalar)
-							{
-								state->game.hud.paper.scalar          = CLAMP(state->game.hud.paper.scalar, PAPER_DATA[state->game.hud.paper.index].min_scalar, PAPER_DATA[state->game.hud.paper.index].max_scalar);
-								state->game.hud.paper.scalar_velocity = 0.0f;
-							}
-
-							state->game.hud.paper.delta_position += state->game.hud.paper.velocity / state->game.hud.paper.scalar * SECONDS_PER_UPDATE;
-
-							constexpr f32 PAPER_MARGIN = 25.0f;
-							vf2 region =
-								vf2 {
-									(VIEW_RES.x + state->game.img.papers[state->game.hud.paper.index].dim.x * state->game.hud.paper.scalar) / 2.0f - PAPER_MARGIN,
-									(VIEW_RES.y + state->game.img.papers[state->game.hud.paper.index].dim.y * state->game.hud.paper.scalar) / 2.0f - PAPER_MARGIN
-								} / state->game.hud.paper.scalar;
-
-							if (fabsf(state->game.hud.paper.delta_position.x) > region.x)
-							{
-								state->game.hud.paper.delta_position.x = CLAMP(state->game.hud.paper.delta_position.x, -region.x, region.x);
-								state->game.hud.paper.velocity.x       = 0.0f;
-							}
-							if (fabsf(state->game.hud.paper.delta_position.y) > region.y)
-							{
-								state->game.hud.paper.delta_position.y = CLAMP(state->game.hud.paper.delta_position.y, -region.y, region.y);
-								state->game.hud.paper.velocity.y       = 0.0f;
-							}
+							state->game.hud.paper.velocity *= 0.5f;
 						}
-					} break;
 
-					case HudType::circuit_breaker:
-					{
-						if (PRESSED(Input::left_mouse))
+						state->game.hud.paper.scalar = state->game.hud.paper.scalar + state->game.hud.paper.scalar_velocity * state->game.hud.paper.scalar * SECONDS_PER_UPDATE;
+
+						if (PAPER_DATA[state->game.hud.paper.index].min_scalar > state->game.hud.paper.scalar || state->game.hud.paper.scalar > PAPER_DATA[state->game.hud.paper.index].max_scalar)
 						{
-							if (in_rect(state->game.hud.cursor, (VIEW_RES - CIRCUIT_BREAKER_HUD_DIMENSIONS) / 2.0f, CIRCUIT_BREAKER_HUD_DIMENSIONS))
+							state->game.hud.paper.scalar          = CLAMP(state->game.hud.paper.scalar, PAPER_DATA[state->game.hud.paper.index].min_scalar, PAPER_DATA[state->game.hud.paper.index].max_scalar);
+							state->game.hud.paper.scalar_velocity = 0.0f;
+						}
+
+						state->game.hud.paper.delta_position += state->game.hud.paper.velocity / state->game.hud.paper.scalar * SECONDS_PER_UPDATE;
+
+						constexpr f32 PAPER_MARGIN = 25.0f;
+						vf2 region =
+							vf2 {
+								(VIEW_RES.x + state->game.img.papers[state->game.hud.paper.index].dim.x * state->game.hud.paper.scalar) / 2.0f - PAPER_MARGIN,
+								(VIEW_RES.y + state->game.img.papers[state->game.hud.paper.index].dim.y * state->game.hud.paper.scalar) / 2.0f - PAPER_MARGIN
+							} / state->game.hud.paper.scalar;
+
+						if (fabsf(state->game.hud.paper.delta_position.x) > region.x)
+						{
+							state->game.hud.paper.delta_position.x = CLAMP(state->game.hud.paper.delta_position.x, -region.x, region.x);
+							state->game.hud.paper.velocity.x       = 0.0f;
+						}
+						if (fabsf(state->game.hud.paper.delta_position.y) > region.y)
+						{
+							state->game.hud.paper.delta_position.y = CLAMP(state->game.hud.paper.delta_position.y, -region.y, region.y);
+							state->game.hud.paper.velocity.y       = 0.0f;
+						}
+					}
+				} break;
+
+				case HudType::circuit_breaker:
+				{
+					if (PRESSED(Input::left_mouse))
+					{
+						if (in_rect(state->game.hud.cursor, (VIEW_RES - CIRCUIT_BREAKER_HUD_DIMENSIONS) / 2.0f, CIRCUIT_BREAKER_HUD_DIMENSIONS))
+						{
+							if (state->game.hud.circuit_breaker.active_voltage != state->game.hud.circuit_breaker.goal_voltage)
 							{
-								if (state->game.hud.circuit_breaker.active_voltage != state->game.hud.circuit_breaker.goal_voltage)
-								{
-									vi2 breaker_switch_position =
-										vxx(vf2 {
-											roundf((state->game.hud.cursor.x - (VIEW_RES.x - CIRCUIT_BREAKER_HUD_DIMENSIONS.x + CIRCUIT_BREAKER_SWITCH_DIMENSIONS.x) / 2.0f - CIRCUIT_BREAKER_SWITCH_PADDINGS.x       ) / (CIRCUIT_BREAKER_SWITCH_DIMENSIONS.x + CIRCUIT_BREAKER_SWITCH_PADDINGS.x)),
-											roundf((state->game.hud.cursor.y - (VIEW_RES.y - CIRCUIT_BREAKER_HUD_DIMENSIONS.y + CIRCUIT_BREAKER_SWITCH_DIMENSIONS.y) / 2.0f - CIRCUIT_BREAKER_SWITCH_PADDINGS.y / 2.0f) / (CIRCUIT_BREAKER_SWITCH_DIMENSIONS.y + CIRCUIT_BREAKER_SWITCH_PADDINGS.y))
-										});
+								vi2 breaker_switch_position =
+									vxx(vf2 {
+										roundf((state->game.hud.cursor.x - (VIEW_RES.x - CIRCUIT_BREAKER_HUD_DIMENSIONS.x + CIRCUIT_BREAKER_SWITCH_DIMENSIONS.x) / 2.0f - CIRCUIT_BREAKER_SWITCH_PADDINGS.x       ) / (CIRCUIT_BREAKER_SWITCH_DIMENSIONS.x + CIRCUIT_BREAKER_SWITCH_PADDINGS.x)),
+										roundf((state->game.hud.cursor.y - (VIEW_RES.y - CIRCUIT_BREAKER_HUD_DIMENSIONS.y + CIRCUIT_BREAKER_SWITCH_DIMENSIONS.y) / 2.0f - CIRCUIT_BREAKER_SWITCH_PADDINGS.y / 2.0f) / (CIRCUIT_BREAKER_SWITCH_DIMENSIONS.y + CIRCUIT_BREAKER_SWITCH_PADDINGS.y))
+									});
 
-									if
+								if
+								(
+									IN_RANGE(breaker_switch_position.x, 0, ARRAY_CAPACITY(state->game.hud.circuit_breaker.switches[0])) &&
+									IN_RANGE(breaker_switch_position.y, 0, ARRAY_CAPACITY(state->game.hud.circuit_breaker.switches   )) &&
+									in_rect
 									(
-										IN_RANGE(breaker_switch_position.x, 0, ARRAY_CAPACITY(state->game.hud.circuit_breaker.switches[0])) &&
-										IN_RANGE(breaker_switch_position.y, 0, ARRAY_CAPACITY(state->game.hud.circuit_breaker.switches   )) &&
-										in_rect
-										(
-											state->game.hud.cursor,
-											(VIEW_RES - CIRCUIT_BREAKER_HUD_DIMENSIONS) / 2.0f
-												+ vf2
-												{
-													(CIRCUIT_BREAKER_SWITCH_DIMENSIONS.x + CIRCUIT_BREAKER_SWITCH_PADDINGS.x) * breaker_switch_position.x + CIRCUIT_BREAKER_SWITCH_PADDINGS.x,
-													(CIRCUIT_BREAKER_SWITCH_DIMENSIONS.y + CIRCUIT_BREAKER_SWITCH_PADDINGS.y) * breaker_switch_position.y + CIRCUIT_BREAKER_SWITCH_PADDINGS.y / 2.0f
-												},
-											CIRCUIT_BREAKER_SWITCH_DIMENSIONS
-										)
+										state->game.hud.cursor,
+										(VIEW_RES - CIRCUIT_BREAKER_HUD_DIMENSIONS) / 2.0f
+											+ vf2
+											{
+												(CIRCUIT_BREAKER_SWITCH_DIMENSIONS.x + CIRCUIT_BREAKER_SWITCH_PADDINGS.x) * breaker_switch_position.x + CIRCUIT_BREAKER_SWITCH_PADDINGS.x,
+												(CIRCUIT_BREAKER_SWITCH_DIMENSIONS.y + CIRCUIT_BREAKER_SWITCH_PADDINGS.y) * breaker_switch_position.y + CIRCUIT_BREAKER_SWITCH_PADDINGS.y / 2.0f
+											},
+										CIRCUIT_BREAKER_SWITCH_DIMENSIONS
 									)
+								)
+								{
+									Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.circuit_breaker_switch, 0);
+
+									aliasing breaker_switch = state->game.hud.circuit_breaker.switches[breaker_switch_position.y][breaker_switch_position.x];
+									if (breaker_switch.active)
 									{
-										Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.circuit_breaker_switch, 0);
+										breaker_switch.active                           = false;
+										state->game.hud.circuit_breaker.active_voltage -= breaker_switch.voltage;
+									}
+									else
+									{
+										breaker_switch.active                           = true;
+										state->game.hud.circuit_breaker.active_voltage += breaker_switch.voltage;
+									}
 
-										aliasing breaker_switch = state->game.hud.circuit_breaker.switches[breaker_switch_position.y][breaker_switch_position.x];
-										if (breaker_switch.active)
-										{
-											breaker_switch.active                           = false;
-											state->game.hud.circuit_breaker.active_voltage -= breaker_switch.voltage;
-										}
-										else
-										{
-											breaker_switch.active                           = true;
-											state->game.hud.circuit_breaker.active_voltage += breaker_switch.voltage;
-										}
-
-										if (state->game.hud.circuit_breaker.active_voltage == state->game.hud.circuit_breaker.goal_voltage)
-										{
-											Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.drone_on, 0);
-											state->game.goal = GameGoal::escape;
-										}
+									if (state->game.hud.circuit_breaker.active_voltage == state->game.hud.circuit_breaker.goal_voltage)
+									{
+										Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.drone_on, 0);
+										state->game.goal = GameGoal::escape;
 									}
 								}
 							}
-							else
-							{
-								Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.panel_close, 0);
-								state->game.hud.type = HudType::null;
-							}
 						}
-					} break;
-
-					default:
-					{
-						state->game.hud.cursor_velocity = { 0.0f, 0.0f };
-						state->game.hud.cursor          = VIEW_RES / 2.0f;
-
-						state->game.lucia_angle_velocity -= platform->cursor_delta.x * 0.01f / SECONDS_PER_UPDATE;
-
-						if (PRESSED(Input::space) || PRESSED(Input::left_mouse))
+						else
 						{
-							switch (state->game.hand_on_state)
-							{
-								case HandOnState::door:
-								{
-									if (state->game.goal == GameGoal::escape)
-									{
-										Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.door_enter, 0);
-										state->game.is_exiting = true;
-									}
-									else
-									{
-										Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.door_budge, 0);
-
-										state->game.notification_message =
-											rng(&state->seed) < 0.1f
-												? "\"Door's jammed, damn it! Wait, is it electrically powered? Weird gameplay.\""
-												: "\"I need to find a way to turn the power back on.\"";
-										state->game.notification_keytime = 1.0f;
-									}
-								} break;
-
-								case HandOnState::circuit_breaker:
-								{
-									Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.panel_open, 0);
-									state->game.hud.type = HudType::circuit_breaker;
-								} break;
-
-								case HandOnState::item:
-								{
-									Item* open_space = 0;
-									FOR_ELEMS(it, *state->game.hud.inventory.array, sizeof(state->game.hud.inventory.array) / sizeof(Item))
-									{
-										if (it->type == ItemType::null)
-										{
-											open_space = it;
-											break;
-										}
-									}
-
-									if (open_space)
-									{
-										switch (state->game.hand_hovered_item->type)
-										{
-											case ItemType::paper:
-											{
-												Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.pick_up_paper, 0);
-											} break;
-
-											case ItemType::cheap_batteries:
-											case ItemType::military_grade_batteries:
-											{
-												Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.eletronical, 0);
-											} break;
-
-											default:
-											{
-												Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.pick_up_heavy, 0);
-											} break;
-										}
-
-										*open_space = *state->game.hand_hovered_item;
-										deallocate_item(state, state->game.hand_hovered_item);
-
-										state->game.hand_on_state     = HandOnState::null;
-										state->game.hand_hovered_item = 0;
-									}
-									else
-									{
-										state->game.notification_message = "\"I can't carry any more.\"";
-										state->game.notification_keytime = 1.0f;
-									}
-								} break;
-							}
+							Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.panel_close, 0);
+							state->game.hud.type = HudType::null;
 						}
-					} break;
-				}
-
-				state->game.lucia_angle_velocity *= 0.4f;
-				state->game.lucia_angle           = mod(state->game.lucia_angle + state->game.lucia_angle_velocity * SECONDS_PER_UPDATE, TAU);
-
-				vf2 wasd = { 0.0f, 0.0f };
-
-				if (state->game.hud.type != HudType::circuit_breaker)
-				{
-					if (HOLDING(Input::s)) { wasd.x -= 1.0f; }
-					if (HOLDING(Input::w)) { wasd.x += 1.0f; }
-					if (HOLDING(Input::d)) { wasd.y -= 1.0f; }
-					if (HOLDING(Input::a)) { wasd.y += 1.0f; }
-					if (+wasd)
-					{
-						constexpr f32 MIN_PORTION = 0.7f;
-						state->game.lucia_velocity += rotate(normalize(wasd), state->game.lucia_angle) * 2.0f * ((1.0f - powf(1.0f - state->game.lucia_stamina, 8) + MIN_PORTION) / (1.0f + MIN_PORTION));
 					}
-				}
+				} break;
 
-				if (+wasd && HOLDING(Input::shift) && !state->game.lucia_out_of_breath)
+				default:
 				{
-					state->game.lucia_velocity       *= 0.75f;
-					state->game.lucia_stamina         = CLAMP(state->game.lucia_stamina - SECONDS_PER_UPDATE / 60.0f * (1.0f + (1.0f - square(1.0f - 2.0f * state->game.lucia_sprint_keytime)) * 4.0f), 0.0f, 1.0f);
-					state->game.lucia_sprint_keytime  = CLAMP(state->game.lucia_sprint_keytime + SECONDS_PER_UPDATE / 1.5f, 0.0f, 1.0f);
-					if (state->game.lucia_stamina == 0.0f)
+					state->game.hud.cursor_velocity = { 0.0f, 0.0f };
+					state->game.hud.cursor          = VIEW_RES / 2.0f;
+
+					state->game.lucia_angle_velocity -= platform->cursor_delta.x * 0.01f / SECONDS_PER_UPDATE;
+
+					if (PRESSED(Input::space) || PRESSED(Input::left_mouse))
 					{
-						state->game.lucia_out_of_breath = true;
+						switch (state->game.hand_on_state)
+						{
+							case HandOnState::door:
+							{
+								if (state->game.goal == GameGoal::escape)
+								{
+									boot_down_state(state);
+									state->context = StateContext::end;
+									state->end     = {};
+									boot_up_state(platform->renderer, state);
+								}
+								else
+								{
+									Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.door_budge, 0);
+
+									state->game.notification_message =
+										rng(&state->seed) < 0.1f
+											? "\"Door's jammed, damn it! Wait, is it electrically powered? Weird gameplay.\""
+											: "\"I need to find a way to turn the power back on.\"";
+									state->game.notification_keytime = 1.0f;
+								}
+							} break;
+
+							case HandOnState::circuit_breaker:
+							{
+								Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.panel_open, 0);
+								state->game.hud.type = HudType::circuit_breaker;
+							} break;
+
+							case HandOnState::item:
+							{
+								Item* open_space = 0;
+								FOR_ELEMS(it, *state->game.hud.inventory.array, sizeof(state->game.hud.inventory.array) / sizeof(Item))
+								{
+									if (it->type == ItemType::null)
+									{
+										open_space = it;
+										break;
+									}
+								}
+
+								if (open_space)
+								{
+									switch (state->game.hand_hovered_item->type)
+									{
+										case ItemType::paper:
+										{
+											Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.pick_up_paper, 0);
+										} break;
+
+										case ItemType::cheap_batteries:
+										case ItemType::military_grade_batteries:
+										{
+											Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.eletronical, 0);
+										} break;
+
+										default:
+										{
+											Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.pick_up_heavy, 0);
+										} break;
+									}
+
+									*open_space = *state->game.hand_hovered_item;
+									deallocate_item(state, state->game.hand_hovered_item);
+
+									state->game.hand_on_state     = HandOnState::null;
+									state->game.hand_hovered_item = 0;
+								}
+								else
+								{
+									state->game.notification_message = "\"I can't carry any more.\"";
+									state->game.notification_keytime = 1.0f;
+								}
+							} break;
+						}
+					}
+				} break;
+			}
+
+			state->game.lucia_angle_velocity *= 0.4f;
+			state->game.lucia_angle           = mod(state->game.lucia_angle + state->game.lucia_angle_velocity * SECONDS_PER_UPDATE, TAU);
+
+			vf2 wasd = { 0.0f, 0.0f };
+
+			if (state->game.hud.type != HudType::circuit_breaker)
+			{
+				if (HOLDING(Input::s)) { wasd.x -= 1.0f; }
+				if (HOLDING(Input::w)) { wasd.x += 1.0f; }
+				if (HOLDING(Input::d)) { wasd.y -= 1.0f; }
+				if (HOLDING(Input::a)) { wasd.y += 1.0f; }
+				if (+wasd)
+				{
+					constexpr f32 MIN_PORTION = 0.7f;
+					state->game.lucia_velocity += rotate(normalize(wasd), state->game.lucia_angle) * 2.0f * ((1.0f - powf(1.0f - state->game.lucia_stamina, 8) + MIN_PORTION) / (1.0f + MIN_PORTION));
+				}
+			}
+
+			if (+wasd && HOLDING(Input::shift) && !state->game.lucia_out_of_breath)
+			{
+				state->game.lucia_velocity       *= 0.75f;
+				state->game.lucia_stamina         = CLAMP(state->game.lucia_stamina - SECONDS_PER_UPDATE / 60.0f * (1.0f + (1.0f - square(1.0f - 2.0f * state->game.lucia_sprint_keytime)) * 4.0f), 0.0f, 1.0f);
+				state->game.lucia_sprint_keytime  = CLAMP(state->game.lucia_sprint_keytime + SECONDS_PER_UPDATE / 1.5f, 0.0f, 1.0f);
+				if (state->game.lucia_stamina == 0.0f)
+				{
+					state->game.lucia_out_of_breath = true;
+				}
+				else
+				{
+					state->game.lucia_fov = dampen(state->game.lucia_fov, TAU * 0.35f, 2.0f, SECONDS_PER_UPDATE);
+				}
+			}
+			else
+			{
+				state->game.lucia_velocity       *= 0.6f;
+				state->game.lucia_stamina         = CLAMP(state->game.lucia_stamina + SECONDS_PER_UPDATE / 10.0f * square(1.0f - state->game.lucia_sprint_keytime) * (state->game.lucia_out_of_breath ? 0.5f : 1.0f), 0.0f, 1.0f);
+				state->game.lucia_sprint_keytime  = CLAMP(state->game.lucia_sprint_keytime - SECONDS_PER_UPDATE / 1.0f, 0.0f, 1.0f);
+
+				if (state->game.lucia_out_of_breath)
+				{
+					if (state->game.lucia_stamina > 0.5f)
+					{
+						state->game.lucia_out_of_breath = false;
 					}
 					else
 					{
-						state->game.lucia_fov = dampen(state->game.lucia_fov, TAU * 0.35f, 2.0f, SECONDS_PER_UPDATE);
+						state->game.lucia_fov = dampen(state->game.lucia_fov, TAU * 0.2f, 1.0f, SECONDS_PER_UPDATE);
 					}
 				}
 				else
 				{
-					state->game.lucia_velocity       *= 0.6f;
-					state->game.lucia_stamina         = CLAMP(state->game.lucia_stamina + SECONDS_PER_UPDATE / 10.0f * square(1.0f - state->game.lucia_sprint_keytime) * (state->game.lucia_out_of_breath ? 0.5f : 1.0f), 0.0f, 1.0f);
-					state->game.lucia_sprint_keytime  = CLAMP(state->game.lucia_sprint_keytime - SECONDS_PER_UPDATE / 1.0f, 0.0f, 1.0f);
-
-					if (state->game.lucia_out_of_breath)
-					{
-						if (state->game.lucia_stamina > 0.5f)
-						{
-							state->game.lucia_out_of_breath = false;
-						}
-						else
-						{
-							state->game.lucia_fov = dampen(state->game.lucia_fov, TAU * 0.2f, 1.0f, SECONDS_PER_UPDATE);
-						}
-					}
-					else
-					{
-						state->game.lucia_fov = dampen(state->game.lucia_fov, TAU * 0.25f, 4.0f, SECONDS_PER_UPDATE);
-					}
+					state->game.lucia_fov = dampen(state->game.lucia_fov, TAU * 0.25f, 4.0f, SECONDS_PER_UPDATE);
 				}
+			}
 
-				FOR_ELEMS(it, state->game.item_buffer, state->game.item_count)
+			FOR_ELEMS(it, state->game.item_buffer, state->game.item_count)
+			{
+				it->velocity *= 0.9f;
+				if (+it->velocity)
 				{
-					it->velocity *= 0.9f;
-					if (+it->velocity)
-					{
-						it->position.xy = move(state, it->position.xy, it->velocity * SECONDS_PER_UPDATE);
-					}
-					it->position.z = lerp(0.15f, state->game.lucia_position.z, CLAMP(1.0f - norm_sq(ray_to_closest(state->game.lucia_position.xy, it->position.xy)) / 36.0f, 0.0f, 1.0f)) + sinf(state->time * 3.0f) * 0.025f;
-					it->normal     = polar(state->time * 0.7f);
+					it->position.xy = move(state, it->position.xy, it->velocity * SECONDS_PER_UPDATE);
 				}
+				it->position.z = lerp(0.15f, state->game.lucia_position.z, CLAMP(1.0f - norm_sq(ray_to_closest(state->game.lucia_position.xy, it->position.xy)) / 36.0f, 0.0f, 1.0f)) + sinf(state->time * 3.0f) * 0.025f;
+				it->normal     = polar(state->time * 0.7f);
+			}
 
-				state->game.lucia_position.xy = move(state, state->game.lucia_position.xy, state->game.lucia_velocity * SECONDS_PER_UPDATE);
-				state->game.lucia_position.x  = mod(state->game.lucia_position.x, MAP_DIM * WALL_SPACING);
-				state->game.lucia_position.y  = mod(state->game.lucia_position.y, MAP_DIM * WALL_SPACING);
+			state->game.lucia_position.xy = move(state, state->game.lucia_position.xy, state->game.lucia_velocity * SECONDS_PER_UPDATE);
+			state->game.lucia_position.x  = mod(state->game.lucia_position.x, MAP_DIM * WALL_SPACING);
+			state->game.lucia_position.y  = mod(state->game.lucia_position.y, MAP_DIM * WALL_SPACING);
 
-				f32 old_z = state->game.lucia_position.z;
-				state->game.lucia_position.z = LUCIA_HEIGHT + 0.1f * (cosf(state->game.lucia_head_bob_keytime * TAU) - 1.0f);
+			f32 old_z = state->game.lucia_position.z;
+			state->game.lucia_position.z = LUCIA_HEIGHT + 0.1f * (cosf(state->game.lucia_head_bob_keytime * TAU) - 1.0f);
 
-				if (+wasd && old_z > LUCIA_HEIGHT - 0.175f && state->game.lucia_position.z < LUCIA_HEIGHT - 0.175f)
-				{
-					Mix_PlayChannel
-					(
-						+AudioChannel::unreserved,
-						+wasd && HOLDING(Input::shift) && !state->game.lucia_out_of_breath
-							? state->game.audio.run_steps [rng(&state->seed, 0, ARRAY_CAPACITY(state->game.audio.run_steps ))]
-							: state->game.audio.walk_steps[rng(&state->seed, 0, ARRAY_CAPACITY(state->game.audio.walk_steps))],
-						0
-					);
-				}
-
-				state->game.lucia_head_bob_keytime = mod(state->game.lucia_head_bob_keytime + 0.001f + 0.35f * norm(state->game.lucia_velocity) * SECONDS_PER_UPDATE, 1.0f);
-
-				switch (state->game.goal)
-				{
-					case GameGoal::find_door:
-					{
-						state->game.ceiling_lights_keytime = CLAMP(state->game.ceiling_lights_keytime + SECONDS_PER_UPDATE / 2.0f, 0.0f, 1.0f);
-
-						vf2 door_position = get_position_of_wall_side(state->game.door_wall_side);
-						if (norm(ray_to_closest(state->game.lucia_position.xy, door_position)) < 4.0f && exists_clear_way(state, state->game.lucia_position.xy, door_position))
-						{
-							Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.drone_off, 0);
-							Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.blackout, 0);
-							state->game.goal = GameGoal::fix_power;
-
-							FOR_ELEMS(it, state->game.hud.circuit_breaker.flat_switches)
-							{
-								it->active = false;
-							}
-							state->game.hud.circuit_breaker.active_voltage = 0;
-						}
-					} break;
-
-					case GameGoal::fix_power:
-					{
-						state->game.creepy_sound_countdown -= SECONDS_PER_UPDATE;
-						if (state->game.creepy_sound_countdown <= 0.0f)
-						{
-							Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.creepy_sounds[rng(&state->seed, 0, ARRAY_CAPACITY(state->game.audio.creepy_sounds))], 0);
-							state->game.creepy_sound_countdown = rng(&state->seed, CREEPY_SOUND_MIN_TIME, CREEPY_SOUND_MAX_TIME);
-						}
-
-						state->game.ceiling_lights_keytime = CLAMP(state->game.ceiling_lights_keytime - SECONDS_PER_UPDATE / 1.0f, 0.0f, 1.0f);
-					} break;
-
-					case GameGoal::escape:
-					{
-						state->game.ceiling_lights_keytime = CLAMP(state->game.ceiling_lights_keytime + SECONDS_PER_UPDATE / 2.0f, 0.0f, 1.0f);
-					} break;
-				}
-
-				state->game.hud.circuit_breaker.interpolated_voltage_velocity += (state->game.hud.circuit_breaker.active_voltage - state->game.hud.circuit_breaker.interpolated_voltage) * 16.0f;
-				state->game.hud.circuit_breaker.interpolated_voltage_velocity *= 0.5f;
-				state->game.hud.circuit_breaker.interpolated_voltage          += state->game.hud.circuit_breaker.interpolated_voltage_velocity * SECONDS_PER_UPDATE;
-
-				if (state->game.hud.circuit_breaker.interpolated_voltage < 0.0f)
-				{
-					state->game.hud.circuit_breaker.interpolated_voltage          = 0.0f;
-					state->game.hud.circuit_breaker.interpolated_voltage_velocity = 0.0f;
-				}
-
-				vi2 current_lucia_coordinates = get_closest_open_path_coordinates(state, state->game.lucia_position.xy);
-				if
+			if (+wasd && old_z > LUCIA_HEIGHT - 0.175f && state->game.lucia_position.z < LUCIA_HEIGHT - 0.175f)
+			{
+				Mix_PlayChannel
 				(
-					!state->game.monster_path && norm(ray_to_closest(state->game.monster_position.xy, state->game.lucia_position.xy)) > 2.0f
-					|| state->game.monster_path && current_lucia_coordinates != state->game.monster_path_goal
-				)
+					+AudioChannel::unreserved,
+					+wasd && HOLDING(Input::shift) && !state->game.lucia_out_of_breath
+						? state->game.audio.run_steps [rng(&state->seed, 0, ARRAY_CAPACITY(state->game.audio.run_steps ))]
+						: state->game.audio.walk_steps[rng(&state->seed, 0, ARRAY_CAPACITY(state->game.audio.walk_steps))],
+					0
+				);
+			}
+
+			state->game.lucia_head_bob_keytime = mod(state->game.lucia_head_bob_keytime + 0.001f + 0.35f * norm(state->game.lucia_velocity) * SECONDS_PER_UPDATE, 1.0f);
+
+			switch (state->game.goal)
+			{
+				case GameGoal::find_door:
 				{
-					vi2 starting_coordinates = get_closest_open_path_coordinates(state, state->game.monster_position.xy);
-					state->game.monster_path_goal = current_lucia_coordinates;
+					state->game.ceiling_lights_keytime = CLAMP(state->game.ceiling_lights_keytime + SECONDS_PER_UPDATE / 2.0f, 0.0f, 1.0f);
 
-					struct PathVertex
+					vf2 door_position = get_position_of_wall_side(state->game.door_wall_side);
+					if (norm(ray_to_closest(state->game.lucia_position.xy, door_position)) < 4.0f && exists_clear_way(state, state->game.lucia_position.xy, door_position))
 					{
-						bool32 is_set;
-						f32    best_weight;
-						vi2    prev_coordinates;
-					};
+						Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.drone_off, 0);
+						Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.blackout, 0);
+						state->game.goal = GameGoal::fix_power;
 
-					struct PathQueueNode
-					{
-						f32            estimated_length;
-						vi2            prev_coordinates;
-						vi2            coordinates;
-						PathQueueNode* next_node;
-					};
-
-					PathVertex path_vertices[MAP_DIM * 2][MAP_DIM] = {};
-					path_vertices[starting_coordinates.y][starting_coordinates.x].is_set = true;
-
-					PathQueueNode* path_queue = memory_arena_allocate<PathQueueNode>(&state->transient_arena);
-					path_queue->estimated_length = path_distance_function(starting_coordinates, state->game.monster_path_goal);
-					path_queue->prev_coordinates = { -1, -1 };
-					path_queue->coordinates      = starting_coordinates;
-					path_queue->next_node        = 0;
-
-					PathQueueNode* available_path_queue_node = 0;
-
-					while (path_queue && path_queue->coordinates != state->game.monster_path_goal)
-					{
-						PathQueueNode* head = path_queue;
-						path_queue = path_queue->next_node;
-
-						struct ADJACENT { WallVoxel side; vi2 delta_coordinates; };
-						constexpr ADJACENT HORI[] =
-							{
-								{ WallVoxel::bottom, { -1, -1 } },
-								{ WallVoxel::bottom, {  0, -1 } },
-								{ WallVoxel::left  , { -1,  0 } },
-								{ WallVoxel::left  , {  1,  0 } },
-								{ WallVoxel::bottom, { -1,  1 } },
-								{ WallVoxel::bottom, {  0,  1 } }
-							};
-
-						constexpr ADJACENT VERT[] =
-							{
-								{ WallVoxel::bottom, { 0, -2 } },
-								{ WallVoxel::left  , { 0, -1 } },
-								{ WallVoxel::left  , { 1, -1 } },
-								{ WallVoxel::left  , { 0,  1 } },
-								{ WallVoxel::left  , { 1,  1 } },
-								{ WallVoxel::bottom, { 0,  2 } }
-							};
-
-						FOR_ELEMS(it, head->coordinates.y % 2 == 0 ? VERT : HORI)
+						FOR_ELEMS(it, state->game.hud.circuit_breaker.flat_switches)
 						{
-							vi2 next_coordinates =
-								{
-									mod(head->coordinates.x + it->delta_coordinates.x, MAP_DIM    ),
-									mod(head->coordinates.y + it->delta_coordinates.y, MAP_DIM * 2)
-								};
+							it->active = false;
+						}
+						state->game.hud.circuit_breaker.active_voltage = 0;
+					}
+				} break;
 
-							if (next_coordinates == head->prev_coordinates || +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(next_coordinates)) & it->side))
-							{
-								continue;
-							}
+				case GameGoal::fix_power:
+				{
+					state->game.creepy_sound_countdown -= SECONDS_PER_UPDATE;
+					if (state->game.creepy_sound_countdown <= 0.0f)
+					{
+						Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.creepy_sounds[rng(&state->seed, 0, ARRAY_CAPACITY(state->game.audio.creepy_sounds))], 0);
+						state->game.creepy_sound_countdown = rng(&state->seed, CREEPY_SOUND_MIN_TIME, CREEPY_SOUND_MAX_TIME);
+					}
 
-							if (head->coordinates.y % 2 == 0)
+					state->game.ceiling_lights_keytime = CLAMP(state->game.ceiling_lights_keytime - SECONDS_PER_UPDATE / 1.0f, 0.0f, 1.0f);
+				} break;
+
+				case GameGoal::escape:
+				{
+					state->game.ceiling_lights_keytime = CLAMP(state->game.ceiling_lights_keytime + SECONDS_PER_UPDATE / 2.0f, 0.0f, 1.0f);
+				} break;
+			}
+
+			state->game.hud.circuit_breaker.interpolated_voltage_velocity += (state->game.hud.circuit_breaker.active_voltage - state->game.hud.circuit_breaker.interpolated_voltage) * 16.0f;
+			state->game.hud.circuit_breaker.interpolated_voltage_velocity *= 0.5f;
+			state->game.hud.circuit_breaker.interpolated_voltage          += state->game.hud.circuit_breaker.interpolated_voltage_velocity * SECONDS_PER_UPDATE;
+
+			if (state->game.hud.circuit_breaker.interpolated_voltage < 0.0f)
+			{
+				state->game.hud.circuit_breaker.interpolated_voltage          = 0.0f;
+				state->game.hud.circuit_breaker.interpolated_voltage_velocity = 0.0f;
+			}
+
+			vi2 current_lucia_coordinates = get_closest_open_path_coordinates(state, state->game.lucia_position.xy);
+			if
+			(
+				!state->game.monster_path && norm(ray_to_closest(state->game.monster_position.xy, state->game.lucia_position.xy)) > 2.0f
+				|| state->game.monster_path && current_lucia_coordinates != state->game.monster_path_goal
+			)
+			{
+				vi2 starting_coordinates = get_closest_open_path_coordinates(state, state->game.monster_position.xy);
+				state->game.monster_path_goal = current_lucia_coordinates;
+
+				struct PathVertex
+				{
+					bool32 is_set;
+					f32    best_weight;
+					vi2    prev_coordinates;
+				};
+
+				struct PathQueueNode
+				{
+					f32            estimated_length;
+					vi2            prev_coordinates;
+					vi2            coordinates;
+					PathQueueNode* next_node;
+				};
+
+				PathVertex path_vertices[MAP_DIM * 2][MAP_DIM] = {};
+				path_vertices[starting_coordinates.y][starting_coordinates.x].is_set = true;
+
+				PathQueueNode* path_queue = memory_arena_allocate<PathQueueNode>(&state->transient_arena);
+				path_queue->estimated_length = path_distance_function(starting_coordinates, state->game.monster_path_goal);
+				path_queue->prev_coordinates = { -1, -1 };
+				path_queue->coordinates      = starting_coordinates;
+				path_queue->next_node        = 0;
+
+				PathQueueNode* available_path_queue_node = 0;
+
+				while (path_queue && path_queue->coordinates != state->game.monster_path_goal)
+				{
+					PathQueueNode* head = path_queue;
+					path_queue = path_queue->next_node;
+
+					struct ADJACENT { WallVoxel side; vi2 delta_coordinates; };
+					constexpr ADJACENT HORI[] =
+						{
+							{ WallVoxel::bottom, { -1, -1 } },
+							{ WallVoxel::bottom, {  0, -1 } },
+							{ WallVoxel::left  , { -1,  0 } },
+							{ WallVoxel::left  , {  1,  0 } },
+							{ WallVoxel::bottom, { -1,  1 } },
+							{ WallVoxel::bottom, {  0,  1 } }
+						};
+
+					constexpr ADJACENT VERT[] =
+						{
+							{ WallVoxel::bottom, { 0, -2 } },
+							{ WallVoxel::left  , { 0, -1 } },
+							{ WallVoxel::left  , { 1, -1 } },
+							{ WallVoxel::left  , { 0,  1 } },
+							{ WallVoxel::left  , { 1,  1 } },
+							{ WallVoxel::bottom, { 0,  2 } }
+						};
+
+					FOR_ELEMS(it, head->coordinates.y % 2 == 0 ? VERT : HORI)
+					{
+						vi2 next_coordinates =
 							{
-								if (it->delta_coordinates.y < 0)
-								{
-									if
-									(
-										it->delta_coordinates != vi2 { 1, -1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates) + vi2 { 0, -1 }) & WallVoxel::back_slash   ) ||
-										it->delta_coordinates != vi2 { 0, -1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates) + vi2 { 0, -1 }) & WallVoxel::forward_slash)
-									)
-									{
-										continue;
-									}
-								}
-								else if
-								(
-									it->delta_coordinates != vi2 { 0, 1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates)) & WallVoxel::back_slash   ) ||
-									it->delta_coordinates != vi2 { 1, 1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates)) & WallVoxel::forward_slash)
-								)
-								{
-									continue;
-								}
-							}
-							else if (it->delta_coordinates.x < 0)
+								mod(head->coordinates.x + it->delta_coordinates.x, MAP_DIM    ),
+								mod(head->coordinates.y + it->delta_coordinates.y, MAP_DIM * 2)
+							};
+
+						if (next_coordinates == head->prev_coordinates || +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(next_coordinates)) & it->side))
+						{
+							continue;
+						}
+
+						if (head->coordinates.y % 2 == 0)
+						{
+							if (it->delta_coordinates.y < 0)
 							{
 								if
 								(
-									it->delta_coordinates != vi2 { -1,  1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates) + vi2 { -1, 0 }) & WallVoxel::back_slash   ) ||
-									it->delta_coordinates != vi2 { -1, -1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates) + vi2 { -1, 0 }) & WallVoxel::forward_slash)
+									it->delta_coordinates != vi2 { 1, -1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates) + vi2 { 0, -1 }) & WallVoxel::back_slash   ) ||
+									it->delta_coordinates != vi2 { 0, -1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates) + vi2 { 0, -1 }) & WallVoxel::forward_slash)
 								)
 								{
 									continue;
@@ -2246,272 +2221,304 @@ extern "C" PROTOTYPE_UPDATE(update)
 							}
 							else if
 							(
-								it->delta_coordinates != vi2 { 0, -1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates)) & WallVoxel::back_slash   ) ||
-								it->delta_coordinates != vi2 { 0,  1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates)) & WallVoxel::forward_slash)
+								it->delta_coordinates != vi2 { 0, 1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates)) & WallVoxel::back_slash   ) ||
+								it->delta_coordinates != vi2 { 1, 1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates)) & WallVoxel::forward_slash)
 							)
 							{
 								continue;
 							}
-
-							f32         next_weight = path_vertices[head->coordinates.y][head->coordinates.x].best_weight + path_distance_function(head->coordinates, next_coordinates);
-							PathVertex* next_vertex = &path_vertices[next_coordinates.y][next_coordinates.x];
-
-							if (!next_vertex->is_set || next_vertex->best_weight > next_weight)
+						}
+						else if (it->delta_coordinates.x < 0)
+						{
+							if
+							(
+								it->delta_coordinates != vi2 { -1,  1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates) + vi2 { -1, 0 }) & WallVoxel::back_slash   ) ||
+								it->delta_coordinates != vi2 { -1, -1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates) + vi2 { -1, 0 }) & WallVoxel::forward_slash)
+							)
 							{
-								next_vertex->is_set           = true;
-								next_vertex->best_weight      = next_weight;
-								next_vertex->prev_coordinates = head->coordinates;
-
-								PathQueueNode** repeated_node = &path_queue;
-
-								while (*repeated_node && (*repeated_node)->coordinates != next_coordinates)
-								{
-									repeated_node = &(*repeated_node)->next_node;
-								}
-
-								if (*repeated_node)
-								{
-									PathQueueNode* tail = (*repeated_node)->next_node;
-									(*repeated_node)->next_node = available_path_queue_node;
-									available_path_queue_node = *repeated_node;
-									*repeated_node = tail;
-								}
-
-								f32             next_estimated_length = next_weight + path_distance_function(next_coordinates, state->game.monster_path_goal);
-								PathQueueNode** post_node             = &path_queue;
-								while (*post_node && (*post_node)->estimated_length < next_estimated_length)
-								{
-									post_node = &(*post_node)->next_node;
-								}
-
-								PathQueueNode* new_node;
-								if (available_path_queue_node)
-								{
-									new_node                  = available_path_queue_node;
-									available_path_queue_node = available_path_queue_node->next_node;
-								}
-								else
-								{
-									new_node = memory_arena_allocate<PathQueueNode>(&state->transient_arena);
-								}
-
-								new_node->estimated_length = next_estimated_length;
-								new_node->prev_coordinates = head->coordinates;
-								new_node->coordinates      = next_coordinates;
-								new_node->next_node        = *post_node;
-								*post_node = new_node;
+								continue;
 							}
 						}
-
-						head->next_node = available_path_queue_node;
-						available_path_queue_node = head;
-					}
-
-					if (path_queue && path_queue->coordinates == state->game.monster_path_goal)
-					{
-						while (state->game.monster_path)
+						else if
+						(
+							it->delta_coordinates != vi2 { 0, -1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates)) & WallVoxel::back_slash   ) ||
+							it->delta_coordinates != vi2 { 0,  1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates)) & WallVoxel::forward_slash)
+						)
 						{
-							state->game.monster_path = deallocate_path_coordinates_node(state, state->game.monster_path);
+							continue;
 						}
 
-						vi2 coordinates = state->game.monster_path_goal;
-						while (true)
-						{
-							PathCoordinatesNode* path_coordinates_node = allocate_path_coordinates_node(state);
-							path_coordinates_node->coordinates = coordinates;
-							path_coordinates_node->next_node   = state->game.monster_path;
-							state->game.monster_path = path_coordinates_node;
+						f32         next_weight = path_vertices[head->coordinates.y][head->coordinates.x].best_weight + path_distance_function(head->coordinates, next_coordinates);
+						PathVertex* next_vertex = &path_vertices[next_coordinates.y][next_coordinates.x];
 
-							if (coordinates == starting_coordinates)
+						if (!next_vertex->is_set || next_vertex->best_weight > next_weight)
+						{
+							next_vertex->is_set           = true;
+							next_vertex->best_weight      = next_weight;
+							next_vertex->prev_coordinates = head->coordinates;
+
+							PathQueueNode** repeated_node = &path_queue;
+
+							while (*repeated_node && (*repeated_node)->coordinates != next_coordinates)
 							{
-								break;
+								repeated_node = &(*repeated_node)->next_node;
 							}
 
-							coordinates = path_vertices[coordinates.y][coordinates.x].prev_coordinates;
+							if (*repeated_node)
+							{
+								PathQueueNode* tail = (*repeated_node)->next_node;
+								(*repeated_node)->next_node = available_path_queue_node;
+								available_path_queue_node = *repeated_node;
+								*repeated_node = tail;
+							}
+
+							f32             next_estimated_length = next_weight + path_distance_function(next_coordinates, state->game.monster_path_goal);
+							PathQueueNode** post_node             = &path_queue;
+							while (*post_node && (*post_node)->estimated_length < next_estimated_length)
+							{
+								post_node = &(*post_node)->next_node;
+							}
+
+							PathQueueNode* new_node;
+							if (available_path_queue_node)
+							{
+								new_node                  = available_path_queue_node;
+								available_path_queue_node = available_path_queue_node->next_node;
+							}
+							else
+							{
+								new_node = memory_arena_allocate<PathQueueNode>(&state->transient_arena);
+							}
+
+							new_node->estimated_length = next_estimated_length;
+							new_node->prev_coordinates = head->coordinates;
+							new_node->coordinates      = next_coordinates;
+							new_node->next_node        = *post_node;
+							*post_node = new_node;
 						}
 					}
-					else
-					{
-						ASSERT(false);
-					}
 
-					ASSERT(get_closest_open_path_coordinates(state, state->game.lucia_position.xy) == state->game.monster_path_goal);
+					head->next_node = available_path_queue_node;
+					available_path_queue_node = head;
 				}
 
-				if (state->game.monster_path)
+				if (path_queue && path_queue->coordinates == state->game.monster_path_goal)
 				{
-					vf2 ray = ray_to_closest(state->game.monster_position.xy, path_coordinates_to_position(state->game.monster_path->coordinates));
-					if (norm(ray) < WALL_SPACING / 2.0f)
+					while (state->game.monster_path)
 					{
 						state->game.monster_path = deallocate_path_coordinates_node(state, state->game.monster_path);
 					}
-					else
+
+					vi2 coordinates = state->game.monster_path_goal;
+					while (true)
 					{
-						state->game.monster_velocity = dampen(state->game.monster_velocity, normalize(ray) * 3.0f, 4.0f, SECONDS_PER_UPDATE);
+						PathCoordinatesNode* path_coordinates_node = allocate_path_coordinates_node(state);
+						path_coordinates_node->coordinates = coordinates;
+						path_coordinates_node->next_node   = state->game.monster_path;
+						state->game.monster_path = path_coordinates_node;
+
+						if (coordinates == starting_coordinates)
+						{
+							break;
+						}
+
+						coordinates = path_vertices[coordinates.y][coordinates.x].prev_coordinates;
 					}
 				}
 				else
 				{
-					vf2 ray = ray_to_closest(state->game.monster_position.xy, state->game.lucia_position.xy);
-					if (norm(ray) > 4.0f)
+					ASSERT(false);
+				}
+
+				ASSERT(get_closest_open_path_coordinates(state, state->game.lucia_position.xy) == state->game.monster_path_goal);
+			}
+
+			if (state->game.monster_path)
+			{
+				vf2 ray = ray_to_closest(state->game.monster_position.xy, path_coordinates_to_position(state->game.monster_path->coordinates));
+				if (norm(ray) < WALL_SPACING / 2.0f)
+				{
+					state->game.monster_path = deallocate_path_coordinates_node(state, state->game.monster_path);
+				}
+				else
+				{
+					state->game.monster_velocity = dampen(state->game.monster_velocity, normalize(ray) * 3.0f, 4.0f, SECONDS_PER_UPDATE);
+				}
+			}
+			else
+			{
+				vf2 ray = ray_to_closest(state->game.monster_position.xy, state->game.lucia_position.xy);
+				if (norm(ray) > 4.0f)
+				{
+					state->game.monster_velocity = dampen(state->game.monster_velocity, normalize(ray) * 3.0f, 4.0f, SECONDS_PER_UPDATE);
+				}
+				else
+				{
+					state->game.monster_velocity = dampen(state->game.monster_velocity, { 0.0f, 0.0f }, 4.0f, SECONDS_PER_UPDATE);
+				}
+			}
+
+			state->game.monster_position.xy += state->game.monster_velocity * SECONDS_PER_UPDATE;
+			state->game.monster_position.x   = mod(state->game.monster_position.x, MAP_DIM * WALL_SPACING);
+			state->game.monster_position.y   = mod(state->game.monster_position.y, MAP_DIM * WALL_SPACING);
+			state->game.monster_position.z   = cosf(state->time * 3.0f) * 0.15f + WALL_HEIGHT / 2.0f;
+			state->game.monster_normal       = normalize(dampen(state->game.monster_normal, normalize(ray_to_closest(state->game.lucia_position.xy, state->game.monster_position.xy)), 1.0f, SECONDS_PER_UPDATE));
+
+			state->game.hand_on_state     = HandOnState::null;
+			state->game.hand_hovered_item = 0;
+
+			DEBUG_once // @TEMP@
+			{
+				//state->game.lucia_position.xy = get_position_of_wall_side(state->game.circuit_breaker_wall_side, 1.0f);
+				state->game.lucia_position.xy = get_position_of_wall_side(state->game.door_wall_side, 1.0f);
+			}
+
+			vf3 hand_reach_position = { NAN, NAN };
+
+			if (state->game.hud.type == HudType::null)
+			{
+				{
+					vf2 door_position = get_position_of_wall_side(state->game.door_wall_side, 0.25f);
+					vf2 ray_to_door   = ray_to_closest(state->game.lucia_position.xy, door_position);
+
+					if (norm(ray_to_door) < 2.0f && exists_clear_way(state, state->game.lucia_position.xy, door_position))
 					{
-						state->game.monster_velocity = dampen(state->game.monster_velocity, normalize(ray) * 3.0f, 4.0f, SECONDS_PER_UPDATE);
-					}
-					else
-					{
-						state->game.monster_velocity = dampen(state->game.monster_velocity, { 0.0f, 0.0f }, 4.0f, SECONDS_PER_UPDATE);
+						state->game.hand_on_state = HandOnState::door;
+						hand_reach_position       = vx3(door_position, WALL_HEIGHT / 2.0f);
 					}
 				}
 
-				state->game.monster_position.xy += state->game.monster_velocity * SECONDS_PER_UPDATE;
-				state->game.monster_position.x   = mod(state->game.monster_position.x, MAP_DIM * WALL_SPACING);
-				state->game.monster_position.y   = mod(state->game.monster_position.y, MAP_DIM * WALL_SPACING);
-				state->game.monster_position.z   = cosf(state->time * 3.0f) * 0.15f + WALL_HEIGHT / 2.0f;
-				state->game.monster_normal       = normalize(dampen(state->game.monster_normal, normalize(ray_to_closest(state->game.lucia_position.xy, state->game.monster_position.xy)), 1.0f, SECONDS_PER_UPDATE));
-
-				state->game.hand_on_state     = HandOnState::null;
-				state->game.hand_hovered_item = 0;
-
-				DEBUG_once // @TEMP@
+				if (state->game.hand_on_state == HandOnState::null)
 				{
-					state->game.lucia_position.xy = state->game.circuit_breaker_wall_side.coordinates * WALL_SPACING;
+					vf2 circuit_breaker_position = get_position_of_wall_side(state->game.circuit_breaker_wall_side, 0.25f);
+					vf2 ray_to_circuit_breaker   = ray_to_closest(state->game.lucia_position.xy, circuit_breaker_position);
+
+					if (norm(ray_to_circuit_breaker) < 2.0f && exists_clear_way(state, state->game.lucia_position.xy, circuit_breaker_position))
+					{
+						state->game.hand_on_state = HandOnState::circuit_breaker;
+						hand_reach_position       = vx3(circuit_breaker_position, WALL_HEIGHT / 2.0f);
+					}
 				}
 
-				vf3 hand_reach_position = { NAN, NAN };
-
-				if (state->game.hud.type == HudType::null)
+				if (state->game.hand_on_state == HandOnState::null)
 				{
+					f32 best_heuristic = 0.0f;
+					FOR_ELEMS(item, state->game.item_buffer, state->game.item_count)
 					{
-						vf2 door_position = get_position_of_wall_side(state->game.door_wall_side, 0.25f);
-						vf2 ray_to_door   = ray_to_closest(state->game.lucia_position.xy, door_position);
-
-						if (norm(ray_to_door) < 2.0f && exists_clear_way(state, state->game.lucia_position.xy, door_position))
+						if (exists_clear_way(state, state->game.lucia_position.xy, item->position.xy))
 						{
-							state->game.hand_on_state = HandOnState::door;
-							hand_reach_position       = vx3(door_position, WALL_HEIGHT / 2.0f);
-						}
-					}
-
-					if (state->game.hand_on_state == HandOnState::null)
-					{
-						vf2 circuit_breaker_position = get_position_of_wall_side(state->game.circuit_breaker_wall_side, 0.25f);
-						vf2 ray_to_circuit_breaker   = ray_to_closest(state->game.lucia_position.xy, circuit_breaker_position);
-
-						if (norm(ray_to_circuit_breaker) < 2.0f && exists_clear_way(state, state->game.lucia_position.xy, circuit_breaker_position))
-						{
-							state->game.hand_on_state = HandOnState::circuit_breaker;
-							hand_reach_position       = vx3(circuit_breaker_position, WALL_HEIGHT / 2.0f);
-						}
-					}
-
-					if (state->game.hand_on_state == HandOnState::null)
-					{
-						f32 best_heuristic = 0.0f;
-						FOR_ELEMS(item, state->game.item_buffer, state->game.item_count)
-						{
-							if (exists_clear_way(state, state->game.lucia_position.xy, item->position.xy))
+							vf2 ray      = ray_to_closest(state->game.lucia_position.xy, item->position.xy);
+							f32 distance = norm(ray);
+							if (distance < 1.5f)
 							{
-								vf2 ray      = ray_to_closest(state->game.lucia_position.xy, item->position.xy);
-								f32 distance = norm(ray);
-								if (distance < 1.5f)
+								f32 heuristic = 1.0f / (distance + 0.5f) + square(CLAMP(dot(ray / distance, polar(state->game.lucia_angle)), 0.0f, 1.0f));
+								if (best_heuristic <= heuristic)
 								{
-									f32 heuristic = 1.0f / (distance + 0.5f) + square(CLAMP(dot(ray / distance, polar(state->game.lucia_angle)), 0.0f, 1.0f));
-									if (best_heuristic <= heuristic)
-									{
-										best_heuristic                = heuristic;
-										state->game.hand_hovered_item = item;
-									}
+									best_heuristic                = heuristic;
+									state->game.hand_hovered_item = item;
 								}
 							}
 						}
-
-						if (state->game.hand_hovered_item)
-						{
-							state->game.hand_on_state = HandOnState::item;
-							hand_reach_position       = state->game.hand_hovered_item->position;
-						}
 					}
-				}
 
-				if (state->game.hand_on_state != HandOnState::null)
-				{
-					state->game.hand_position.xy = hand_reach_position.xy + ray_to_closest(hand_reach_position.xy, state->game.lucia_position.xy) / 2.0f;
-					state->game.hand_position.z  = lerp(hand_reach_position.z, state->game.lucia_position.z, 0.75f);
-				}
-
-				if (state->game.holding.flashlight)
-				{
-					state->game.holding.flashlight->flashlight.power = CLAMP(state->game.holding.flashlight->flashlight.power - SECONDS_PER_UPDATE / 150.0f, 0.0f, 1.0f);
-					state->game.flashlight_activation                = dampen(state->game.flashlight_activation, sinf(TAU / 4.0f * (1.0f - powf(1.0f - state->game.holding.flashlight->flashlight.power, 16.0f))), 25.0f, SECONDS_PER_UPDATE);
-
-					if (state->game.holding.flashlight->flashlight.power == 0.0f)
+					if (state->game.hand_hovered_item)
 					{
-						state->game.holding.flashlight = 0;
-
-						if (state->game.holding.flashlight == state->game.holding.flashlight)
-						{
-							state->game.notification_message = "\"The flashlight died.\"";
-							state->game.notification_keytime = 1.0f;
-						}
+						state->game.hand_on_state = HandOnState::item;
+						hand_reach_position       = state->game.hand_hovered_item->position;
 					}
 				}
-				else
+			}
+
+			if (state->game.hand_on_state != HandOnState::null)
+			{
+				state->game.hand_position.xy = hand_reach_position.xy + ray_to_closest(hand_reach_position.xy, state->game.lucia_position.xy) / 2.0f;
+				state->game.hand_position.z  = lerp(hand_reach_position.z, state->game.lucia_position.z, 0.75f);
+			}
+
+			if (state->game.holding.flashlight)
+			{
+				state->game.holding.flashlight->flashlight.power = CLAMP(state->game.holding.flashlight->flashlight.power - SECONDS_PER_UPDATE / 150.0f, 0.0f, 1.0f);
+				state->game.flashlight_activation                = dampen(state->game.flashlight_activation, sinf(TAU / 4.0f * (1.0f - powf(1.0f - state->game.holding.flashlight->flashlight.power, 16.0f))), 25.0f, SECONDS_PER_UPDATE);
+
+				if (state->game.holding.flashlight->flashlight.power == 0.0f)
 				{
-					state->game.flashlight_activation = dampen(state->game.flashlight_activation, 0.0f, 25.0f, SECONDS_PER_UPDATE);
+					state->game.holding.flashlight = 0;
+
+					if (state->game.holding.flashlight == state->game.holding.flashlight)
+					{
+						state->game.notification_message = "\"The flashlight died.\"";
+						state->game.notification_keytime = 1.0f;
+					}
 				}
+			}
+			else
+			{
+				state->game.flashlight_activation = dampen(state->game.flashlight_activation, 0.0f, 25.0f, SECONDS_PER_UPDATE);
+			}
 
-				state->game.flashlight_keytime += 0.00005f + 0.005f * norm(state->game.lucia_velocity) * SECONDS_PER_UPDATE;
-				if (state->game.flashlight_keytime > 1.0f)
-				{
-					state->game.flashlight_keytime -= 1.0f;
-				}
+			state->game.flashlight_keytime += 0.00005f + 0.005f * norm(state->game.lucia_velocity) * SECONDS_PER_UPDATE;
+			if (state->game.flashlight_keytime > 1.0f)
+			{
+				state->game.flashlight_keytime -= 1.0f;
+			}
 
-				state->game.flashlight_ray.xy  = dampen(state->game.flashlight_ray.xy, polar(state->game.lucia_angle + sinf(state->game.flashlight_keytime * TAU * 15.0f) * 0.1f), 16.0f, SECONDS_PER_UPDATE);
-				state->game.flashlight_ray.z   = sinf(state->game.flashlight_keytime * TAU * 36.0f) * 0.05f;
-				state->game.flashlight_ray     = normalize(state->game.flashlight_ray);
+			state->game.flashlight_ray.xy  = dampen(state->game.flashlight_ray.xy, polar(state->game.lucia_angle + sinf(state->game.flashlight_keytime * TAU * 15.0f) * 0.1f), 16.0f, SECONDS_PER_UPDATE);
+			state->game.flashlight_ray.z   = sinf(state->game.flashlight_keytime * TAU * 36.0f) * 0.05f;
+			state->game.flashlight_ray     = normalize(state->game.flashlight_ray);
 
-				state->game.notification_keytime = CLAMP(state->game.notification_keytime - SECONDS_PER_UPDATE / 8.0f, 0.0f, 1.0f);
+			state->game.notification_keytime = CLAMP(state->game.notification_keytime - SECONDS_PER_UPDATE / 8.0f, 0.0f, 1.0f);
 
-				state->game.heart_rate_bpm = 63.5f + 80.0f * (1.0f - state->game.lucia_stamina);
-				if (state->game.heart_rate_bpm > 0.001f)
-				{
-					state->game.heart_rate_beat_keytime += SECONDS_PER_UPDATE * state->game.heart_rate_bpm / 60.0f;
-				}
+			state->game.heart_rate_bpm = 63.5f + 80.0f * (1.0f - state->game.lucia_stamina);
+			if (state->game.heart_rate_bpm > 0.001f)
+			{
+				state->game.heart_rate_beat_keytime += SECONDS_PER_UPDATE * state->game.heart_rate_bpm / 60.0f;
+			}
 
-				if (state->game.heart_rate_beat_keytime >= 1.0f)
-				{
-					state->game.heart_rate_beat_keytime  = 0.0f;
-					state->game.heart_rate_velocity      = 64.0f;
-				}
+			Mix_VolumeChunk(state->game.audio.heartbeats[state->game.heartbeat_sfx_index], static_cast<i32>(MIX_MAX_VOLUME * CLAMP((state->game.heart_rate_bpm - 50.0f) / 80.0f, 0.0f, 1.0f)));
 
-				state->game.heart_rate_velocity      -= state->game.heart_rate_current_value * 640.0f * SECONDS_PER_UPDATE;
-				state->game.heart_rate_velocity      *= 0.5f;
-				state->game.heart_rate_current_value += state->game.heart_rate_velocity * SECONDS_PER_UPDATE;
+			if (state->game.heart_rate_beat_keytime >= 1.0f)
+			{
+				Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.heartbeats[state->game.heartbeat_sfx_index], 0);
 
-				state->game.heart_rate_update_keytime += SECONDS_PER_UPDATE / 0.05f;
-				if (state->game.heart_rate_update_keytime >= 1.0f)
-				{
-					state->game.heart_rate_update_keytime                        = 0.0f;
-					state->game.heart_rate_values[state->game.heart_rate_index]  = state->game.heart_rate_current_value;
-					state->game.heart_rate_index                                 = (state->game.heart_rate_index + 1) % ARRAY_CAPACITY(state->game.heart_rate_values);
-				}
+				state->game.heart_rate_beat_keytime  = 0.0f;
+				state->game.heart_rate_velocity      = 64.0f;
+				state->game.heartbeat_sfx_index      = (state->game.heartbeat_sfx_index + 1) % ARRAY_CAPACITY(state->game.audio.heartbeats);
+			}
+
+			state->game.heart_rate_velocity      -= state->game.heart_rate_current_value * 640.0f * SECONDS_PER_UPDATE;
+			state->game.heart_rate_velocity      *= 0.5f;
+			state->game.heart_rate_current_value += state->game.heart_rate_velocity * SECONDS_PER_UPDATE;
+
+			state->game.heart_rate_update_keytime += SECONDS_PER_UPDATE / 0.05f;
+			if (state->game.heart_rate_update_keytime >= 1.0f)
+			{
+				state->game.heart_rate_update_keytime                        = 0.0f;
+				state->game.heart_rate_values[state->game.heart_rate_index]  = state->game.heart_rate_current_value;
+				state->game.heart_rate_index                                 = (state->game.heart_rate_index + 1) % ARRAY_CAPACITY(state->game.heart_rate_values);
 			}
 		} break;
 
 		case StateContext::end:
 		{
-			aliasing end = state->end;
-
-			end.entering_keytime = CLAMP(end.entering_keytime + SECONDS_PER_UPDATE / 1.0f, 0.0f, 1.0f);
-
-			if (end.entering_keytime == 1.0f)
+			if (state->end.is_exiting)
 			{
-				if (PRESSED(Input::space))
+				state->end.exiting_keytime += SECONDS_PER_UPDATE / 1.0f;
+				if (state->end.exiting_keytime >= 1.0f)
 				{
-					//boot_down_state(state);
-					//state->context    = StateContext::title_menu;
-					//state->title_menu = {};
-					//boot_up_state(platform->renderer, state);
+					return UpdateCode::terminate;
+				}
+			}
+			else
+			{
+				state->end.entering_keytime = CLAMP(state->end.entering_keytime + SECONDS_PER_UPDATE / 2.0f, 0.0f, 1.0f);
+
+				if (state->end.entering_keytime == 1.0f)
+				{
+					if (PRESSED(Input::space))
+					{
+						Mix_PlayChannel(+AudioChannel::r2, state->end.audio.shooting, 0);
+						state->end.is_exiting = true;
+					}
 				}
 			}
 		} break;
@@ -3330,14 +3337,7 @@ extern "C" PROTOTYPE_RENDER(render)
 				}
 			}
 
-			if (state->game.is_exiting)
-			{
-				blackout = state->game.exiting_keytime;
-			}
-			else
-			{
-				blackout = 1.0f - state->game.entering_keytime;
-			}
+			blackout = 1.0f - state->game.entering_keytime;
 
 			SDL_SetRenderTarget(platform->renderer, 0);
 			render_texture(platform->renderer, state->game.texture.screen, { 0.0f, 0.0f }, vxx(WIN_DIM));
@@ -3381,10 +3381,17 @@ extern "C" PROTOTYPE_RENDER(render)
 
 		case StateContext::end:
 		{
-			set_color(platform->renderer, { 0.1f, 0.05f, 0.05f, 1.0f });
+			set_color(platform->renderer, { 0.2f, 0.05f, 0.05f, 1.0f });
 			SDL_RenderClear(platform->renderer);
 
-			blackout = 1.0f - state->end.entering_keytime;
+			if (state->end.is_exiting)
+			{
+				blackout = 1.0f;
+			}
+			else
+			{
+				blackout = 1.0f - state->end.entering_keytime;
+			}
 		};
 	}
 
