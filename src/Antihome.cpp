@@ -1,6 +1,5 @@
 /* @TODO@
 	- Thursday 2022-5-19:
-		- Text for inventory.
 		- Anomaly: Serpent.
 			- Multiple sprites in a row chasing player.
 			- Constant hissing sound.
@@ -339,6 +338,16 @@ struct State
 		{
 			struct
 			{
+				Animated fire;
+			} animated;
+
+			Mipmap animateds[sizeof(animated) / sizeof(Animated)];
+		};
+
+		union
+		{
+			struct
+			{
 				Mipmap wall;
 				Mipmap floor;
 				Mipmap ceiling;
@@ -358,6 +367,7 @@ struct State
 				Img circuit_breaker;
 				Img wall_left_arrow;
 				Img wall_right_arrow;
+				Img fire;
 				Img default_items[ItemType::ITEM_COUNT];
 				Img papers[ARRAY_CAPACITY(PAPER_DATA)];
 			} img;
@@ -952,6 +962,8 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 
 		case StateContext::game:
 		{
+			state->game.animated.fire = init_animated(DATA_DIR "fire.png", { 10, 6 }, 60.0f);
+
 			state->game.mipmap.wall    = init_mipmap(DATA_DIR "room/wall.png");
 			state->game.mipmap.floor   = init_mipmap(DATA_DIR "room/floor.png");
 			state->game.mipmap.ceiling = init_mipmap(DATA_DIR "room/ceiling.png");
@@ -963,6 +975,7 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 			state->game.img.circuit_breaker  = init_img(renderer, DATA_DIR "overlays/circuit_breaker.png");
 			state->game.img.wall_left_arrow  = init_img(renderer, DATA_DIR "overlays/streak_left_0.png");
 			state->game.img.wall_right_arrow = init_img(renderer, DATA_DIR "overlays/streak_right_0.png");
+			state->game.img.fire             = init_img(renderer, DATA_DIR "fire.png");
 
 			FOR_ELEMS(it, ITEM_DATA)
 			{
@@ -2367,12 +2380,18 @@ extern "C" PROTOTYPE_UPDATE(update)
 			state->game.monster_position.x  = mod(state->game.monster_position.x, MAP_DIM * WALL_SPACING);
 			state->game.monster_position.y  = mod(state->game.monster_position.y, MAP_DIM * WALL_SPACING);
 			state->game.monster_position.z  = cosf(state->time * 3.0f) * 0.15f + WALL_HEIGHT / 2.0f;
-			state->game.monster_normal      = normalize(dampen(state->game.monster_normal, normalize(ray_to_closest(state->game.lucia_position.xy, state->game.monster_position.xy)), 1.0f, SECONDS_PER_UPDATE));
+			state->game.monster_normal      = normalize(dampen(state->game.monster_normal, normalize(ray_to_closest(state->game.monster_position.xy, state->game.lucia_position.xy)), 8.0f, SECONDS_PER_UPDATE));
 
 			DEBUG_once // @TEMP@
 			{
 				//state->game.lucia_position.xy = get_position_of_wall_side(state->game.circuit_breaker_wall_side, 1.0f);
 				state->game.lucia_position.xy = get_position_of_wall_side(state->game.door_wall_side, 1.0f);
+			}
+
+			if (HOLDING(Input::up))
+			{
+				state->game.animated.fire.current_index += 1;
+				state->game.animated.fire.current_index %= state->game.animated.fire.frame_count;
 			}
 
 			state->game.hand_on_state     = HandOnState::null;
@@ -2523,6 +2542,8 @@ extern "C" PROTOTYPE_UPDATE(update)
 				state->game.hud.status.battery_display_keytime = max(0.0f, state->game.hud.status.battery_display_keytime - SECONDS_PER_UPDATE / 0.25f);
 				state->game.hud.status.battery_level_keytime   = dampen(state->game.hud.status.battery_level_keytime, 0.0f, 8.0f, SECONDS_PER_UPDATE);
 			}
+
+			age_animated(&state->game.animated.fire, SECONDS_PER_UPDATE);
 		} break;
 
 		case StateContext::end:
@@ -2748,8 +2769,8 @@ extern "C" PROTOTYPE_RENDER(render)
 
 			FOR_RANGE(x, VIEW_RES.x)
 			{
-				#define PROFILE false
-				#if PROFILE
+				#define PROFILING true
+				#if PROFILING
 				constexpr i32           DEBUG_SCANS       = 10'000;
 				persist   u64           DEBUG_ACCUMULATOR = 0;
 				persist   i32           DEBUG_COUNTER     = 0;
@@ -2980,7 +3001,12 @@ extern "C" PROTOTYPE_RENDER(render)
 
 				struct RenderScanNode
 				{
-					Img*            img;
+					bool32          is_img;
+					union
+					{
+						Img*        img;
+						Animated*   animated;
+					};
 					vf2             normal;
 					f32             distance;
 					f32             portion;
@@ -2993,7 +3019,7 @@ extern "C" PROTOTYPE_RENDER(render)
 				RenderScanNode* render_scan_node = 0;
 
 				lambda scan =
-					[&](Img* img, vf3 position, vf2 normal, vf2 dimensions)
+					[&](bool32 is_img, void* ptr, vf3 position, vf2 normal, vf2 dimensions)
 					{
 						vf2 step             = vf2 { ray_horizontal.x < 0.0f ? -1.0f : 1.0f, ray_horizontal.y < 0.0f ? -1.0f : 1.0f } * MAP_DIM * WALL_SPACING;
 						vf2 t_max            =
@@ -3029,7 +3055,15 @@ extern "C" PROTOTYPE_RENDER(render)
 								}
 
 								RenderScanNode* new_node = memory_arena_allocate<RenderScanNode>(&state->transient_arena);
-								new_node->img        = img;
+								new_node->is_img     = is_img;
+								if (new_node->is_img)
+								{
+									new_node->img = reinterpret_cast<Img*>(ptr);
+								}
+								else
+								{
+									new_node->animated = reinterpret_cast<Animated*>(ptr);
+								}
 								new_node->normal     = normal;
 								new_node->distance   = distance;
 								new_node->portion    = portion;
@@ -3053,16 +3087,19 @@ extern "C" PROTOTYPE_RENDER(render)
 						}
 					};
 
-				scan(&state->game.img.monster, state->game.monster_position, state->game.monster_normal, { 1.0f, 1.0f });
+				scan(false, &state->game.animated.fire, { 16.0f, 24.0f, WALL_HEIGHT / 2.0f }, { 1.0f, 0.0f }, { 1.0f, 1.0f });
+
+				// @TEMP@
+				scan(true, &state->game.img.monster, state->game.monster_position, state->game.monster_normal, { 1.0f, 1.0f });
 
 				if (state->game.hand_on_state != HandOnState::null)
 				{
-					scan(&state->game.img.hand, state->game.hand_position, normalize(ray_to_closest(state->game.hand_position.xy, state->game.lucia_position.xy)), { 0.05f, 0.05f });
+					scan(true, &state->game.img.hand, state->game.hand_position, normalize(ray_to_closest(state->game.hand_position.xy, state->game.lucia_position.xy)), { 0.05f, 0.05f });
 				}
 
 				FOR_ELEMS(item, state->game.item_buffer, state->game.item_count)
 				{
-					scan(&state->game.img.default_items[+item->type - +ItemType::ITEM_START], item->position, item->normal, { 0.25f, 0.25f });
+					scan(true, &state->game.img.default_items[+item->type - +ItemType::ITEM_START], item->position, item->normal, { 0.25f, 0.25f });
 				}
 
 				vf4* scan_line = memory_arena_allocate_zero<vf4>(&state->transient_arena, VIEW_RES.y);
@@ -3072,7 +3109,10 @@ extern "C" PROTOTYPE_RENDER(render)
 					FOR_RANGE(y, CLAMP(node->starting_y, 0, VIEW_RES.y), CLAMP(node->ending_y, 0, VIEW_RES.y))
 					{
 						vf3 ray          = normalize({ ray_horizontal.x, ray_horizontal.y, (y - VIEW_RES.y / 2.0f) * state->game.lucia_fov / HORT_TO_VERT_K });
-						vf4 sprite_pixel = img_color_at(node->img, { node->portion, (static_cast<f32>(y) - node->starting_y) / (node->ending_y - node->starting_y) });
+						vf4 sprite_pixel =
+							node->is_img
+								? img_color_at(node->img, { node->portion, (static_cast<f32>(y) - node->starting_y) / (node->ending_y - node->starting_y) })
+								: sample_at(node->animated, { node->portion, (static_cast<f32>(y) - node->starting_y) / (node->ending_y - node->starting_y) });
 
 						if (IN_RANGE(state->game.lucia_position.z + ray.z * node->distance, 0.0f, WALL_HEIGHT))
 						{
@@ -3398,14 +3438,13 @@ extern "C" PROTOTYPE_RENDER(render)
 				FC_ALIGN_LEFT,
 				1.0f,
 				{ 1.0f, 1.0f, 1.0f, 1.0f },
-				"%.2f %.2f\n%.2f %.2f\n%.2f %.2f\n%.2f %.2f\n%i\n%i\n%.2f",
+				"%.2f %.2f\n%.2f %.2f\n%.2f %.2f\n%.2f %.2f\n%i\n%i",
 				state->game.lucia_position.x, state->game.lucia_position.y,
 				state->game.door_wall_side.coordinates.x * WALL_SPACING, state->game.door_wall_side.coordinates.y * WALL_SPACING,
 				state->game.circuit_breaker_wall_side.coordinates.x * WALL_SPACING, state->game.circuit_breaker_wall_side.coordinates.y * WALL_SPACING,
 				state->game.hud.cursor.x, state->game.hud.cursor.y,
 				state->game.hud.circuit_breaker.active_voltage,
-				state->game.hud.circuit_breaker.goal_voltage,
-				state->game.hud.status.battery_display_keytime
+				state->game.animated.fire.current_index
 			);
 		} break;
 

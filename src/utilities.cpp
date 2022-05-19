@@ -52,6 +52,16 @@ struct Img
 	SDL_Texture* texture;
 };
 
+struct Animated
+{
+	vi2  sprite_dim;
+	u32* data;
+	i32  frame_count;
+	i32  current_index;
+	f32  age_hertz;
+	f32  age_keytime;
+};
+
 struct RGB
 {
 	u8 r;
@@ -185,6 +195,64 @@ internal Img init_img(SDL_Renderer* renderer, strlit file_path)
 	ASSERT(img.texture);
 
 	return img;
+}
+
+internal Animated init_animated(strlit file_path, vi2 sheet_dim, f32 age_hertz)
+{
+	vi2  stbdim;
+	u32* stbimg = reinterpret_cast<u32*>(stbi_load(file_path, &stbdim.x, &stbdim.y, 0, STBI_rgb_alpha));
+	DEFER { stbi_image_free(stbimg); };
+	ASSERT(stbimg);
+
+	Animated animated;
+	animated.sprite_dim    = { stbdim.x / sheet_dim.x, stbdim.y / sheet_dim.y };
+	animated.data          = reinterpret_cast<u32*>(malloc(stbdim.x * stbdim.y * sizeof(u32)));
+	animated.frame_count   = sheet_dim.x * sheet_dim.y;
+	animated.current_index = 0;
+	animated.age_hertz     = age_hertz;
+	animated.age_keytime   = 0.0f;
+
+	FOR_RANGE(i, sheet_dim.x * sheet_dim.y)
+	{
+		FOR_RANGE(x, animated.sprite_dim.x)
+		{
+			FOR_RANGE(y, animated.sprite_dim.y)
+			{
+				animated.data[i * animated.sprite_dim.x * animated.sprite_dim.y + x * animated.sprite_dim.y + y] = stbimg[(i / sheet_dim.x * animated.sprite_dim.y + y) * stbdim.x + (i % sheet_dim.x * animated.sprite_dim.x + x)];
+			}
+		}
+	}
+
+	return animated;
+}
+
+internal void deinit_animated(Animated* animated)
+{
+	free(animated->data);
+}
+
+internal vf4 sample_at(Animated* animated, vf2 uv)
+{
+	ASSERT(0.0f <= uv.x && uv.x <= 1.0f);
+	ASSERT(0.0f <= uv.y && uv.y <= 1.0f);
+	u32 pixel = animated->data[animated->current_index * animated->sprite_dim.x * animated->sprite_dim.y + static_cast<i32>(uv.x * (animated->sprite_dim.x - 1.0f)) * animated->sprite_dim.y + static_cast<i32>(uv.y * (animated->sprite_dim.y - 1.0f))];
+	return
+		{
+			static_cast<f32>(pixel >>  0 & 0xFF) / 0xFF,
+			static_cast<f32>(pixel >>  8 & 0xFF) / 0xFF,
+			static_cast<f32>(pixel >> 16 & 0xFF) / 0xFF,
+			static_cast<f32>(pixel >> 24 & 0xFF) / 0xFF
+		};
+}
+
+internal void age_animated(Animated* animated, f32 delta_time)
+{
+	animated->age_keytime += delta_time * animated->age_hertz;
+	if (animated->age_keytime >= 1.0f)
+	{
+		animated->current_index  = (animated->current_index + static_cast<i32>(animated->age_keytime)) % animated->frame_count;
+		animated->age_keytime    -= static_cast<i32>(animated->age_keytime);
+	}
 }
 
 internal void deinit_img(Img* img)
