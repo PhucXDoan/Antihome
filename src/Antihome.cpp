@@ -1,10 +1,9 @@
 /* @TODO@
-	- Tuesday 2022-5-17:
+	- Wednesday 2022-5-18:
 		- Breaker mechanic.
-		- Better randomization of items, doors, breakers, and RNG system.
 		- Text for inventory.
 
-	- Wednesday 2022-5-18:
+	- Thursday 2022-5-19:
 		- Anomaly: Serpent.
 			- Multiple sprites in a row chasing player.
 			- Constant hissing sound.
@@ -12,8 +11,6 @@
 			- Glows.
 			- Moves rigidly.
 			- Flapping noises when moving.
-
-	- Thursday 2022-5-19:
 
 	- Friday 2022-5-20:
 
@@ -81,7 +78,14 @@ global constexpr i32 INVENTORY_DIM                  = 30;
 global constexpr i32 INVENTORY_PADDING              = 5;
 global constexpr f32 CREEPY_SOUND_MIN_TIME          = 15.0f;
 global constexpr f32 CREEPY_SOUND_MAX_TIME          = 90.0f;
-global constexpr vi2 CIRCUIT_BREAKER_HUD_DIMENSIONS = { 125, 100 };
+
+global constexpr vi2 CIRCUIT_BREAKER_SWITCH_GRID       = { 4, 2 };
+global constexpr vf2 CIRCUIT_BREAKER_HUD_DIMENSIONS    = { 200.0f, 115.0f };
+global constexpr vf2 CIRCUIT_BREAKER_VOLTAGE_DISPLAY_DIMENSIONS        = { CIRCUIT_BREAKER_HUD_DIMENSIONS.x * 0.1f, CIRCUIT_BREAKER_HUD_DIMENSIONS.y * 0.75f };
+global constexpr vf2 CIRCUIT_BREAKER_VOLTAGE_DISPLAY_COORDINATES       = { VIEW_RES.x * 0.75f, VIEW_RES.y / 2.0f + CIRCUIT_BREAKER_VOLTAGE_DISPLAY_DIMENSIONS.y / 2.0f };
+global constexpr vf2 CIRCUIT_BREAKER_SWITCH_DIMENSIONS = { 30.0f, CIRCUIT_BREAKER_HUD_DIMENSIONS.y / CIRCUIT_BREAKER_SWITCH_GRID.y - 20.0f };
+global constexpr vf2 CIRCUIT_BREAKER_SWITCH_PADDINGS   = { (CIRCUIT_BREAKER_VOLTAGE_DISPLAY_COORDINATES.x - (VIEW_RES.x - CIRCUIT_BREAKER_HUD_DIMENSIONS.x) / 2.0f - CIRCUIT_BREAKER_SWITCH_DIMENSIONS.x * CIRCUIT_BREAKER_SWITCH_GRID.x) / (1.0f + CIRCUIT_BREAKER_SWITCH_GRID.x), 20.0f };
+global constexpr vf2 CIRCUIT_BREAKER_HUD_POSITION      = (VIEW_RES - CIRCUIT_BREAKER_HUD_DIMENSIONS) / 2.0f;
 
 enum_loose (AudioChannel, i8)
 {
@@ -263,6 +267,12 @@ enum struct HudType : u8
 	circuit_breaker
 };
 
+struct BreakerSwitch
+{
+	bool32 active;
+	i32    voltage;
+};
+
 struct State
 {
 	MemoryArena  long_term_arena;
@@ -362,6 +372,8 @@ struct State
 				SDL_Texture* lucia_hit;
 				SDL_Texture* lucia_normal;
 				SDL_Texture* lucia_wounded;
+				SDL_Texture* circuit_breaker_switches[2];
+				SDL_Texture* circuit_breaker_panel;
 			} texture;
 
 			SDL_Texture* textures[sizeof(texture) / sizeof(SDL_Texture*)];
@@ -458,6 +470,17 @@ struct State
 
 			struct
 			{
+				union
+				{
+					BreakerSwitch switches[CIRCUIT_BREAKER_SWITCH_GRID.y][CIRCUIT_BREAKER_SWITCH_GRID.x];
+					BreakerSwitch flat_switches[sizeof(switches) / sizeof(BreakerSwitch)];
+				};
+
+				i32 max_voltage;
+				i32 goal_voltage;
+				i32 active_voltage;
+				f32 interpolated_voltage_velocity;
+				f32 interpolated_voltage;
 			} circuit_breaker;
 		} hud;
 
@@ -907,13 +930,16 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 				*it = init_img(renderer, PAPER_DATA[it_index].file_path);
 			}
 
-			state->game.texture.screen        = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET   , SCREEN_RES.x, SCREEN_RES.y);
-			state->game.texture.view          = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_STREAMING, VIEW_RES.x  , VIEW_RES.y  );
-			state->game.texture.lucia_haunted = IMG_LoadTexture(renderer, DATA_DIR "hud/lucia_haunted.png");
-			state->game.texture.lucia_healed  = IMG_LoadTexture(renderer, DATA_DIR "hud/lucia_healed.png");
-			state->game.texture.lucia_hit     = IMG_LoadTexture(renderer, DATA_DIR "hud/lucia_hit.png");
-			state->game.texture.lucia_normal  = IMG_LoadTexture(renderer, DATA_DIR "hud/lucia_normal.png");
-			state->game.texture.lucia_wounded = IMG_LoadTexture(renderer, DATA_DIR "hud/lucia_wounded.png");
+			state->game.texture.screen                          = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET   , SCREEN_RES.x, SCREEN_RES.y);
+			state->game.texture.view                            = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_STREAMING, VIEW_RES.x  , VIEW_RES.y  );
+			state->game.texture.lucia_haunted                   = IMG_LoadTexture(renderer, DATA_DIR "hud/lucia_haunted.png");
+			state->game.texture.lucia_healed                    = IMG_LoadTexture(renderer, DATA_DIR "hud/lucia_healed.png");
+			state->game.texture.lucia_hit                       = IMG_LoadTexture(renderer, DATA_DIR "hud/lucia_hit.png");
+			state->game.texture.lucia_normal                    = IMG_LoadTexture(renderer, DATA_DIR "hud/lucia_normal.png");
+			state->game.texture.lucia_wounded                   = IMG_LoadTexture(renderer, DATA_DIR "hud/lucia_wounded.png");
+			state->game.texture.circuit_breaker_switches[false] = IMG_LoadTexture(renderer, DATA_DIR "hud/circuit_breaker_switch_off.png");
+			state->game.texture.circuit_breaker_switches[true ] = IMG_LoadTexture(renderer, DATA_DIR "hud/circuit_breaker_switch_on.png");
+			state->game.texture.circuit_breaker_panel           = IMG_LoadTexture(renderer, DATA_DIR "hud/circuit_breaker_panel.png");
 
 			state->game.audio.drone         = Mix_LoadWAV(DATA_DIR "audio/drone.wav");
 			state->game.audio.drone_low     = Mix_LoadWAV(DATA_DIR "audio/drone_low.wav");
@@ -1357,6 +1383,28 @@ extern "C" PROTOTYPE_UPDATE(update)
 									create_item(static_cast<ItemType>(+ItemType::ITEM_START + i));
 								}
 
+								FOR_ELEMS(it, state->game.hud.circuit_breaker.flat_switches)
+								{
+									it->voltage                                  = 1 + rng(&state->seed, 0, 8);
+									state->game.hud.circuit_breaker.max_voltage += it->voltage;
+								}
+
+								for (i32 i = 0; i < ARRAY_CAPACITY(state->game.hud.circuit_breaker.flat_switches) / 2;)
+								{
+									i32 index = rng(&state->seed, 0, ARRAY_CAPACITY(state->game.hud.circuit_breaker.flat_switches));
+									if (!state->game.hud.circuit_breaker.flat_switches[index].active)
+									{
+										state->game.hud.circuit_breaker.flat_switches[index].active  = true;
+										state->game.hud.circuit_breaker.goal_voltage                += state->game.hud.circuit_breaker.flat_switches[index].voltage;
+										i += 1;
+									}
+								}
+
+								FOR_ELEMS(it, state->game.hud.circuit_breaker.flat_switches)
+								{
+									it->active = false;
+								}
+
 								return UpdateCode::resume;
 							}
 						} break;
@@ -1782,6 +1830,51 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 					case HudType::circuit_breaker:
 					{
+						if (PRESSED(Input::left_mouse))
+						{
+							if (in_rect(state->game.hud.cursor, (VIEW_RES - CIRCUIT_BREAKER_HUD_DIMENSIONS) / 2.0f, CIRCUIT_BREAKER_HUD_DIMENSIONS))
+							{
+								vi2 breaker_switch_position =
+									vxx(vf2 {
+										roundf((state->game.hud.cursor.x - (VIEW_RES.x - CIRCUIT_BREAKER_HUD_DIMENSIONS.x + CIRCUIT_BREAKER_SWITCH_DIMENSIONS.x) / 2.0f - CIRCUIT_BREAKER_SWITCH_PADDINGS.x       ) / (CIRCUIT_BREAKER_SWITCH_DIMENSIONS.x + CIRCUIT_BREAKER_SWITCH_PADDINGS.x)),
+										roundf((state->game.hud.cursor.y - (VIEW_RES.y - CIRCUIT_BREAKER_HUD_DIMENSIONS.y + CIRCUIT_BREAKER_SWITCH_DIMENSIONS.y) / 2.0f - CIRCUIT_BREAKER_SWITCH_PADDINGS.y / 2.0f) / (CIRCUIT_BREAKER_SWITCH_DIMENSIONS.y + CIRCUIT_BREAKER_SWITCH_PADDINGS.y))
+									});
+
+								if
+								(
+									IN_RANGE(breaker_switch_position.x, 0, ARRAY_CAPACITY(state->game.hud.circuit_breaker.switches[0])) &&
+									IN_RANGE(breaker_switch_position.y, 0, ARRAY_CAPACITY(state->game.hud.circuit_breaker.switches   )) &&
+									in_rect
+									(
+										state->game.hud.cursor,
+										(VIEW_RES - CIRCUIT_BREAKER_HUD_DIMENSIONS) / 2.0f
+											+ vf2
+											{
+												(CIRCUIT_BREAKER_SWITCH_DIMENSIONS.x + CIRCUIT_BREAKER_SWITCH_PADDINGS.x) * breaker_switch_position.x + CIRCUIT_BREAKER_SWITCH_PADDINGS.x,
+												(CIRCUIT_BREAKER_SWITCH_DIMENSIONS.y + CIRCUIT_BREAKER_SWITCH_PADDINGS.y) * breaker_switch_position.y + CIRCUIT_BREAKER_SWITCH_PADDINGS.y / 2.0f
+											},
+										CIRCUIT_BREAKER_SWITCH_DIMENSIONS
+									)
+								)
+								{
+									aliasing breaker_switch = state->game.hud.circuit_breaker.switches[breaker_switch_position.y][breaker_switch_position.x];
+									if (breaker_switch.active)
+									{
+										breaker_switch.active                           = false;
+										state->game.hud.circuit_breaker.active_voltage -= breaker_switch.voltage;
+									}
+									else
+									{
+										breaker_switch.active                           = true;
+										state->game.hud.circuit_breaker.active_voltage += breaker_switch.voltage;
+									}
+								}
+							}
+							else
+							{
+								state->game.hud.type = HudType::null;
+							}
+						}
 					} break;
 
 					default:
@@ -1855,18 +1948,32 @@ extern "C" PROTOTYPE_UPDATE(update)
 					} break;
 				}
 
+				state->game.hud.circuit_breaker.interpolated_voltage_velocity += (state->game.hud.circuit_breaker.active_voltage - state->game.hud.circuit_breaker.interpolated_voltage) * 16.0f;
+				state->game.hud.circuit_breaker.interpolated_voltage_velocity *= 0.5f;
+				state->game.hud.circuit_breaker.interpolated_voltage          += state->game.hud.circuit_breaker.interpolated_voltage_velocity * SECONDS_PER_UPDATE;
+
+				if (state->game.hud.circuit_breaker.interpolated_voltage < 0.0f)
+				{
+					state->game.hud.circuit_breaker.interpolated_voltage          = 0.0f;
+					state->game.hud.circuit_breaker.interpolated_voltage_velocity = 0.0f;
+				}
+
 				state->game.lucia_angle_velocity *= 0.4f;
 				state->game.lucia_angle           = mod(state->game.lucia_angle + state->game.lucia_angle_velocity * SECONDS_PER_UPDATE, TAU);
 
 				vf2 wasd = { 0.0f, 0.0f };
-				if (HOLDING(Input::s)) { wasd.x -= 1.0f; }
-				if (HOLDING(Input::w)) { wasd.x += 1.0f; }
-				if (HOLDING(Input::d)) { wasd.y -= 1.0f; }
-				if (HOLDING(Input::a)) { wasd.y += 1.0f; }
-				if (+wasd)
+
+				if (state->game.hud.type != HudType::circuit_breaker)
 				{
-					constexpr f32 MIN_PORTION = 0.7f;
-					state->game.lucia_velocity += rotate(normalize(wasd), state->game.lucia_angle) * 2.0f * ((1.0f - powf(1.0f - state->game.lucia_stamina, 8) + MIN_PORTION) / (1.0f + MIN_PORTION));
+					if (HOLDING(Input::s)) { wasd.x -= 1.0f; }
+					if (HOLDING(Input::w)) { wasd.x += 1.0f; }
+					if (HOLDING(Input::d)) { wasd.y -= 1.0f; }
+					if (HOLDING(Input::a)) { wasd.y += 1.0f; }
+					if (+wasd)
+					{
+						constexpr f32 MIN_PORTION = 0.7f;
+						state->game.lucia_velocity += rotate(normalize(wasd), state->game.lucia_angle) * 2.0f * ((1.0f - powf(1.0f - state->game.lucia_stamina, 8) + MIN_PORTION) / (1.0f + MIN_PORTION));
+					}
 				}
 
 				if (+wasd && HOLDING(Input::shift) && !state->game.lucia_out_of_breath)
@@ -3022,8 +3129,60 @@ extern "C" PROTOTYPE_RENDER(render)
 
 				case HudType::circuit_breaker:
 				{
-					set_color(platform->renderer, monochrome(0.2f));
-					render_filled_rect(platform->renderer, (VIEW_RES - CIRCUIT_BREAKER_HUD_DIMENSIONS) / 2.0f, vxx(CIRCUIT_BREAKER_HUD_DIMENSIONS));
+					//render_texture
+					//(
+					//	platform->renderer,
+					//	state->game.texture.circuit_breaker_panel,
+					//	CIRCUIT_BREAKER_HUD_POSITION,
+					//	CIRCUIT_BREAKER_HUD_DIMENSIONS
+					//);
+					set_color(platform->renderer, monochrome(0.45f));
+					render_filled_rect(platform->renderer, CIRCUIT_BREAKER_HUD_POSITION, CIRCUIT_BREAKER_HUD_DIMENSIONS);
+
+					FOR_RANGE(y, ARRAY_CAPACITY(state->game.hud.circuit_breaker.switches))
+					{
+						FOR_RANGE(x, ARRAY_CAPACITY(state->game.hud.circuit_breaker.switches[0]))
+						{
+							render_texture
+							(
+								platform->renderer,
+								state->game.texture.circuit_breaker_switches[state->game.hud.circuit_breaker.switches[y][x].active],
+								CIRCUIT_BREAKER_HUD_POSITION
+								+ vf2
+									{
+										x * (CIRCUIT_BREAKER_SWITCH_DIMENSIONS.x + CIRCUIT_BREAKER_SWITCH_PADDINGS.x) + CIRCUIT_BREAKER_SWITCH_PADDINGS.x,
+										CIRCUIT_BREAKER_HUD_DIMENSIONS.y - (y + 1) * (CIRCUIT_BREAKER_SWITCH_DIMENSIONS.y + CIRCUIT_BREAKER_SWITCH_PADDINGS.y) + CIRCUIT_BREAKER_SWITCH_PADDINGS.y / 2.0f
+									},
+								CIRCUIT_BREAKER_SWITCH_DIMENSIONS
+							);
+						}
+					}
+
+					FOR_RANGE(i, static_cast<i32>(CIRCUIT_BREAKER_VOLTAGE_DISPLAY_DIMENSIONS.y))
+					{
+						if (static_cast<f32>(i) / CIRCUIT_BREAKER_VOLTAGE_DISPLAY_DIMENSIONS.y < state->game.hud.circuit_breaker.interpolated_voltage / state->game.hud.circuit_breaker.max_voltage)
+						{
+							f32 portion = (state->game.hud.circuit_breaker.interpolated_voltage + static_cast<f32>(i) / CIRCUIT_BREAKER_VOLTAGE_DISPLAY_DIMENSIONS.y * state->game.hud.circuit_breaker.max_voltage) / 2.0f;
+							set_color
+							(
+								platform->renderer,
+								{
+									CLAMP(fabsf((state->game.hud.circuit_breaker.goal_voltage - portion) / state->game.hud.circuit_breaker.goal_voltage), 0.0f, 1.0f),
+									1.0f - CLAMP(fabsf((state->game.hud.circuit_breaker.goal_voltage - portion) / state->game.hud.circuit_breaker.goal_voltage), 0.0f, 1.0f),
+									0.0f,
+									1.0f
+								}
+							);
+						}
+						else
+						{
+							set_color(platform->renderer, monochrome(0.2f));
+						}
+						render_line(platform->renderer, CIRCUIT_BREAKER_VOLTAGE_DISPLAY_COORDINATES + vf2 { 0.0f, -static_cast<f32>(i) }, CIRCUIT_BREAKER_VOLTAGE_DISPLAY_COORDINATES + vf2 { CIRCUIT_BREAKER_VOLTAGE_DISPLAY_DIMENSIONS.x, -static_cast<f32>(i) });
+					}
+
+					set_color(platform->renderer, monochrome(0.9f));
+					render_filled_rect(platform->renderer, CIRCUIT_BREAKER_VOLTAGE_DISPLAY_COORDINATES + vf2 { 0.0f, -CIRCUIT_BREAKER_VOLTAGE_DISPLAY_DIMENSIONS.y * state->game.hud.circuit_breaker.goal_voltage / state->game.hud.circuit_breaker.max_voltage } - vf2 { 4.0f, 2.0f }, { 8.0f, 4.0f });
 				} break;
 			}
 
@@ -3147,11 +3306,14 @@ extern "C" PROTOTYPE_RENDER(render)
 				FC_ALIGN_LEFT,
 				1.0f,
 				{ 1.0f, 1.0f, 1.0f, 1.0f },
-				"%.2f %.2f\n%.2f %.2f\n%.2f %.2f\n%.2f %.2f",
+				"%.2f %.2f\n%.2f %.2f\n%.2f %.2f\n%.2f %.2f\n%i\n%i\n%.2f",
 				state->game.lucia_position.x, state->game.lucia_position.y,
 				state->game.door_wall_side.coordinates.x * WALL_SPACING, state->game.door_wall_side.coordinates.y * WALL_SPACING,
 				state->game.circuit_breaker_wall_side.coordinates.x * WALL_SPACING, state->game.circuit_breaker_wall_side.coordinates.y * WALL_SPACING,
-				state->game.hud.cursor.x, state->game.hud.cursor.y
+				state->game.hud.cursor.x, state->game.hud.cursor.y,
+				state->game.hud.circuit_breaker.active_voltage,
+				state->game.hud.circuit_breaker.goal_voltage,
+				state->game.hud.circuit_breaker.interpolated_voltage
 			);
 		} break;
 
