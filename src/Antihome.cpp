@@ -1,9 +1,6 @@
 /* @TODO@
-	- Wednesday 2022-5-18:
-		- Breaker mechanic.
-		- Text for inventory.
-
 	- Thursday 2022-5-19:
+		- Text for inventory.
 		- Anomaly: Serpent.
 			- Multiple sprites in a row chasing player.
 			- Constant hissing sound.
@@ -273,6 +270,13 @@ struct BreakerSwitch
 	i32    voltage;
 };
 
+enum struct GameGoal : u8
+{
+	find_door,
+	fix_power,
+	escape
+};
+
 struct State
 {
 	MemoryArena  long_term_arena;
@@ -392,6 +396,12 @@ struct State
 				Mix_Chunk* pick_up_paper;
 				Mix_Chunk* pick_up_heavy;
 				Mix_Chunk* switch_toggle;
+				Mix_Chunk* circuit_breaker_switch;
+				Mix_Chunk* door_budge;
+				Mix_Chunk* door_enter;
+				Mix_Chunk* panel_open;
+				Mix_Chunk* panel_close;
+				Mix_Chunk* generator;
 				Mix_Chunk* walk_steps   [ARRAY_CAPACITY(WALK_STEP_WAV_FILE_PATHS)];
 				Mix_Chunk* run_steps    [ARRAY_CAPACITY(RUN_STEP_WAV_FILE_PATHS)];
 				Mix_Chunk* creepy_sounds[ARRAY_CAPACITY(CREEPY_SOUND_WAV_FILE_PATHS)];
@@ -399,6 +409,8 @@ struct State
 
 			Mix_Chunk* audios[sizeof(audio) / sizeof(Mix_Chunk*)];
 		};
+
+		GameGoal             goal;
 
 		f32                  entering_keytime;
 		bool32               is_exiting;
@@ -419,7 +431,6 @@ struct State
 		WallSide             door_wall_side;
 		WallSide             circuit_breaker_wall_side;
 		f32                  creepy_sound_countdown;
-		bool32               blacked_out;
 		f32                  ceiling_lights_keytime;
 
 		vf2                  lucia_velocity;
@@ -517,6 +528,20 @@ internal const WallVoxelData* get_wall_voxel_data(WallVoxel voxel)
 
 	ASSERT(false);
 	return 0;
+}
+
+internal vf2 get_normal_of_wall_side(WallSide wall_side)
+{
+	// @TODO@ Get rid of this.
+	const WallVoxelData* data = get_wall_voxel_data(wall_side.voxel);
+	return wall_side.is_antinormal ? -data->normal : data->normal;
+}
+
+internal vf2 get_position_of_wall_side(WallSide wall_side, f32 normal_length = 1.0f)
+{
+	// @TODO@ Get rid of this.
+	const WallVoxelData* data = get_wall_voxel_data(wall_side.voxel);
+	return (wall_side.coordinates + (data->start + data->end) / 2.0f) * WALL_SPACING + data->normal * (wall_side.is_antinormal ? -1.0f : 1.0f) * normal_length;
 }
 
 internal Img* get_corresponding_item_img(State* state, Item* item)
@@ -941,15 +966,21 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 			state->game.texture.circuit_breaker_switches[true ] = IMG_LoadTexture(renderer, DATA_DIR "hud/circuit_breaker_switch_on.png");
 			state->game.texture.circuit_breaker_panel           = IMG_LoadTexture(renderer, DATA_DIR "hud/circuit_breaker_panel.png");
 
-			state->game.audio.drone         = Mix_LoadWAV(DATA_DIR "audio/drone.wav");
-			state->game.audio.drone_low     = Mix_LoadWAV(DATA_DIR "audio/drone_low.wav");
-			state->game.audio.drone_off     = Mix_LoadWAV(DATA_DIR "audio/drone_off.wav");
-			state->game.audio.drone_on      = Mix_LoadWAV(DATA_DIR "audio/drone_on.wav");
-			state->game.audio.blackout      = Mix_LoadWAV(DATA_DIR "audio/blackout.wav");
-			state->game.audio.eletronical   = Mix_LoadWAV(DATA_DIR "audio/eletronical.wav");
-			state->game.audio.switch_toggle = Mix_LoadWAV(DATA_DIR "audio/switch_toggle.wav");
-			state->game.audio.pick_up_paper = Mix_LoadWAV(DATA_DIR "audio/pick_up_paper.wav");
-			state->game.audio.pick_up_heavy = Mix_LoadWAV(DATA_DIR "audio/pick_up_heavy.wav");
+			state->game.audio.drone                  = Mix_LoadWAV(DATA_DIR "audio/drone.wav");
+			state->game.audio.drone_low              = Mix_LoadWAV(DATA_DIR "audio/drone_low.wav");
+			state->game.audio.drone_off              = Mix_LoadWAV(DATA_DIR "audio/drone_off.wav");
+			state->game.audio.drone_on               = Mix_LoadWAV(DATA_DIR "audio/drone_on.wav");
+			state->game.audio.blackout               = Mix_LoadWAV(DATA_DIR "audio/blackout.wav");
+			state->game.audio.eletronical            = Mix_LoadWAV(DATA_DIR "audio/eletronical.wav");
+			state->game.audio.pick_up_paper          = Mix_LoadWAV(DATA_DIR "audio/pick_up_paper.wav");
+			state->game.audio.pick_up_heavy          = Mix_LoadWAV(DATA_DIR "audio/pick_up_heavy.wav");
+			state->game.audio.switch_toggle          = Mix_LoadWAV(DATA_DIR "audio/switch_toggle.wav");
+			state->game.audio.circuit_breaker_switch = Mix_LoadWAV(DATA_DIR "audio/lever_flip.wav");
+			state->game.audio.door_budge             = Mix_LoadWAV(DATA_DIR "audio/door_budge.wav");
+			state->game.audio.door_enter             = Mix_LoadWAV(DATA_DIR "audio/door_enter.wav");
+			state->game.audio.panel_open             = Mix_LoadWAV(DATA_DIR "audio/panel_open.wav");
+			state->game.audio.panel_close            = Mix_LoadWAV(DATA_DIR "audio/panel_close.wav");
+			state->game.audio.generator              = Mix_LoadWAV(DATA_DIR "audio/generator.wav");
 
 			FOR_ELEMS(it, state->game.audio.walk_steps)
 			{
@@ -978,6 +1009,9 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 
 			Mix_VolumeChunk(state->game.audio.drone_low, 0);
 			Mix_PlayChannel(+AudioChannel::r1, state->game.audio.drone_low, -1);
+
+			Mix_VolumeChunk(state->game.audio.generator, 0);
+			Mix_PlayChannel(+AudioChannel::r2, state->game.audio.generator, -1);
 		} break;
 	}
 }
@@ -1385,7 +1419,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 								FOR_ELEMS(it, state->game.hud.circuit_breaker.flat_switches)
 								{
-									it->voltage                                  = 1 + rng(&state->seed, 0, 8);
+									it->voltage                                  = 1 + rng(&state->seed, 0, 6);
 									state->game.hud.circuit_breaker.max_voltage += it->voltage;
 								}
 
@@ -1400,10 +1434,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 									}
 								}
 
-								FOR_ELEMS(it, state->game.hud.circuit_breaker.flat_switches)
-								{
-									it->active = false;
-								}
+								state->game.hud.circuit_breaker.active_voltage = state->game.hud.circuit_breaker.goal_voltage;
 
 								return UpdateCode::resume;
 							}
@@ -1510,17 +1541,10 @@ extern "C" PROTOTYPE_UPDATE(update)
 				Mix_VolumeChunk(state->game.audio.drone    , static_cast<i32>(MIX_MAX_VOLUME *         state->game.ceiling_lights_keytime ));
 				Mix_VolumeChunk(state->game.audio.drone_low, static_cast<i32>(MIX_MAX_VOLUME * (1.0f - state->game.ceiling_lights_keytime)));
 
-				state->game.entering_keytime = CLAMP(state->game.entering_keytime + SECONDS_PER_UPDATE / 1.0f, 0.0f, 1.0f);
+				f32 circuit_breaker_volume = 2.0f / (norm(ray_to_closest(state->game.lucia_position.xy, get_position_of_wall_side(state->game.circuit_breaker_wall_side, 0.25f))) + 0.25f);
+				Mix_VolumeChunk(state->game.audio.generator, static_cast<i32>(MIX_MAX_VOLUME * CLAMP(circuit_breaker_volume, 0.0f, 1.0f)));
 
-				if (state->game.blacked_out)
-				{
-					state->game.creepy_sound_countdown -= SECONDS_PER_UPDATE;
-					if (state->game.creepy_sound_countdown <= 0.0f)
-					{
-						Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.creepy_sounds[rng(&state->seed, 0, ARRAY_CAPACITY(state->game.audio.creepy_sounds))], 0);
-						state->game.creepy_sound_countdown = rng(&state->seed, CREEPY_SOUND_MIN_TIME, CREEPY_SOUND_MAX_TIME);
-					}
-				}
+				state->game.entering_keytime = CLAMP(state->game.entering_keytime + SECONDS_PER_UPDATE / 1.0f, 0.0f, 1.0f);
 
 				if (PRESSED(Input::tab))
 				{
@@ -1530,13 +1554,14 @@ extern "C" PROTOTYPE_UPDATE(update)
 					}
 					else
 					{
-						if (state->game.hud.type == HudType::null)
+						if (state->game.hud.type == HudType::circuit_breaker)
 						{
-							state->game.hud.inventory.selected_item = 0;
-							state->game.hud.inventory.grabbing      = false;
+							Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.panel_close, 0);
 						}
 
-						state->game.hud.type = HudType::inventory;
+						state->game.hud.type                    = HudType::inventory;
+						state->game.hud.inventory.selected_item = 0;
+						state->game.hud.inventory.grabbing      = false;
 					}
 				}
 
@@ -1834,44 +1859,56 @@ extern "C" PROTOTYPE_UPDATE(update)
 						{
 							if (in_rect(state->game.hud.cursor, (VIEW_RES - CIRCUIT_BREAKER_HUD_DIMENSIONS) / 2.0f, CIRCUIT_BREAKER_HUD_DIMENSIONS))
 							{
-								vi2 breaker_switch_position =
-									vxx(vf2 {
-										roundf((state->game.hud.cursor.x - (VIEW_RES.x - CIRCUIT_BREAKER_HUD_DIMENSIONS.x + CIRCUIT_BREAKER_SWITCH_DIMENSIONS.x) / 2.0f - CIRCUIT_BREAKER_SWITCH_PADDINGS.x       ) / (CIRCUIT_BREAKER_SWITCH_DIMENSIONS.x + CIRCUIT_BREAKER_SWITCH_PADDINGS.x)),
-										roundf((state->game.hud.cursor.y - (VIEW_RES.y - CIRCUIT_BREAKER_HUD_DIMENSIONS.y + CIRCUIT_BREAKER_SWITCH_DIMENSIONS.y) / 2.0f - CIRCUIT_BREAKER_SWITCH_PADDINGS.y / 2.0f) / (CIRCUIT_BREAKER_SWITCH_DIMENSIONS.y + CIRCUIT_BREAKER_SWITCH_PADDINGS.y))
-									});
-
-								if
-								(
-									IN_RANGE(breaker_switch_position.x, 0, ARRAY_CAPACITY(state->game.hud.circuit_breaker.switches[0])) &&
-									IN_RANGE(breaker_switch_position.y, 0, ARRAY_CAPACITY(state->game.hud.circuit_breaker.switches   )) &&
-									in_rect
-									(
-										state->game.hud.cursor,
-										(VIEW_RES - CIRCUIT_BREAKER_HUD_DIMENSIONS) / 2.0f
-											+ vf2
-											{
-												(CIRCUIT_BREAKER_SWITCH_DIMENSIONS.x + CIRCUIT_BREAKER_SWITCH_PADDINGS.x) * breaker_switch_position.x + CIRCUIT_BREAKER_SWITCH_PADDINGS.x,
-												(CIRCUIT_BREAKER_SWITCH_DIMENSIONS.y + CIRCUIT_BREAKER_SWITCH_PADDINGS.y) * breaker_switch_position.y + CIRCUIT_BREAKER_SWITCH_PADDINGS.y / 2.0f
-											},
-										CIRCUIT_BREAKER_SWITCH_DIMENSIONS
-									)
-								)
+								if (state->game.hud.circuit_breaker.active_voltage != state->game.hud.circuit_breaker.goal_voltage)
 								{
-									aliasing breaker_switch = state->game.hud.circuit_breaker.switches[breaker_switch_position.y][breaker_switch_position.x];
-									if (breaker_switch.active)
+									vi2 breaker_switch_position =
+										vxx(vf2 {
+											roundf((state->game.hud.cursor.x - (VIEW_RES.x - CIRCUIT_BREAKER_HUD_DIMENSIONS.x + CIRCUIT_BREAKER_SWITCH_DIMENSIONS.x) / 2.0f - CIRCUIT_BREAKER_SWITCH_PADDINGS.x       ) / (CIRCUIT_BREAKER_SWITCH_DIMENSIONS.x + CIRCUIT_BREAKER_SWITCH_PADDINGS.x)),
+											roundf((state->game.hud.cursor.y - (VIEW_RES.y - CIRCUIT_BREAKER_HUD_DIMENSIONS.y + CIRCUIT_BREAKER_SWITCH_DIMENSIONS.y) / 2.0f - CIRCUIT_BREAKER_SWITCH_PADDINGS.y / 2.0f) / (CIRCUIT_BREAKER_SWITCH_DIMENSIONS.y + CIRCUIT_BREAKER_SWITCH_PADDINGS.y))
+										});
+
+									if
+									(
+										IN_RANGE(breaker_switch_position.x, 0, ARRAY_CAPACITY(state->game.hud.circuit_breaker.switches[0])) &&
+										IN_RANGE(breaker_switch_position.y, 0, ARRAY_CAPACITY(state->game.hud.circuit_breaker.switches   )) &&
+										in_rect
+										(
+											state->game.hud.cursor,
+											(VIEW_RES - CIRCUIT_BREAKER_HUD_DIMENSIONS) / 2.0f
+												+ vf2
+												{
+													(CIRCUIT_BREAKER_SWITCH_DIMENSIONS.x + CIRCUIT_BREAKER_SWITCH_PADDINGS.x) * breaker_switch_position.x + CIRCUIT_BREAKER_SWITCH_PADDINGS.x,
+													(CIRCUIT_BREAKER_SWITCH_DIMENSIONS.y + CIRCUIT_BREAKER_SWITCH_PADDINGS.y) * breaker_switch_position.y + CIRCUIT_BREAKER_SWITCH_PADDINGS.y / 2.0f
+												},
+											CIRCUIT_BREAKER_SWITCH_DIMENSIONS
+										)
+									)
 									{
-										breaker_switch.active                           = false;
-										state->game.hud.circuit_breaker.active_voltage -= breaker_switch.voltage;
-									}
-									else
-									{
-										breaker_switch.active                           = true;
-										state->game.hud.circuit_breaker.active_voltage += breaker_switch.voltage;
+										Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.circuit_breaker_switch, 0);
+
+										aliasing breaker_switch = state->game.hud.circuit_breaker.switches[breaker_switch_position.y][breaker_switch_position.x];
+										if (breaker_switch.active)
+										{
+											breaker_switch.active                           = false;
+											state->game.hud.circuit_breaker.active_voltage -= breaker_switch.voltage;
+										}
+										else
+										{
+											breaker_switch.active                           = true;
+											state->game.hud.circuit_breaker.active_voltage += breaker_switch.voltage;
+										}
+
+										if (state->game.hud.circuit_breaker.active_voltage == state->game.hud.circuit_breaker.goal_voltage)
+										{
+											Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.drone_on, 0);
+											state->game.goal = GameGoal::escape;
+										}
 									}
 								}
 							}
 							else
 							{
+								Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.panel_close, 0);
 								state->game.hud.type = HudType::null;
 							}
 						}
@@ -1890,11 +1927,26 @@ extern "C" PROTOTYPE_UPDATE(update)
 							{
 								case HandOnState::door:
 								{
-									state->game.is_exiting = true;
+									if (state->game.goal == GameGoal::escape)
+									{
+										Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.door_enter, 0);
+										state->game.is_exiting = true;
+									}
+									else
+									{
+										Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.door_budge, 0);
+
+										state->game.notification_message =
+											rng(&state->seed) < 0.1f
+												? "\"Door's jammed, damn it! Wait, is it electrically powered? Weird gameplay.\""
+												: "\"I need to find a way to turn the power back on.\"";
+										state->game.notification_keytime = 1.0f;
+									}
 								} break;
 
 								case HandOnState::circuit_breaker:
 								{
+									Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.panel_open, 0);
 									state->game.hud.type = HudType::circuit_breaker;
 								} break;
 
@@ -1946,16 +1998,6 @@ extern "C" PROTOTYPE_UPDATE(update)
 							}
 						}
 					} break;
-				}
-
-				state->game.hud.circuit_breaker.interpolated_voltage_velocity += (state->game.hud.circuit_breaker.active_voltage - state->game.hud.circuit_breaker.interpolated_voltage) * 16.0f;
-				state->game.hud.circuit_breaker.interpolated_voltage_velocity *= 0.5f;
-				state->game.hud.circuit_breaker.interpolated_voltage          += state->game.hud.circuit_breaker.interpolated_voltage_velocity * SECONDS_PER_UPDATE;
-
-				if (state->game.hud.circuit_breaker.interpolated_voltage < 0.0f)
-				{
-					state->game.hud.circuit_breaker.interpolated_voltage          = 0.0f;
-					state->game.hud.circuit_breaker.interpolated_voltage_velocity = 0.0f;
 				}
 
 				state->game.lucia_angle_velocity *= 0.4f;
@@ -2044,6 +2086,55 @@ extern "C" PROTOTYPE_UPDATE(update)
 				}
 
 				state->game.lucia_head_bob_keytime = mod(state->game.lucia_head_bob_keytime + 0.001f + 0.35f * norm(state->game.lucia_velocity) * SECONDS_PER_UPDATE, 1.0f);
+
+				switch (state->game.goal)
+				{
+					case GameGoal::find_door:
+					{
+						state->game.ceiling_lights_keytime = CLAMP(state->game.ceiling_lights_keytime + SECONDS_PER_UPDATE / 2.0f, 0.0f, 1.0f);
+
+						vf2 door_position = get_position_of_wall_side(state->game.door_wall_side);
+						if (norm(ray_to_closest(state->game.lucia_position.xy, door_position)) < 4.0f && exists_clear_way(state, state->game.lucia_position.xy, door_position))
+						{
+							Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.drone_off, 0);
+							Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.blackout, 0);
+							state->game.goal = GameGoal::fix_power;
+
+							FOR_ELEMS(it, state->game.hud.circuit_breaker.flat_switches)
+							{
+								it->active = false;
+							}
+							state->game.hud.circuit_breaker.active_voltage = 0;
+						}
+					} break;
+
+					case GameGoal::fix_power:
+					{
+						state->game.creepy_sound_countdown -= SECONDS_PER_UPDATE;
+						if (state->game.creepy_sound_countdown <= 0.0f)
+						{
+							Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.creepy_sounds[rng(&state->seed, 0, ARRAY_CAPACITY(state->game.audio.creepy_sounds))], 0);
+							state->game.creepy_sound_countdown = rng(&state->seed, CREEPY_SOUND_MIN_TIME, CREEPY_SOUND_MAX_TIME);
+						}
+
+						state->game.ceiling_lights_keytime = CLAMP(state->game.ceiling_lights_keytime - SECONDS_PER_UPDATE / 1.0f, 0.0f, 1.0f);
+					} break;
+
+					case GameGoal::escape:
+					{
+						state->game.ceiling_lights_keytime = CLAMP(state->game.ceiling_lights_keytime + SECONDS_PER_UPDATE / 2.0f, 0.0f, 1.0f);
+					} break;
+				}
+
+				state->game.hud.circuit_breaker.interpolated_voltage_velocity += (state->game.hud.circuit_breaker.active_voltage - state->game.hud.circuit_breaker.interpolated_voltage) * 16.0f;
+				state->game.hud.circuit_breaker.interpolated_voltage_velocity *= 0.5f;
+				state->game.hud.circuit_breaker.interpolated_voltage          += state->game.hud.circuit_breaker.interpolated_voltage_velocity * SECONDS_PER_UPDATE;
+
+				if (state->game.hud.circuit_breaker.interpolated_voltage < 0.0f)
+				{
+					state->game.hud.circuit_breaker.interpolated_voltage          = 0.0f;
+					state->game.hud.circuit_breaker.interpolated_voltage_velocity = 0.0f;
+				}
 
 				vi2 current_lucia_coordinates = get_closest_open_path_coordinates(state, state->game.lucia_position.xy);
 				if
@@ -2281,9 +2372,9 @@ extern "C" PROTOTYPE_UPDATE(update)
 				state->game.hand_on_state     = HandOnState::null;
 				state->game.hand_hovered_item = 0;
 
-				DEBUG_once
+				DEBUG_once // @TEMP@
 				{
-					state->game.lucia_position.xy = (state->game.circuit_breaker_wall_side.coordinates + vf2 { -1.5f, 0.5f }) * WALL_SPACING;
+					state->game.lucia_position.xy = state->game.circuit_breaker_wall_side.coordinates * WALL_SPACING;
 				}
 
 				vf3 hand_reach_position = { NAN, NAN };
@@ -2291,33 +2382,25 @@ extern "C" PROTOTYPE_UPDATE(update)
 				if (state->game.hud.type == HudType::null)
 				{
 					{
-						// @TODO@ Get rid of this.
-						const WallVoxelData* data = get_wall_voxel_data(state->game.door_wall_side.voxel);
-
-						vf2 door_position = (state->game.door_wall_side.coordinates + (data->start + data->end) / 2.0f) * WALL_SPACING;
+						vf2 door_position = get_position_of_wall_side(state->game.door_wall_side, 0.25f);
 						vf2 ray_to_door   = ray_to_closest(state->game.lucia_position.xy, door_position);
-						vf2 normal        = data->normal * (state->game.door_wall_side.is_antinormal ? -1.0f : 1.0f);
 
-						if (dot(ray_to_door, normal) < 0.0f && norm_sq(ray_to_door) < 4.0f)
+						if (norm(ray_to_door) < 2.0f && exists_clear_way(state, state->game.lucia_position.xy, door_position))
 						{
 							state->game.hand_on_state = HandOnState::door;
-							hand_reach_position       = vx3(door_position + normal * 0.25f, WALL_HEIGHT / 2.0f);
+							hand_reach_position       = vx3(door_position, WALL_HEIGHT / 2.0f);
 						}
 					}
 
 					if (state->game.hand_on_state == HandOnState::null)
 					{
-						// @TODO@ Get rid of this.
-						const WallVoxelData* data = get_wall_voxel_data(state->game.circuit_breaker_wall_side.voxel);
-
-						vf2 circuit_breaker_position = (state->game.circuit_breaker_wall_side.coordinates + (data->start + data->end) / 2.0f) * WALL_SPACING;
+						vf2 circuit_breaker_position = get_position_of_wall_side(state->game.circuit_breaker_wall_side, 0.25f);
 						vf2 ray_to_circuit_breaker   = ray_to_closest(state->game.lucia_position.xy, circuit_breaker_position);
-						vf2 normal                   = data->normal * (state->game.circuit_breaker_wall_side.is_antinormal ? -1.0f : 1.0f);
 
-						if (dot(ray_to_circuit_breaker, normal) < 0.0f && norm_sq(ray_to_circuit_breaker) < 4.0f)
+						if (norm(ray_to_circuit_breaker) < 2.0f && exists_clear_way(state, state->game.lucia_position.xy, circuit_breaker_position))
 						{
 							state->game.hand_on_state = HandOnState::circuit_breaker;
-							hand_reach_position       = vx3(circuit_breaker_position + normal * 0.25f, WALL_HEIGHT / 2.0f);
+							hand_reach_position       = vx3(circuit_breaker_position, WALL_HEIGHT / 2.0f);
 						}
 					}
 
@@ -2411,30 +2494,6 @@ extern "C" PROTOTYPE_UPDATE(update)
 					state->game.heart_rate_update_keytime                        = 0.0f;
 					state->game.heart_rate_values[state->game.heart_rate_index]  = state->game.heart_rate_current_value;
 					state->game.heart_rate_index                                 = (state->game.heart_rate_index + 1) % ARRAY_CAPACITY(state->game.heart_rate_values);
-				}
-
-				if (PRESSED(Input::left)) // @TEMP@
-				{
-					state->game.blacked_out = !state->game.blacked_out;
-
-					if (state->game.blacked_out)
-					{
-						Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.drone_off, 0);
-						Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.blackout, 0);
-					}
-					else
-					{
-						Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.drone_on, 0);
-					}
-				}
-
-				if (state->game.blacked_out)
-				{
-					state->game.ceiling_lights_keytime = CLAMP(state->game.ceiling_lights_keytime - SECONDS_PER_UPDATE / 1.0f, 0.0f, 1.0f);
-				}
-				else
-				{
-					state->game.ceiling_lights_keytime = CLAMP(state->game.ceiling_lights_keytime + SECONDS_PER_UPDATE / 2.0f, 0.0f, 1.0f);
 				}
 			}
 		} break;
@@ -2785,13 +2844,13 @@ extern "C" PROTOTYPE_RENDER(render)
 						{
 							overlay_img           = &state->game.img.door;
 							overlay_uv_position   = { 0.5f - SLASH_SPAN / 2.0f, 0.0f };
-							overlay_uv_dimensions = { SLASH_SPAN, 1.0f };
+							overlay_uv_dimensions = { SLASH_SPAN, 0.85f };
 						}
 						else
 						{
 							overlay_img           = &state->game.img.door;
 							overlay_uv_position   = { 0.5f - ALIGNED_SPAN / 2.0f, 0.0f };
-							overlay_uv_dimensions = { ALIGNED_SPAN, 1.0f };
+							overlay_uv_dimensions = { ALIGNED_SPAN, 0.85f };
 						}
 					}
 					else if (wall_coordinates == state->game.circuit_breaker_wall_side.coordinates && wall_voxel == state->game.circuit_breaker_wall_side.voxel && dot(ray_horizontal, wall_normal) * (state->game.circuit_breaker_wall_side.is_antinormal ? -1.0f : 1.0f) < 0.0f)
@@ -3129,15 +3188,13 @@ extern "C" PROTOTYPE_RENDER(render)
 
 				case HudType::circuit_breaker:
 				{
-					//render_texture
-					//(
-					//	platform->renderer,
-					//	state->game.texture.circuit_breaker_panel,
-					//	CIRCUIT_BREAKER_HUD_POSITION,
-					//	CIRCUIT_BREAKER_HUD_DIMENSIONS
-					//);
-					set_color(platform->renderer, monochrome(0.45f));
-					render_filled_rect(platform->renderer, CIRCUIT_BREAKER_HUD_POSITION, CIRCUIT_BREAKER_HUD_DIMENSIONS);
+					render_texture
+					(
+						platform->renderer,
+						state->game.texture.circuit_breaker_panel,
+						CIRCUIT_BREAKER_HUD_POSITION,
+						CIRCUIT_BREAKER_HUD_DIMENSIONS
+					);
 
 					FOR_RANGE(y, ARRAY_CAPACITY(state->game.hud.circuit_breaker.switches))
 					{
@@ -3182,7 +3239,12 @@ extern "C" PROTOTYPE_RENDER(render)
 					}
 
 					set_color(platform->renderer, monochrome(0.9f));
-					render_filled_rect(platform->renderer, CIRCUIT_BREAKER_VOLTAGE_DISPLAY_COORDINATES + vf2 { 0.0f, -CIRCUIT_BREAKER_VOLTAGE_DISPLAY_DIMENSIONS.y * state->game.hud.circuit_breaker.goal_voltage / state->game.hud.circuit_breaker.max_voltage } - vf2 { 4.0f, 2.0f }, { 8.0f, 4.0f });
+					render_filled_rect
+					(
+						platform->renderer,
+						CIRCUIT_BREAKER_VOLTAGE_DISPLAY_COORDINATES + vf2 { 0.0f, -CIRCUIT_BREAKER_VOLTAGE_DISPLAY_DIMENSIONS.y * state->game.hud.circuit_breaker.goal_voltage / state->game.hud.circuit_breaker.max_voltage } - vf2 { 4.0f, 1.0f },
+						{ 8.0f, 2.0f }
+					);
 				} break;
 			}
 
