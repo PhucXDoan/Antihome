@@ -458,6 +458,12 @@ struct State
 
 		struct
 		{
+			struct
+			{
+				f32 battery_display_keytime;
+				f32 battery_level_keytime;
+			} status;
+
 			vf2     cursor_velocity;
 			vf2     cursor;
 			HudType type;
@@ -1373,7 +1379,6 @@ extern "C" PROTOTYPE_UPDATE(update)
 								state->game.lucia_stamina     = 1.0f;
 
 								state->game.creepy_sound_countdown = rng(&state->seed, CREEPY_SOUND_MIN_TIME, CREEPY_SOUND_MAX_TIME);
-
 
 								state->game.monster_position.xy = rng_open_position(state);
 
@@ -2358,14 +2363,11 @@ extern "C" PROTOTYPE_UPDATE(update)
 				}
 			}
 
-			state->game.monster_position.xy += state->game.monster_velocity * SECONDS_PER_UPDATE;
-			state->game.monster_position.x   = mod(state->game.monster_position.x, MAP_DIM * WALL_SPACING);
-			state->game.monster_position.y   = mod(state->game.monster_position.y, MAP_DIM * WALL_SPACING);
-			state->game.monster_position.z   = cosf(state->time * 3.0f) * 0.15f + WALL_HEIGHT / 2.0f;
-			state->game.monster_normal       = normalize(dampen(state->game.monster_normal, normalize(ray_to_closest(state->game.lucia_position.xy, state->game.monster_position.xy)), 1.0f, SECONDS_PER_UPDATE));
-
-			state->game.hand_on_state     = HandOnState::null;
-			state->game.hand_hovered_item = 0;
+			state->game.monster_position.xy = move(state, state->game.monster_position.xy, state->game.monster_velocity * SECONDS_PER_UPDATE);
+			state->game.monster_position.x  = mod(state->game.monster_position.x, MAP_DIM * WALL_SPACING);
+			state->game.monster_position.y  = mod(state->game.monster_position.y, MAP_DIM * WALL_SPACING);
+			state->game.monster_position.z  = cosf(state->time * 3.0f) * 0.15f + WALL_HEIGHT / 2.0f;
+			state->game.monster_normal      = normalize(dampen(state->game.monster_normal, normalize(ray_to_closest(state->game.lucia_position.xy, state->game.monster_position.xy)), 1.0f, SECONDS_PER_UPDATE));
 
 			DEBUG_once // @TEMP@
 			{
@@ -2373,58 +2375,71 @@ extern "C" PROTOTYPE_UPDATE(update)
 				state->game.lucia_position.xy = get_position_of_wall_side(state->game.door_wall_side, 1.0f);
 			}
 
+			state->game.hand_on_state     = HandOnState::null;
+			state->game.hand_hovered_item = 0;
+
 			vf3 hand_reach_position = { NAN, NAN };
 
 			if (state->game.hud.type == HudType::null)
 			{
+				lambda hand_on_heuristic =
+					[&](vf2 position)
+					{
+						if (!exists_clear_way(state, state->game.lucia_position.xy, position))
+						{
+							return 0.0f;
+						}
+
+						vf2 ray      = ray_to_closest(state->game.lucia_position.xy, position);
+						f32 distance = norm(ray);
+
+						if (distance > 1.5f)
+						{
+							return 0.0f;
+						}
+
+						f32 dot_prod = dot(ray / distance, polar(state->game.lucia_angle));
+						if (dot_prod < 0.9f)
+						{
+							return 0.0f;
+						}
+
+						return 1.0f / (distance + 0.5f) + square(dot_prod) * 2.0f;
+					};
+
+				f32 best_heuristic = 0.0f;
+
 				{
 					vf2 door_position = get_position_of_wall_side(state->game.door_wall_side, 0.25f);
-					vf2 ray_to_door   = ray_to_closest(state->game.lucia_position.xy, door_position);
-
-					if (norm(ray_to_door) < 2.0f && exists_clear_way(state, state->game.lucia_position.xy, door_position))
+					f32 heuristic     = hand_on_heuristic(door_position);
+					if (best_heuristic < heuristic)
 					{
+						best_heuristic            = heuristic;
 						state->game.hand_on_state = HandOnState::door;
 						hand_reach_position       = vx3(door_position, WALL_HEIGHT / 2.0f);
 					}
 				}
 
-				if (state->game.hand_on_state == HandOnState::null)
 				{
 					vf2 circuit_breaker_position = get_position_of_wall_side(state->game.circuit_breaker_wall_side, 0.25f);
-					vf2 ray_to_circuit_breaker   = ray_to_closest(state->game.lucia_position.xy, circuit_breaker_position);
-
-					if (norm(ray_to_circuit_breaker) < 2.0f && exists_clear_way(state, state->game.lucia_position.xy, circuit_breaker_position))
+					f32 heuristic     = hand_on_heuristic(circuit_breaker_position);
+					if (best_heuristic < heuristic)
 					{
+						best_heuristic            = heuristic;
 						state->game.hand_on_state = HandOnState::circuit_breaker;
 						hand_reach_position       = vx3(circuit_breaker_position, WALL_HEIGHT / 2.0f);
 					}
 				}
 
-				if (state->game.hand_on_state == HandOnState::null)
+				FOR_ELEMS(it, state->game.item_buffer, state->game.item_count)
 				{
-					f32 best_heuristic = 0.0f;
-					FOR_ELEMS(item, state->game.item_buffer, state->game.item_count)
+					f32 heuristic = hand_on_heuristic(it->position.xy);
+					if (best_heuristic < heuristic)
 					{
-						if (exists_clear_way(state, state->game.lucia_position.xy, item->position.xy))
-						{
-							vf2 ray      = ray_to_closest(state->game.lucia_position.xy, item->position.xy);
-							f32 distance = norm(ray);
-							if (distance < 1.5f)
-							{
-								f32 heuristic = 1.0f / (distance + 0.5f) + square(CLAMP(dot(ray / distance, polar(state->game.lucia_angle)), 0.0f, 1.0f));
-								if (best_heuristic <= heuristic)
-								{
-									best_heuristic                = heuristic;
-									state->game.hand_hovered_item = item;
-								}
-							}
-						}
-					}
-
-					if (state->game.hand_hovered_item)
-					{
-						state->game.hand_on_state = HandOnState::item;
-						hand_reach_position       = state->game.hand_hovered_item->position;
+						best_heuristic                = heuristic;
+						state->game.hand_on_state     = HandOnState::item;
+						state->game.hand_hovered_item = it;
+						hand_reach_position           = it->position;
 					}
 				}
 			}
@@ -2446,6 +2461,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 					if (state->game.holding.flashlight == state->game.holding.flashlight)
 					{
+						Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.switch_toggle, 0);
 						state->game.notification_message = "\"The flashlight died.\"";
 						state->game.notification_keytime = 1.0f;
 					}
@@ -2495,6 +2511,17 @@ extern "C" PROTOTYPE_UPDATE(update)
 				state->game.heart_rate_update_keytime                        = 0.0f;
 				state->game.heart_rate_values[state->game.heart_rate_index]  = state->game.heart_rate_current_value;
 				state->game.heart_rate_index                                 = (state->game.heart_rate_index + 1) % ARRAY_CAPACITY(state->game.heart_rate_values);
+			}
+
+			if (state->game.holding.flashlight)
+			{
+				state->game.hud.status.battery_display_keytime = min(1.0f, state->game.hud.status.battery_display_keytime + SECONDS_PER_UPDATE / 0.25f);
+				state->game.hud.status.battery_level_keytime   = dampen(state->game.hud.status.battery_level_keytime, state->game.holding.flashlight->flashlight.power, 8.0f, SECONDS_PER_UPDATE);
+			}
+			else
+			{
+				state->game.hud.status.battery_display_keytime = max(0.0f, state->game.hud.status.battery_display_keytime - SECONDS_PER_UPDATE / 0.25f);
+				state->game.hud.status.battery_level_keytime   = dampen(state->game.hud.status.battery_level_keytime, 0.0f, 8.0f, SECONDS_PER_UPDATE);
 			}
 		} break;
 
@@ -3272,50 +3299,53 @@ extern "C" PROTOTYPE_RENDER(render)
 				{ STATUS_HUD_HEIGHT, STATUS_HUD_HEIGHT }
 			);
 
-			constexpr f32 BATTERY_LEFT_PADDING = 15.0f;
-			constexpr vf2 BATTERY_DIMENSIONS   = { 20.0f, STATUS_HUD_HEIGHT * 0.65f };
-			constexpr vf2 NODE_DIMENSIONS      = { BATTERY_DIMENSIONS.x * 0.25f, BATTERY_DIMENSIONS.y * 0.1f };
-			constexpr f32 BATTERY_OUTLINE      = 2.0f;
-
-			set_color(platform->renderer, monochrome(0.25f));
-
-			render_filled_rect
-			(
-				platform->renderer,
-				{ BATTERY_LEFT_PADDING - BATTERY_OUTLINE, SCREEN_RES.y - (STATUS_HUD_HEIGHT + BATTERY_DIMENSIONS.y - NODE_DIMENSIONS.y) / 2.0f - BATTERY_OUTLINE },
-				BATTERY_DIMENSIONS + vx2(BATTERY_OUTLINE) * 2.0f
-			);
-
-			render_filled_rect
-			(
-				platform->renderer,
-				{ BATTERY_LEFT_PADDING + (BATTERY_DIMENSIONS.x - NODE_DIMENSIONS.x) / 2.0f, SCREEN_RES.y - (STATUS_HUD_HEIGHT + BATTERY_DIMENSIONS.y - NODE_DIMENSIONS.y) / 2.0f - BATTERY_OUTLINE - NODE_DIMENSIONS.y },
-				NODE_DIMENSIONS
-			);
-
-			constexpr vf3 BATTERY_LEVEL_COLORS[] = { { 0.7f, 0.05f, 0.04f }, { 0.7f, 0.4f, 0.03f }, { 0.4f, 0.7f, 0.04f }, { 0.04f, 0.85f, 0.04f } };
-			FOR_ELEMS(level, BATTERY_LEVEL_COLORS)
+			if (state->game.hud.status.battery_display_keytime > 0.0f)
 			{
-				set_color
+				constexpr vf2 BATTERY_DIMENSIONS   = { 20.0f, STATUS_HUD_HEIGHT * 0.65f };
+				constexpr vf2 NODE_DIMENSIONS      = { BATTERY_DIMENSIONS.x * 0.25f, BATTERY_DIMENSIONS.y * 0.1f };
+				constexpr f32 BATTERY_OUTLINE      = 2.0f;
+
+				f32 battery_x = lerp(-BATTERY_DIMENSIONS.x - BATTERY_OUTLINE, 15.0f, 1.0f - square(1.0f - state->game.hud.status.battery_display_keytime));
+
+				set_color(platform->renderer, monochrome(0.25f));
+
+				render_filled_rect
 				(
 					platform->renderer,
-					lerp
-					(
-						monochrome((level->x + level->y + level->z) / (3.0f + level_index)),
-						*level,
-						state->game.holding.flashlight
-							? CLAMP((state->game.holding.flashlight->flashlight.power - static_cast<f32>(level_index) / ARRAY_CAPACITY(BATTERY_LEVEL_COLORS)) * ARRAY_CAPACITY(BATTERY_LEVEL_COLORS), 0.0f, 1.0f)
-							: 0.0f
-					)
+					{ battery_x - BATTERY_OUTLINE, SCREEN_RES.y - (STATUS_HUD_HEIGHT + BATTERY_DIMENSIONS.y - NODE_DIMENSIONS.y) / 2.0f - BATTERY_OUTLINE },
+					BATTERY_DIMENSIONS + vx2(BATTERY_OUTLINE) * 2.0f
 				);
 
 				render_filled_rect
 				(
 					platform->renderer,
-					{ BATTERY_LEFT_PADDING, SCREEN_RES.y - (STATUS_HUD_HEIGHT + BATTERY_DIMENSIONS.y - NODE_DIMENSIONS.y) / 2.0f + BATTERY_DIMENSIONS.y * (1.0f - (1.0f + level_index) / ARRAY_CAPACITY(BATTERY_LEVEL_COLORS)) },
-					{ BATTERY_DIMENSIONS.x, BATTERY_DIMENSIONS.y / ARRAY_CAPACITY(BATTERY_LEVEL_COLORS) }
+					{ battery_x + (BATTERY_DIMENSIONS.x - NODE_DIMENSIONS.x) / 2.0f, SCREEN_RES.y - (STATUS_HUD_HEIGHT + BATTERY_DIMENSIONS.y - NODE_DIMENSIONS.y) / 2.0f - BATTERY_OUTLINE - NODE_DIMENSIONS.y },
+					NODE_DIMENSIONS
 				);
+
+				constexpr vf3 BATTERY_LEVEL_COLORS[] = { { 0.7f, 0.05f, 0.04f }, { 0.7f, 0.4f, 0.03f }, { 0.4f, 0.7f, 0.04f }, { 0.04f, 0.85f, 0.04f } };
+				FOR_ELEMS(level, BATTERY_LEVEL_COLORS)
+				{
+					set_color
+					(
+						platform->renderer,
+						lerp
+						(
+							monochrome((level->x + level->y + level->z) / (3.0f + level_index)),
+							*level,
+							CLAMP((state->game.hud.status.battery_level_keytime - static_cast<f32>(level_index) / ARRAY_CAPACITY(BATTERY_LEVEL_COLORS)) * ARRAY_CAPACITY(BATTERY_LEVEL_COLORS), 0.0f, 1.0f)
+						)
+					);
+
+					render_filled_rect
+					(
+						platform->renderer,
+						{ battery_x, SCREEN_RES.y - (STATUS_HUD_HEIGHT + BATTERY_DIMENSIONS.y - NODE_DIMENSIONS.y) / 2.0f + BATTERY_DIMENSIONS.y * (1.0f - (1.0f + level_index) / ARRAY_CAPACITY(BATTERY_LEVEL_COLORS)) },
+						{ BATTERY_DIMENSIONS.x, BATTERY_DIMENSIONS.y / ARRAY_CAPACITY(BATTERY_LEVEL_COLORS) }
+					);
+				}
 			}
+
 
 			constexpr vf2 HEART_RATE_MONITOR_DIMENSIONS  = { 50.0f, STATUS_HUD_HEIGHT * 0.6f };
 			constexpr vf2 HEART_RATE_MONITOR_COORDINATES = vf2 { SCREEN_RES.x - 15.0f - HEART_RATE_MONITOR_DIMENSIONS.x, SCREEN_RES.y - (STATUS_HUD_HEIGHT + HEART_RATE_MONITOR_DIMENSIONS.y) / 2.0f };
@@ -3375,7 +3405,7 @@ extern "C" PROTOTYPE_RENDER(render)
 				state->game.hud.cursor.x, state->game.hud.cursor.y,
 				state->game.hud.circuit_breaker.active_voltage,
 				state->game.hud.circuit_breaker.goal_voltage,
-				state->game.hud.circuit_breaker.interpolated_voltage
+				state->game.hud.status.battery_display_keytime
 			);
 		} break;
 
