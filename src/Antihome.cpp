@@ -1818,8 +1818,8 @@ extern "C" PROTOTYPE_UPDATE(update)
 						!in_rect
 						(
 							state->game.hud.cursor,
-							VIEW_RES / 2.0f + (state->game.hud.paper.delta_position - state->game.texture_sprite.papers[state->game.hud.paper.index].dim / 2.0f) * state->game.hud.paper.scalar,
-							state->game.texture_sprite.papers[state->game.hud.paper.index].dim * state->game.hud.paper.scalar
+							VIEW_RES / 2.0f + (state->game.hud.paper.delta_position - state->game.texture_sprite.papers[state->game.hud.paper.index].image.dim / 2.0f) * state->game.hud.paper.scalar,
+							state->game.texture_sprite.papers[state->game.hud.paper.index].image.dim * state->game.hud.paper.scalar
 						)
 					)
 					{
@@ -1853,8 +1853,8 @@ extern "C" PROTOTYPE_UPDATE(update)
 						constexpr f32 PAPER_MARGIN = 25.0f;
 						vf2 region =
 							vf2 {
-								(VIEW_RES.x + state->game.texture_sprite.papers[state->game.hud.paper.index].dim.x * state->game.hud.paper.scalar) / 2.0f - PAPER_MARGIN,
-								(VIEW_RES.y + state->game.texture_sprite.papers[state->game.hud.paper.index].dim.y * state->game.hud.paper.scalar) / 2.0f - PAPER_MARGIN
+								(VIEW_RES.x + state->game.texture_sprite.papers[state->game.hud.paper.index].image.dim.x * state->game.hud.paper.scalar) / 2.0f - PAPER_MARGIN,
+								(VIEW_RES.y + state->game.texture_sprite.papers[state->game.hud.paper.index].image.dim.y * state->game.hud.paper.scalar) / 2.0f - PAPER_MARGIN
 							} / state->game.hud.paper.scalar;
 
 						if (fabsf(state->game.hud.paper.delta_position.x) > region.x)
@@ -3001,12 +3001,7 @@ extern "C" PROTOTYPE_RENDER(render)
 
 				struct RenderScanNode
 				{
-					bool32          is_img;
-					union
-					{
-						Image*          img;
-						AnimatedSprite* animated_sprite;
-					};
+					Image           image;
 					vf2             normal;
 					f32             distance;
 					f32             portion;
@@ -3019,10 +3014,10 @@ extern "C" PROTOTYPE_RENDER(render)
 				RenderScanNode* render_scan_node = 0;
 
 				lambda scan =
-					[&](bool32 is_img, void* ptr, vf3 position, vf2 normal, vf2 dimensions)
+					[&](Image image, vf3 position, vf2 normal, vf2 dimensions)
 					{
-						vf2 step             = vf2 { ray_horizontal.x < 0.0f ? -1.0f : 1.0f, ray_horizontal.y < 0.0f ? -1.0f : 1.0f } * MAP_DIM * WALL_SPACING;
-						vf2 t_max            =
+						vf2 step  = vf2 { ray_horizontal.x < 0.0f ? -1.0f : 1.0f, ray_horizontal.y < 0.0f ? -1.0f : 1.0f } * MAP_DIM * WALL_SPACING;
+						vf2 t_max =
 							{
 								((ray_horizontal.x >= 0.0f ? MAP_DIM * WALL_SPACING : 0.0f) - state->game.lucia_position.x) / ray_horizontal.x,
 								((ray_horizontal.y >= 0.0f ? MAP_DIM * WALL_SPACING : 0.0f) - state->game.lucia_position.y) / ray_horizontal.y
@@ -3055,15 +3050,7 @@ extern "C" PROTOTYPE_RENDER(render)
 								}
 
 								RenderScanNode* new_node = memory_arena_allocate<RenderScanNode>(&state->transient_arena);
-								new_node->is_img     = is_img;
-								if (new_node->is_img)
-								{
-									new_node->img = reinterpret_cast<Image*>(ptr);
-								}
-								else
-								{
-									new_node->animated_sprite = reinterpret_cast<AnimatedSprite*>(ptr);
-								}
+								new_node->image      = image;
 								new_node->normal     = normal;
 								new_node->distance   = distance;
 								new_node->portion    = portion;
@@ -3088,18 +3075,18 @@ extern "C" PROTOTYPE_RENDER(render)
 					};
 
 				// @TEMP@
-				scan(false, &state->game.animated_sprite.fire, { 77.0f, 62.0f, WALL_HEIGHT / 2.0f }, { 1.0f, 0.0f }, { 1.0f, 1.0f });
+				scan(get_image_of_frame(&state->game.animated_sprite.fire), { 77.0f, 62.0f, WALL_HEIGHT / 2.0f }, { 1.0f, 0.0f }, { 1.0f, 1.0f });
 
-				scan(false, &state->game.animated_sprite.monster, state->game.monster_position, state->game.monster_normal, { 1.0f, 1.0f });
+				scan(get_image_of_frame(&state->game.animated_sprite.monster), state->game.monster_position, state->game.monster_normal, { 1.0f, 1.0f });
 
 				if (state->game.hand_on_state != HandOnState::null)
 				{
-					scan(true, &state->game.texture_sprite.hand, state->game.hand_position, normalize(ray_to_closest(state->game.hand_position.xy, state->game.lucia_position.xy)), { 0.05f, 0.05f });
+					scan(state->game.texture_sprite.hand.image, state->game.hand_position, normalize(ray_to_closest(state->game.hand_position.xy, state->game.lucia_position.xy)), { 0.05f, 0.05f });
 				}
 
 				FOR_ELEMS(item, state->game.item_buffer, state->game.item_count)
 				{
-					scan(true, &state->game.texture_sprite.default_items[+item->type - +ItemType::ITEM_START], item->position, item->normal, { 0.25f, 0.25f });
+					scan(state->game.texture_sprite.default_items[+item->type - +ItemType::ITEM_START].image, item->position, item->normal, { 0.25f, 0.25f });
 				}
 
 				vf4* scan_line = memory_arena_allocate_zero<vf4>(&state->transient_arena, VIEW_RES.y);
@@ -3109,10 +3096,7 @@ extern "C" PROTOTYPE_RENDER(render)
 					FOR_RANGE(y, CLAMP(node->starting_y, 0, VIEW_RES.y), CLAMP(node->ending_y, 0, VIEW_RES.y))
 					{
 						vf3 ray          = normalize({ ray_horizontal.x, ray_horizontal.y, (y - VIEW_RES.y / 2.0f) * state->game.lucia_fov / HORT_TO_VERT_K });
-						vf4 sprite_pixel =
-							node->is_img
-								? sample_at(node->img, { node->portion, (static_cast<f32>(y) - node->starting_y) / (node->ending_y - node->starting_y) })
-								: sample_at(node->animated_sprite, { node->portion, (static_cast<f32>(y) - node->starting_y) / (node->ending_y - node->starting_y) });
+						vf4 sprite_pixel = sample_at(&node->image, { node->portion, (static_cast<f32>(y) - node->starting_y) / (node->ending_y - node->starting_y) });
 
 						if (IN_RANGE(state->game.lucia_position.z + ray.z * node->distance, 0.0f, WALL_HEIGHT))
 						{
@@ -3255,8 +3239,8 @@ extern "C" PROTOTYPE_RENDER(render)
 					(
 						platform->renderer,
 						state->game.texture_sprite.papers[state->game.hud.paper.index].texture,
-						VIEW_RES / 2.0f + conjugate(state->game.hud.paper.delta_position) * state->game.hud.paper.scalar - state->game.texture_sprite.papers[state->game.hud.paper.index].dim * state->game.hud.paper.scalar / 2.0f,
-						state->game.texture_sprite.papers[state->game.hud.paper.index].dim * state->game.hud.paper.scalar
+						VIEW_RES / 2.0f + conjugate(state->game.hud.paper.delta_position) * state->game.hud.paper.scalar - state->game.texture_sprite.papers[state->game.hud.paper.index].image.dim * state->game.hud.paper.scalar / 2.0f,
+						state->game.texture_sprite.papers[state->game.hud.paper.index].image.dim * state->game.hud.paper.scalar
 					);
 				} break;
 

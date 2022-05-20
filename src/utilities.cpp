@@ -31,8 +31,7 @@ struct Image
 
 struct TextureSprite
 {
-	vi2          dim;
-	RGBA*        data;
+	Image        image;
 	SDL_Texture* texture;
 };
 
@@ -170,21 +169,7 @@ internal TextureSprite init_texture_sprite(SDL_Renderer* renderer, strlit file_p
 {
 	TextureSprite sprite;
 
-	u32* stbimg = reinterpret_cast<u32*>(stbi_load(file_path, &sprite.dim.x, &sprite.dim.y, 0, STBI_rgb_alpha));
-	DEFER { stbi_image_free(stbimg); };
-	ASSERT(stbimg);
-
-	sprite.data = reinterpret_cast<RGBA*>(malloc(sprite.dim.x * sprite.dim.y * sizeof(RGBA)));
-
-	FOR_RANGE(y, sprite.dim.y)
-	{
-		FOR_RANGE(x, sprite.dim.x)
-		{
-			u32 pixel = stbimg[y * sprite.dim.x + x];
-			sprite.data[x * sprite.dim.y + y] = { (pixel >> 0) & 0xFF, (pixel >> 8) & 0xFF, (pixel >> 16) & 0xFF, (pixel >> 24) & 0xFF };
-		}
-	}
-
+	sprite.image   = init_image(file_path);
 	sprite.texture = IMG_LoadTexture(renderer, file_path);
 	ASSERT(sprite.texture);
 
@@ -193,7 +178,7 @@ internal TextureSprite init_texture_sprite(SDL_Renderer* renderer, strlit file_p
 
 internal void deinit_texture_sprite(TextureSprite* sprite)
 {
-	free(sprite->data);
+	deinit_image(&sprite->image);
 	SDL_DestroyTexture(sprite->texture);
 }
 
@@ -275,6 +260,14 @@ internal void deinit_mipmap(Mipmap* mipmap)
 	free(mipmap->data);
 }
 
+internal Image get_image_of_frame(AnimatedSprite* sprite)
+{
+	Image image;
+	image.dim  = sprite->frame_dim;
+	image.data = sprite->data + sprite->current_index * sprite->frame_dim.x * sprite->frame_dim.y;
+	return image;
+}
+
 internal vf4 sample_at(Image* image, vf2 uv)
 {
 	ASSERT(0.0f <= uv.x && uv.x <= 1.0f);
@@ -283,21 +276,21 @@ internal vf4 sample_at(Image* image, vf2 uv)
 	return { rgba.r / 255.0f, rgba.g / 255.0f, rgba.b / 255.0f, rgba.a / 255.0f };
 }
 
-internal vf4 sample_at(TextureSprite* sprite, vf2 uv)
-{
-	ASSERT(0.0f <= uv.x && uv.x <= 1.0f);
-	ASSERT(0.0f <= uv.y && uv.y <= 1.0f);
-	RGBA rgba = sprite->data[static_cast<i32>(uv.x * (sprite->dim.x - 1.0f)) * sprite->dim.y + static_cast<i32>((1.0f - uv.y) * (sprite->dim.y - 1.0f))];
-	return { rgba.r / 255.0f, rgba.g / 255.0f, rgba.b / 255.0f, rgba.a / 255.0f };
-}
-
-internal vf4 sample_at(AnimatedSprite* sprite, vf2 uv)
-{
-	ASSERT(0.0f <= uv.x && uv.x <= 1.0f);
-	ASSERT(0.0f <= uv.y && uv.y <= 1.0f);
-	RGBA rgba = sprite->data[(sprite->current_index * sprite->frame_dim.x + static_cast<i32>(uv.x * (sprite->frame_dim.x - 1.0f))) * sprite->frame_dim.y + static_cast<i32>((1.0f - uv.y) * (sprite->frame_dim.y - 1.0f))];
-	return { rgba.r / 255.0f, rgba.g / 255.0f, rgba.b / 255.0f, rgba.a / 255.0f };
-}
+//internal vf4 sample_at(TextureSprite* sprite, vf2 uv)
+//{
+//	ASSERT(0.0f <= uv.x && uv.x <= 1.0f);
+//	ASSERT(0.0f <= uv.y && uv.y <= 1.0f);
+//	RGBA rgba = sprite->image.data[static_cast<i32>(uv.x * (sprite->image.dim.x - 1.0f)) * sprite->image.dim.y + static_cast<i32>((1.0f - uv.y) * (sprite->image.dim.y - 1.0f))];
+//	return { rgba.r / 255.0f, rgba.g / 255.0f, rgba.b / 255.0f, rgba.a / 255.0f };
+//}
+//
+//internal vf4 sample_at(AnimatedSprite* sprite, vf2 uv)
+//{
+//	ASSERT(0.0f <= uv.x && uv.x <= 1.0f);
+//	ASSERT(0.0f <= uv.y && uv.y <= 1.0f);
+//	RGBA rgba = sprite->data[(sprite->current_index * sprite->frame_dim.x + static_cast<i32>(uv.x * (sprite->frame_dim.x - 1.0f))) * sprite->frame_dim.y + static_cast<i32>((1.0f - uv.y) * (sprite->frame_dim.y - 1.0f))];
+//	return { rgba.r / 255.0f, rgba.g / 255.0f, rgba.b / 255.0f, rgba.a / 255.0f };
+//}
 
 internal vf3 sample_at(Mipmap* mipmap, f32 level, vf2 uv)
 {
