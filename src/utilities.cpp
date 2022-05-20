@@ -5,7 +5,6 @@
 global constexpr f32 TAU           = 6.28318530717f;
 global constexpr f32 SQRT2         = 1.41421356237f;
 global constexpr f32 INVSQRT2      = 0.70710678118f;
-global constexpr i32 MIPMAP_LEVELS = 4;
 
 struct RGBA
 {
@@ -47,6 +46,7 @@ struct AnimatedSprite
 
 struct Mipmap
 {
+	i32   level_count;
 	vi2   base_dim;
 	RGBA* data;
 };
@@ -218,27 +218,30 @@ internal void deinit_animated_sprite(AnimatedSprite* sprite)
 	free(sprite->data);
 }
 
-internal Mipmap init_mipmap(strlit file_path)
+internal Mipmap init_mipmap(strlit file_path, i32 level_count)
 {
-	Mipmap mipmap;
+	ASSERT(IN_RANGE(level_count, 1, 8));
 
-	vi2  absolute_dim;
-	u32* stbimg = reinterpret_cast<u32*>(stbi_load(file_path, &absolute_dim.x, &absolute_dim.y, 0, STBI_rgb_alpha));
+	Mipmap mipmap;
+	mipmap.level_count = level_count;
+
+	vi2  stbdim;
+	u32* stbimg = reinterpret_cast<u32*>(stbi_load(file_path, &stbdim.x, &stbdim.y, 0, STBI_rgb_alpha));
 	DEFER { stbi_image_free(stbimg); };
 	ASSERT(stbimg);
 
-	mipmap.base_dim = { absolute_dim.x * 2 / 3, absolute_dim.y };
-	mipmap.data     = reinterpret_cast<RGBA*>(malloc((mipmap.base_dim.x * mipmap.base_dim.y * 2 - mipmap.base_dim.x * mipmap.base_dim.y * 2 / (1 << MIPMAP_LEVELS)) * sizeof(RGBA)));
+	mipmap.base_dim = { stbdim.x * 2 / 3, stbdim.y };
+	mipmap.data     = reinterpret_cast<RGBA*>(malloc((mipmap.base_dim.x * mipmap.base_dim.y * 2 - mipmap.base_dim.x * mipmap.base_dim.y * 2 / (1 << level_count)) * sizeof(RGBA)));
 
 	vi2   stbimg_coordinates = { 0, 0 };
 	RGBA* mipmap_pixel       = mipmap.data;
-	FOR_RANGE(i, MIPMAP_LEVELS)
+	FOR_RANGE(i, level_count)
 	{
 		FOR_RANGE(ix, mipmap.base_dim.x / (1 << i))
 		{
 			FOR_RANGE(iy, mipmap.base_dim.y / (1 << i))
 			{
-				u32 stbimg_pixel = *(stbimg + (stbimg_coordinates.y + iy) * absolute_dim.x + stbimg_coordinates.x + ix);
+				u32 stbimg_pixel = *(stbimg + (stbimg_coordinates.y + iy) * stbdim.x + stbimg_coordinates.x + ix);
 				*mipmap_pixel++ =
 					{
 						static_cast<u8>((stbimg_pixel >>  0) & 0xFF),
@@ -276,28 +279,12 @@ internal vf4 sample_at(Image* image, vf2 uv)
 	return { rgba.r / 255.0f, rgba.g / 255.0f, rgba.b / 255.0f, rgba.a / 255.0f };
 }
 
-//internal vf4 sample_at(TextureSprite* sprite, vf2 uv)
-//{
-//	ASSERT(0.0f <= uv.x && uv.x <= 1.0f);
-//	ASSERT(0.0f <= uv.y && uv.y <= 1.0f);
-//	RGBA rgba = sprite->image.data[static_cast<i32>(uv.x * (sprite->image.dim.x - 1.0f)) * sprite->image.dim.y + static_cast<i32>((1.0f - uv.y) * (sprite->image.dim.y - 1.0f))];
-//	return { rgba.r / 255.0f, rgba.g / 255.0f, rgba.b / 255.0f, rgba.a / 255.0f };
-//}
-//
-//internal vf4 sample_at(AnimatedSprite* sprite, vf2 uv)
-//{
-//	ASSERT(0.0f <= uv.x && uv.x <= 1.0f);
-//	ASSERT(0.0f <= uv.y && uv.y <= 1.0f);
-//	RGBA rgba = sprite->data[(sprite->current_index * sprite->frame_dim.x + static_cast<i32>(uv.x * (sprite->frame_dim.x - 1.0f))) * sprite->frame_dim.y + static_cast<i32>((1.0f - uv.y) * (sprite->frame_dim.y - 1.0f))];
-//	return { rgba.r / 255.0f, rgba.g / 255.0f, rgba.b / 255.0f, rgba.a / 255.0f };
-//}
-
 internal vf3 sample_at(Mipmap* mipmap, f32 level, vf2 uv)
 {
 	ASSERT(0.0f <= uv.x && uv.x <= 1.0f);
 	ASSERT(0.0f <= uv.y && uv.y <= 1.0f);
 
-	i32 l = static_cast<i32>(CLAMP(level, 0.0f, MIPMAP_LEVELS - 1.0f));
+	i32 l = static_cast<i32>(clamp(level, 0.0f, mipmap->level_count - 1.0f));
 	RGBA p =
 		mipmap->data
 		[
@@ -306,7 +293,7 @@ internal vf3 sample_at(Mipmap* mipmap, f32 level, vf2 uv)
 			+ static_cast<i32>((1.0f - uv.y) * (mipmap->base_dim.y / (1 << l) - 1.0f))
 		];
 
-	if (IN_RANGE(level, 0.0f, MIPMAP_LEVELS - 1.0f))
+	if (IN_RANGE(level, 0.0f, mipmap->level_count - 1.0f))
 	{
 		RGBA q =
 			mipmap->data
@@ -316,7 +303,7 @@ internal vf3 sample_at(Mipmap* mipmap, f32 level, vf2 uv)
 				+ static_cast<i32>((1.0f - uv.y) * (mipmap->base_dim.y / (1 << (l + 1)) - 1.0f))
 			];
 
-		return vf3 { lerp(p.r, q.r, level - l), lerp(p.g, q.g, level - l), lerp(p.b, q.b, level - l) } / 255.0f; // @TODO@ Profile this.
+		return vf3 { lerp(p.r, q.r, level - l), lerp(p.g, q.g, level - l), lerp(p.b, q.b, level - l) } / 255.0f; // @TODO@ Optimize this.
 	}
 	else
 	{

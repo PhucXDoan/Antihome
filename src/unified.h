@@ -26,13 +26,13 @@
 #define FOR_INTERVAL_(NAME, MINI, MAXI)                 for (i32 NAME = (MINI); NAME < (MAXI); ++NAME)
 #define FOR_INDICIES_(NAME, MAXI)                       FOR_INTERVAL_(NAME, 0, (MAXI))
 #define FOR_REPEAT_(MAXI)                               FOR_INTERVAL_(MACRO_CONCAT_(FOR_REPEAT_, __LINE__), 0, (MAXI))
-#define FOR_INTERVAL_REV_(NAME, MINI, MAXI)             for (i32 NAME = (MAXI) - 1; NAME >= (MINI); --NAME)
+#define FOR_INTERVAL_REV_(NAME, MINI, MAXI)             for (i32 NAME = (MAXI) - 1, MACRO_CONCAT_(NAME, min); NAME >= MACRO_CONCAT_(NAME, min); --NAME)
 #define FOR_INDICIES_REV_(NAME, MAXI)                   FOR_INTERVAL_REV_(NAME, 0, (MAXI))
 #define CAPACITY_OF_ARRAY_(XS)                          (sizeof(XS) / sizeof((XS)[0]))
 #define CAPACITY_OF_MEMBER_(TYPE, MEMBER)               (CAPACITY_OF_ARRAY_(((TYPE*) 0)->MEMBER))
-#define FOR_POINTER_(NAME, XS, COUNT)                   for (i32 NAME##_index = 0; NAME##_index < (COUNT); ++NAME##_index) if (const auto NAME = &(XS)[NAME##_index]; false); else
+#define FOR_POINTER_(NAME, XS, COUNT)                   for (i32 MACRO_CONCAT_(NAME, _index) = 0; MACRO_CONCAT_(NAME, _index) < (COUNT); ++MACRO_CONCAT_(NAME, _index)) if (const auto NAME = &(XS)[MACRO_CONCAT_(NAME, _index)]; false); else
 #define FOR_ARRAY_(NAME, XS)                            FOR_POINTER_(NAME, (XS), ARRAY_CAPACITY(XS))
-#define FOR_POINTER_REV_(NAME, XS, COUNT)               for (i32 NAME##_index = (COUNT) - 1; NAME##_index >= 0; --NAME##_index) if (const auto NAME = &(XS)[NAME##_index]; false); else
+#define FOR_POINTER_REV_(NAME, XS, COUNT)               for (i32 MACRO_CONCAT_(NAME, _index) = (COUNT) - 1; MACRO_CONCAT_(NAME, _index) >= 0; --MACRO_CONCAT_(NAME, _index)) if (const auto NAME = &(XS)[MACRO_CONCAT_(NAME, _index)]; false); else
 #define FOR_ARRAY_REV_(NAME, XS)                        FOR_POINTER_REV_(NAME, (XS), ARRAY_CAPACITY(XS))
 
 #define ARRAY_CAPACITY(...)         (EXPAND_(OVERLOADED_MACRO_2_(__VA_ARGS__, CAPACITY_OF_MEMBER_, CAPACITY_OF_ARRAY_)(__VA_ARGS__)))
@@ -72,16 +72,16 @@ internal constexpr NAME operator<<=(NAME& a, i32  n) { return a = static_cast<NA
 internal constexpr NAME operator>>=(NAME& a, i32  n) { return a = static_cast<NAME>( (+a) >> n  ); }\
 enum struct NAME : TYPE
 
-#define enum_start_region(NAME) NAME##_START, NAME##_START_ = NAME##_START - 1,
-#define enum_end_region(NAME)   NAME##_END, NAME##_COUNT = NAME##_END - NAME##_START, NAME##_END_ = NAME##_END - 1,
+#define enum_start_region(NAME) MACRO_CONCAT_(NAME, _START), MACRO_CONCAT_(NAME, _START_) = MACRO_CONCAT_(NAME, _START) - 1,
+#define enum_end_region(NAME)   MACRO_CONCAT_(NAME, _END), MACRO_CONCAT_(NAME, _COUNT) = MACRO_CONCAT_(NAME, _END) - MACRO_CONCAT_(NAME, _START), MACRO_CONCAT_(NAME, _END_) = MACRO_CONCAT_(NAME, _END) - 1,
 
 #if DEBUG
 #undef MOUSE_MOVED
 #include <windows.h>
 #undef interface
 #include <stdio.h>
-#define DEBUG_printf(FSTR, ...) do { char TEMP_DEBUG_PRINTF_##__LINE__[512]; sprintf_s(TEMP_DEBUG_PRINTF_##__LINE__, sizeof(TEMP_DEBUG_PRINTF_##__LINE__), (FSTR), __VA_ARGS__); OutputDebugStringA(TEMP_DEBUG_PRINTF_##__LINE__); } while (false)
-#define DEBUG_once              for (persist bool32 DEBUG_ONCE_##__LINE__ = true; DEBUG_ONCE_##__LINE__; DEBUG_ONCE_##__LINE__ = false)
+#define DEBUG_printf(FSTR, ...) do { char MACRO_CONCAT_(TEMP_DEBUG_PRINTF_, __LINE__)[512]; sprintf_s(MACRO_CONCAT_(TEMP_DEBUG_PRINTF_, __LINE__), sizeof(MACRO_CONCAT_(TEMP_DEBUG_PRINTF_, __LINE__)), (FSTR), __VA_ARGS__); OutputDebugStringA(MACRO_CONCAT_(TEMP_DEBUG_PRINTF_, __LINE__)); } while (false)
+#define DEBUG_once              for (persist bool32 MACRO_CONCAT_(DEBUG_ONCE_, __LINE__) = true; MACRO_CONCAT_(DEBUG_ONCE_, __LINE__); MACRO_CONCAT_(DEBUG_ONCE_, __LINE__) = false)
 #else
 #define DEBUG_printf(FSTR, ...)
 #define DEBUG_once
@@ -159,7 +159,11 @@ internal TYPE* memory_arena_allocate_zero(MemoryArena* arena, i32 count = 1)
 // Math.
 //
 
-#define CLAMP(X, A, B) ((X) < (A) ? (A) : (X) > (B) ? (B) : (X))
+template <typename TYPE>
+internal constexpr TYPE clamp(TYPE x, TYPE a, TYPE b)
+{
+	return x <= a ? a : x >= b ? b : x;
+}
 
 struct vf2
 {

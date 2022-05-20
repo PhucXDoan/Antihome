@@ -828,9 +828,9 @@ internal vf2 move(State* state, vf2 position, vf2 displacement)
 		data.normal       = { NAN, NAN };
 
 		// @TODO@ Make this smarter.
-		FOR_RANGE(y, static_cast<i32>(floorf(position.y / WALL_SPACING) + min(ceilf(current_displacement.y / WALL_SPACING), 0.0f) - 2.0f), floorf(position.y / WALL_SPACING) + max(floor(current_displacement.y / WALL_SPACING), 0.0f) + 2.0f)
+		FOR_RANGE(y, static_cast<i32>(floorf(position.y / WALL_SPACING) + min(ceilf(current_displacement.y / WALL_SPACING), 0.0f) - 2.0f), static_cast<i32>(floorf(position.y / WALL_SPACING) + max(floor(current_displacement.y / WALL_SPACING), 0.0f) + 2.0f))
 		{
-			FOR_RANGE(x, static_cast<i32>(floorf(position.x / WALL_SPACING) + min(ceilf(current_displacement.x / WALL_SPACING), 0.0f) - 2.0f), floorf(position.x / WALL_SPACING) + max(floor(current_displacement.x / WALL_SPACING), 0.0f) + 2.0f)
+			FOR_RANGE(x, static_cast<i32>(floorf(position.x / WALL_SPACING) + min(ceilf(current_displacement.x / WALL_SPACING), 0.0f) - 2.0f), static_cast<i32>(floorf(position.x / WALL_SPACING) + max(floor(current_displacement.x / WALL_SPACING), 0.0f) + 2.0f))
 			{
 				FOR_ELEMS(voxel_data, WALL_VOXEL_DATA)
 				{
@@ -912,7 +912,7 @@ internal bool32 exists_clear_way(State* state, vf2 position, vf2 goal)
 			static_cast<i32>(floorf(goal.y / WALL_SPACING))
 		};
 
-	FOR_RANGE(max(fabsf(ray.x), fabsf(ray.y)) / WALL_SPACING + 1)
+	FOR_RANGE(static_cast<i32>(ceilf((fabsf(ray.x) + fabsf(ray.y)) / WALL_SPACING + 1.0f)))
 	{
 		FOR_ELEMS(voxel_data, WALL_VOXEL_DATA)
 		{
@@ -990,9 +990,9 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 			state->game.animated_sprite.monster = init_animated_sprite(DATA_DIR "eye.png", { 1, 1 }, 0.0f);
 			state->game.animated_sprite.fire    = init_animated_sprite(DATA_DIR "fire.png", { 10, 6 }, 60.0f);
 
-			state->game.mipmap.wall    = init_mipmap(DATA_DIR "room/wall.png");
-			state->game.mipmap.floor   = init_mipmap(DATA_DIR "room/floor.png");
-			state->game.mipmap.ceiling = init_mipmap(DATA_DIR "room/ceiling.png");
+			state->game.mipmap.wall    = init_mipmap(DATA_DIR "room/wall.png", 4);
+			state->game.mipmap.floor   = init_mipmap(DATA_DIR "room/floor.png", 4);
+			state->game.mipmap.ceiling = init_mipmap(DATA_DIR "room/ceiling.png", 4);
 
 			state->game.texture.screen                          = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET   , SCREEN_RES.x, SCREEN_RES.y);
 			state->game.texture.view                            = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_STREAMING, VIEW_RES.x  , VIEW_RES.y  );
@@ -1170,13 +1170,13 @@ extern "C" PROTOTYPE_UPDATE(update)
 			if (tm.cursor.x < CURSOR_PADDING || tm.cursor.x > WIN_DIM.x - CURSOR_PADDING)
 			{
 				tm.cursor_velocity.x = 0.0f;
-				tm.cursor.x          = CLAMP(tm.cursor.x, CURSOR_PADDING, static_cast<f32>(WIN_DIM.x - CURSOR_PADDING));
+				tm.cursor.x          = clamp(tm.cursor.x, CURSOR_PADDING, static_cast<f32>(WIN_DIM.x - CURSOR_PADDING));
 			}
 
 			if (tm.cursor.y < CURSOR_PADDING || tm.cursor.y > WIN_DIM.y - CURSOR_PADDING)
 			{
 				tm.cursor_velocity.y = 0.0f;
-				tm.cursor.y          = CLAMP(tm.cursor.y, CURSOR_PADDING, static_cast<f32>(WIN_DIM.y - CURSOR_PADDING));
+				tm.cursor.y          = clamp(tm.cursor.y, CURSOR_PADDING, static_cast<f32>(WIN_DIM.y - CURSOR_PADDING));
 			}
 
 			if (PRESSED(Input::left_mouse))
@@ -1541,13 +1541,13 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 				if (tm.window_position.x < 2.0f * COMPUTER_TITLE_BAR_HEIGHT - tm.window_dimensions.x || tm.window_position.x > WIN_DIM.x - COMPUTER_TITLE_BAR_HEIGHT)
 				{
-					tm.window_position.x = CLAMP(tm.window_position.x, 2.0f * COMPUTER_TITLE_BAR_HEIGHT - tm.window_dimensions.x, WIN_DIM.x - COMPUTER_TITLE_BAR_HEIGHT);
+					tm.window_position.x = clamp(tm.window_position.x, 2.0f * COMPUTER_TITLE_BAR_HEIGHT - tm.window_dimensions.x, static_cast<f32>(WIN_DIM.x - COMPUTER_TITLE_BAR_HEIGHT));
 					tm.window_velocity.x = 0.0f;
 				}
 
 				if (tm.window_position.y < COMPUTER_TASKBAR_HEIGHT - tm.window_dimensions.y || tm.window_position.y > WIN_DIM.y - COMPUTER_TITLE_BAR_HEIGHT - tm.window_dimensions.y)
 				{
-					tm.window_position.y = CLAMP(tm.window_position.y, COMPUTER_TASKBAR_HEIGHT - tm.window_dimensions.y, WIN_DIM.y - COMPUTER_TITLE_BAR_HEIGHT - tm.window_dimensions.y);
+					tm.window_position.y = clamp(tm.window_position.y, COMPUTER_TASKBAR_HEIGHT - tm.window_dimensions.y, WIN_DIM.y - COMPUTER_TITLE_BAR_HEIGHT - tm.window_dimensions.y);
 					tm.window_velocity.y = 0.0f;
 				}
 			}
@@ -1559,9 +1559,9 @@ extern "C" PROTOTYPE_UPDATE(update)
 			Mix_VolumeChunk(state->game.audio.drone_low, static_cast<i32>(MIX_MAX_VOLUME * (1.0f - state->game.ceiling_lights_keytime) * (1.0f - state->game.exiting_keytime)));
 
 			f32 circuit_breaker_volume = 2.0f / (norm(ray_to_closest(state->game.lucia_position.xy, get_position_of_wall_side(state->game.circuit_breaker_wall_side, 0.25f))) + 0.25f);
-			Mix_VolumeChunk(state->game.audio.generator, static_cast<i32>(MIX_MAX_VOLUME * CLAMP(circuit_breaker_volume, 0.0f, 1.0f)));
+			Mix_VolumeChunk(state->game.audio.generator, static_cast<i32>(MIX_MAX_VOLUME * clamp(circuit_breaker_volume, 0.0f, 1.0f)));
 
-			state->game.entering_keytime = CLAMP(state->game.entering_keytime + SECONDS_PER_UPDATE / 1.0f, 0.0f, 1.0f);
+			state->game.entering_keytime = clamp(state->game.entering_keytime + SECONDS_PER_UPDATE / 1.0f, 0.0f, 1.0f);
 
 			if (PRESSED(Input::tab))
 			{
@@ -1589,12 +1589,12 @@ extern "C" PROTOTYPE_UPDATE(update)
 				state->game.hud.cursor          += state->game.hud.cursor_velocity * SECONDS_PER_UPDATE;
 				if (state->game.hud.cursor.x < 0.0f || state->game.hud.cursor.x > VIEW_RES.x)
 				{
-					state->game.hud.cursor.x          = CLAMP(state->game.hud.cursor.x, 0.0f, static_cast<f32>(VIEW_RES.x));
+					state->game.hud.cursor.x          = clamp(state->game.hud.cursor.x, 0.0f, static_cast<f32>(VIEW_RES.x));
 					state->game.hud.cursor_velocity.x = 0.0f;
 				}
 				if (state->game.hud.cursor.y < 0.0f || state->game.hud.cursor.y > VIEW_RES.y)
 				{
-					state->game.hud.cursor.y          = CLAMP(state->game.hud.cursor.y, 0.0f, static_cast<f32>(VIEW_RES.y));
+					state->game.hud.cursor.y          = clamp(state->game.hud.cursor.y, 0.0f, static_cast<f32>(VIEW_RES.y));
 					state->game.hud.cursor_velocity.y = 0.0f;
 				}
 			}
@@ -1844,7 +1844,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 						if (PAPER_DATA[state->game.hud.paper.index].min_scalar > state->game.hud.paper.scalar || state->game.hud.paper.scalar > PAPER_DATA[state->game.hud.paper.index].max_scalar)
 						{
-							state->game.hud.paper.scalar          = CLAMP(state->game.hud.paper.scalar, PAPER_DATA[state->game.hud.paper.index].min_scalar, PAPER_DATA[state->game.hud.paper.index].max_scalar);
+							state->game.hud.paper.scalar          = clamp(state->game.hud.paper.scalar, PAPER_DATA[state->game.hud.paper.index].min_scalar, PAPER_DATA[state->game.hud.paper.index].max_scalar);
 							state->game.hud.paper.scalar_velocity = 0.0f;
 						}
 
@@ -1859,12 +1859,12 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 						if (fabsf(state->game.hud.paper.delta_position.x) > region.x)
 						{
-							state->game.hud.paper.delta_position.x = CLAMP(state->game.hud.paper.delta_position.x, -region.x, region.x);
+							state->game.hud.paper.delta_position.x = clamp(state->game.hud.paper.delta_position.x, -region.x, region.x);
 							state->game.hud.paper.velocity.x       = 0.0f;
 						}
 						if (fabsf(state->game.hud.paper.delta_position.y) > region.y)
 						{
-							state->game.hud.paper.delta_position.y = CLAMP(state->game.hud.paper.delta_position.y, -region.y, region.y);
+							state->game.hud.paper.delta_position.y = clamp(state->game.hud.paper.delta_position.y, -region.y, region.y);
 							state->game.hud.paper.velocity.y       = 0.0f;
 						}
 					}
@@ -2040,8 +2040,8 @@ extern "C" PROTOTYPE_UPDATE(update)
 			if (+wasd && HOLDING(Input::shift) && !state->game.lucia_out_of_breath)
 			{
 				state->game.lucia_velocity       *= 0.75f;
-				state->game.lucia_stamina         = CLAMP(state->game.lucia_stamina - SECONDS_PER_UPDATE / 60.0f * (1.0f + (1.0f - square(1.0f - 2.0f * state->game.lucia_sprint_keytime)) * 4.0f), 0.0f, 1.0f);
-				state->game.lucia_sprint_keytime  = CLAMP(state->game.lucia_sprint_keytime + SECONDS_PER_UPDATE / 1.5f, 0.0f, 1.0f);
+				state->game.lucia_stamina         = clamp(state->game.lucia_stamina - SECONDS_PER_UPDATE / 60.0f * (1.0f + (1.0f - square(1.0f - 2.0f * state->game.lucia_sprint_keytime)) * 4.0f), 0.0f, 1.0f);
+				state->game.lucia_sprint_keytime  = clamp(state->game.lucia_sprint_keytime + SECONDS_PER_UPDATE / 1.5f, 0.0f, 1.0f);
 				if (state->game.lucia_stamina == 0.0f)
 				{
 					state->game.lucia_out_of_breath = true;
@@ -2054,8 +2054,8 @@ extern "C" PROTOTYPE_UPDATE(update)
 			else
 			{
 				state->game.lucia_velocity       *= 0.6f;
-				state->game.lucia_stamina         = CLAMP(state->game.lucia_stamina + SECONDS_PER_UPDATE / 10.0f * square(1.0f - state->game.lucia_sprint_keytime) * (state->game.lucia_out_of_breath ? 0.5f : 1.0f), 0.0f, 1.0f);
-				state->game.lucia_sprint_keytime  = CLAMP(state->game.lucia_sprint_keytime - SECONDS_PER_UPDATE / 1.0f, 0.0f, 1.0f);
+				state->game.lucia_stamina         = clamp(state->game.lucia_stamina + SECONDS_PER_UPDATE / 10.0f * square(1.0f - state->game.lucia_sprint_keytime) * (state->game.lucia_out_of_breath ? 0.5f : 1.0f), 0.0f, 1.0f);
+				state->game.lucia_sprint_keytime  = clamp(state->game.lucia_sprint_keytime - SECONDS_PER_UPDATE / 1.0f, 0.0f, 1.0f);
 
 				if (state->game.lucia_out_of_breath)
 				{
@@ -2081,7 +2081,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 				{
 					it->position.xy = move(state, it->position.xy, it->velocity * SECONDS_PER_UPDATE);
 				}
-				it->position.z = lerp(0.15f, state->game.lucia_position.z, CLAMP(1.0f - norm_sq(ray_to_closest(state->game.lucia_position.xy, it->position.xy)) / 36.0f, 0.0f, 1.0f)) + sinf(state->time * 3.0f) * 0.025f;
+				it->position.z = lerp(0.15f, state->game.lucia_position.z, clamp(1.0f - norm_sq(ray_to_closest(state->game.lucia_position.xy, it->position.xy)) / 36.0f, 0.0f, 1.0f)) + sinf(state->time * 3.0f) * 0.025f;
 				it->normal     = polar(state->time * 0.7f);
 			}
 
@@ -2110,7 +2110,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 			{
 				case GameGoal::find_door:
 				{
-					state->game.ceiling_lights_keytime = CLAMP(state->game.ceiling_lights_keytime + SECONDS_PER_UPDATE / 2.0f, 0.0f, 1.0f);
+					state->game.ceiling_lights_keytime = clamp(state->game.ceiling_lights_keytime + SECONDS_PER_UPDATE / 2.0f, 0.0f, 1.0f);
 
 					vf2 door_position = get_position_of_wall_side(state->game.door_wall_side);
 					if (norm(ray_to_closest(state->game.lucia_position.xy, door_position)) < 4.0f && exists_clear_way(state, state->game.lucia_position.xy, door_position))
@@ -2136,12 +2136,12 @@ extern "C" PROTOTYPE_UPDATE(update)
 						state->game.creepy_sound_countdown = rng(&state->seed, CREEPY_SOUND_MIN_TIME, CREEPY_SOUND_MAX_TIME);
 					}
 
-					state->game.ceiling_lights_keytime = CLAMP(state->game.ceiling_lights_keytime - SECONDS_PER_UPDATE / 1.0f, 0.0f, 1.0f);
+					state->game.ceiling_lights_keytime = clamp(state->game.ceiling_lights_keytime - SECONDS_PER_UPDATE / 1.0f, 0.0f, 1.0f);
 				} break;
 
 				case GameGoal::escape:
 				{
-					state->game.ceiling_lights_keytime = CLAMP(state->game.ceiling_lights_keytime + SECONDS_PER_UPDATE / 2.0f, 0.0f, 1.0f);
+					state->game.ceiling_lights_keytime = clamp(state->game.ceiling_lights_keytime + SECONDS_PER_UPDATE / 2.0f, 0.0f, 1.0f);
 				} break;
 			}
 
@@ -2391,7 +2391,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 			DEBUG_once // @TEMP@
 			{
 				//state->game.lucia_position.xy = get_position_of_wall_side(state->game.circuit_breaker_wall_side, 1.0f);
-				state->game.lucia_position.xy = get_position_of_wall_side(state->game.door_wall_side, 1.0f);
+				//state->game.lucia_position.xy = get_position_of_wall_side(state->game.door_wall_side, 1.0f);
 			}
 
 			state->game.hand_on_state     = HandOnState::null;
@@ -2412,7 +2412,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 						vf2 ray      = ray_to_closest(state->game.lucia_position.xy, position);
 						f32 distance = norm(ray);
 
-						if (distance > 1.5f)
+						if (distance > 1.25f)
 						{
 							return 0.0f;
 						}
@@ -2471,7 +2471,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 			if (state->game.holding.flashlight)
 			{
-				state->game.holding.flashlight->flashlight.power = CLAMP(state->game.holding.flashlight->flashlight.power - SECONDS_PER_UPDATE / 150.0f, 0.0f, 1.0f);
+				state->game.holding.flashlight->flashlight.power = clamp(state->game.holding.flashlight->flashlight.power - SECONDS_PER_UPDATE / 150.0f, 0.0f, 1.0f);
 				state->game.flashlight_activation                = dampen(state->game.flashlight_activation, sinf(TAU / 4.0f * (1.0f - powf(1.0f - state->game.holding.flashlight->flashlight.power, 16.0f))), 25.0f, SECONDS_PER_UPDATE);
 
 				if (state->game.holding.flashlight->flashlight.power == 0.0f)
@@ -2501,7 +2501,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 			state->game.flashlight_ray.z   = sinf(state->game.flashlight_keytime * TAU * 36.0f) * 0.05f;
 			state->game.flashlight_ray     = normalize(state->game.flashlight_ray);
 
-			state->game.notification_keytime = CLAMP(state->game.notification_keytime - SECONDS_PER_UPDATE / 8.0f, 0.0f, 1.0f);
+			state->game.notification_keytime = clamp(state->game.notification_keytime - SECONDS_PER_UPDATE / 8.0f, 0.0f, 1.0f);
 
 			state->game.heart_rate_bpm = 63.5f + 80.0f * (1.0f - state->game.lucia_stamina);
 			if (state->game.heart_rate_bpm > 0.001f)
@@ -2509,7 +2509,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 				state->game.heart_rate_beat_keytime += SECONDS_PER_UPDATE * state->game.heart_rate_bpm / 60.0f;
 			}
 
-			Mix_VolumeChunk(state->game.audio.heartbeats[state->game.heartbeat_sfx_index], static_cast<i32>(MIX_MAX_VOLUME * CLAMP((state->game.heart_rate_bpm - 50.0f) / 80.0f, 0.0f, 1.0f)));
+			Mix_VolumeChunk(state->game.audio.heartbeats[state->game.heartbeat_sfx_index], static_cast<i32>(MIX_MAX_VOLUME * clamp((state->game.heart_rate_bpm - 50.0f) / 80.0f, 0.0f, 1.0f)));
 
 			if (state->game.heart_rate_beat_keytime >= 1.0f)
 			{
@@ -2558,7 +2558,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 			}
 			else
 			{
-				state->end.entering_keytime = CLAMP(state->end.entering_keytime + SECONDS_PER_UPDATE / 2.0f, 0.0f, 1.0f);
+				state->end.entering_keytime = clamp(state->end.entering_keytime + SECONDS_PER_UPDATE / 2.0f, 0.0f, 1.0f);
 
 				if (state->end.entering_keytime == 1.0f)
 				{
@@ -2968,9 +2968,9 @@ extern "C" PROTOTYPE_RENDER(render)
 						constexpr f32 FLASHLIGHT_OUTER_CUTOFF = 0.91f;
 
 						f32 flashlight_k =
-							CLAMP
+							clamp
 							(
-								CLAMP((dot(ray, state->game.flashlight_ray) - FLASHLIGHT_OUTER_CUTOFF) / (FLASHLIGHT_INNER_CUTOFF - FLASHLIGHT_OUTER_CUTOFF), 0.0f, 1.0f)
+								clamp((dot(ray, state->game.flashlight_ray) - FLASHLIGHT_OUTER_CUTOFF) / (FLASHLIGHT_INNER_CUTOFF - FLASHLIGHT_OUTER_CUTOFF), 0.0f, 1.0f)
 									/ (square(distance) + 0.1f)
 									* 32.0f
 									* state->game.flashlight_activation,
@@ -2982,21 +2982,21 @@ extern "C" PROTOTYPE_RENDER(render)
 
 						vf3 new_color =
 							color
-								* CLAMP
+								* clamp
 									(
 										(
 											0.30f
 												- fabsf(dot(ray, normal)) * 0.01f
 												+ ((state->game.lucia_position.z + ray.z * distance) / WALL_HEIGHT + 0.95f) * 0.7f * ceiling_lights_t
 										)
-											* CLAMP(1.0f - distance / lerp(8.0f, 48.0f, ceiling_lights_t), 0.0f, 1.0f)
+											* clamp(1.0f - distance / lerp(8.0f, 48.0f, ceiling_lights_t), 0.0f, 1.0f)
 											+ flashlight_k,
 										0.0f,
 										1.0f
 									)
 								+ vxx(powf(square(dot(ray, normal)), 64) * square(dot(ray, state->game.flashlight_ray)) * 0.4f * flashlight_k);
 
-						return vf3 { CLAMP(new_color.x, 0.0f, 1.0f), CLAMP(new_color.y, 0.0f, 1.0f), CLAMP(new_color.z, 0.0f, 1.0f) };
+						return vf3 { clamp(new_color.x, 0.0f, 1.0f), clamp(new_color.y, 0.0f, 1.0f), clamp(new_color.z, 0.0f, 1.0f) };
 					};
 
 				struct RenderScanNode
@@ -3039,26 +3039,34 @@ extern "C" PROTOTYPE_RENDER(render)
 									current_position.xy - rotate90(normal) * dimensions.x / 2.0f,
 									current_position.xy + rotate90(normal) * dimensions.x / 2.0f
 								)
-								&& IN_RANGE(portion, 0.0f, 1.0f)
-								&& (!wall_exists || wall_distance > distance)
 							)
 							{
-								RenderScanNode** post_node = &render_scan_node;
-								while (*post_node && (*post_node)->distance > distance)
+								if (!wall_exists || wall_distance > distance)
 								{
-									post_node = &(*post_node)->next_node;
-								}
+									if (IN_RANGE(portion, 0.0f, 1.0f))
+									{
+										RenderScanNode** post_node = &render_scan_node;
+										while (*post_node && (*post_node)->distance < distance)
+										{
+											post_node = &(*post_node)->next_node;
+										}
 
-								RenderScanNode* new_node = memory_arena_allocate<RenderScanNode>(&state->transient_arena);
-								new_node->image      = image;
-								new_node->normal     = normal;
-								new_node->distance   = distance;
-								new_node->portion    = portion;
-								new_node->next_node  = *post_node;
-								new_node->starting_y = static_cast<i32>(VIEW_RES.y / 2.0f + HORT_TO_VERT_K / state->game.lucia_fov * (current_position.z - 0.5f * dimensions.y - state->game.lucia_position.z) / (distance + 0.1f));
-								new_node->ending_y   = static_cast<i32>(VIEW_RES.y / 2.0f + HORT_TO_VERT_K / state->game.lucia_fov * (current_position.z + 0.5f * dimensions.y - state->game.lucia_position.z) / (distance + 0.1f));
-								*post_node = new_node;
-								return;
+										RenderScanNode* new_node = memory_arena_allocate<RenderScanNode>(&state->transient_arena);
+										new_node->image      = image;
+										new_node->normal     = normal;
+										new_node->distance   = distance;
+										new_node->portion    = portion;
+										new_node->next_node  = *post_node;
+										new_node->starting_y = static_cast<i32>(VIEW_RES.y / 2.0f + HORT_TO_VERT_K / state->game.lucia_fov * (current_position.z - 0.5f * dimensions.y - state->game.lucia_position.z) / (distance + 0.1f));
+										new_node->ending_y   = static_cast<i32>(VIEW_RES.y / 2.0f + HORT_TO_VERT_K / state->game.lucia_fov * (current_position.z + 0.5f * dimensions.y - state->game.lucia_position.z) / (distance + 0.1f));
+										*post_node = new_node;
+										break;
+									}
+								}
+								else
+								{
+									break;
+								}
 							}
 
 							if (t_max.x < t_max.y)
@@ -3075,113 +3083,109 @@ extern "C" PROTOTYPE_RENDER(render)
 					};
 
 				// @TEMP@
-				scan(get_image_of_frame(&state->game.animated_sprite.fire), { 77.0f, 62.0f, WALL_HEIGHT / 2.0f }, { 1.0f, 0.0f }, { 1.0f, 1.0f });
+				scan(get_image_of_frame(&state->game.animated_sprite.fire), { 73.0f, 16.0f, WALL_HEIGHT / 2.0f }, { 1.0f, 0.0f }, { 1.0f, 1.0f });
 
-				scan(get_image_of_frame(&state->game.animated_sprite.monster), state->game.monster_position, state->game.monster_normal, { 1.0f, 1.0f });
+				// scan(get_image_of_frame(&state->game.animated_sprite.monster), state->game.monster_position, state->game.monster_normal, { 1.0f, 1.0f });
 
 				if (state->game.hand_on_state != HandOnState::null)
 				{
 					scan(state->game.texture_sprite.hand.image, state->game.hand_position, normalize(ray_to_closest(state->game.hand_position.xy, state->game.lucia_position.xy)), { 0.05f, 0.05f });
 				}
 
-				FOR_ELEMS(item, state->game.item_buffer, state->game.item_count)
+				FOR_ELEMS(it, state->game.item_buffer, state->game.item_count)
 				{
-					scan(state->game.texture_sprite.default_items[+item->type - +ItemType::ITEM_START].image, item->position, item->normal, { 0.25f, 0.25f });
-				}
-
-				vf4* scan_line = memory_arena_allocate_zero<vf4>(&state->transient_arena, VIEW_RES.y);
-
-				for (RenderScanNode* node = render_scan_node; node; node = node->next_node)
-				{
-					FOR_RANGE(y, CLAMP(node->starting_y, 0, VIEW_RES.y), CLAMP(node->ending_y, 0, VIEW_RES.y))
-					{
-						vf3 ray          = normalize({ ray_horizontal.x, ray_horizontal.y, (y - VIEW_RES.y / 2.0f) * state->game.lucia_fov / HORT_TO_VERT_K });
-						vf4 sprite_pixel = sample_at(&node->image, { node->portion, (static_cast<f32>(y) - node->starting_y) / (node->ending_y - node->starting_y) });
-
-						if (IN_RANGE(state->game.lucia_position.z + ray.z * node->distance, 0.0f, WALL_HEIGHT))
-						{
-							scan_line[y] =
-								vx4
-								(
-									lerp(scan_line[y].xyz, shader(sprite_pixel.xyz, ray, vx3(node->normal, 0.0f), node->distance), sprite_pixel.w),
-									lerp(scan_line[y].w, 1.0f, sprite_pixel.w)
-								);
-						}
-					}
+					scan(state->game.texture_sprite.default_items[+it->type - +ItemType::ITEM_START].image, it->position, it->normal, { 0.25f, 0.25f });
 				}
 
 				FOR_RANGE(y, 0, VIEW_RES.y)
 				{
-					if (scan_line[y].w == 1.0f)
-					{
-						view_pixels[(VIEW_RES.y - 1 - y) * VIEW_RES.x + x] = pack_color(scan_line[y].xyz);
-					}
-					else
-					{
-						vf3 ray = normalize({ ray_horizontal.x, ray_horizontal.y, (y - VIEW_RES.y / 2.0f) * state->game.lucia_fov / HORT_TO_VERT_K });
-						vf3 bg_color;
+					vf3 ray           = normalize({ ray_horizontal.x, ray_horizontal.y, (y - VIEW_RES.y / 2.0f) * state->game.lucia_fov / HORT_TO_VERT_K });
+					vf4 scan_pixel    = { NAN, NAN, NAN, NAN };
+					f32 distance      = NAN;
+					vf3 normal        = { NAN, NAN, NAN };
+					vf4 overlay_color = { 0.0f, 0.0f, 0.0f, 0.0f };
+					vf3 bg_color      = { NAN, NAN, NAN };
 
-						if (IN_RANGE(y, pixel_starting_y, pixel_ending_y))
+					for (RenderScanNode* node = render_scan_node; node; node = node->next_node)
+					{
+						if (IN_RANGE(y, node->starting_y, node->ending_y) && IN_RANGE(state->game.lucia_position.z + ray.z * node->distance, 0.0f, WALL_HEIGHT))
 						{
-							f32 y_portion = static_cast<f32>(y - starting_y) / (ending_y - starting_y);
-							f32 distance  = sqrtf(square(wall_distance) + square(y_portion * WALL_HEIGHT - state->game.lucia_position.z));
-							vf3 normal    = vxx(wall_normal, 0.0f);
-
-							vf4 overlay_color =
-								overlay && IN_RANGE(y_portion, overlay_uv_position.y, overlay_uv_position.y + overlay_uv_dimensions.y)
-									? sample_at(overlay, { (wall_portion - overlay_uv_position.x) / overlay_uv_dimensions.x, (y_portion - overlay_uv_position.y) / overlay_uv_dimensions.y })
-									: vf4 { 0.0f, 0.0, 0.0f, 0.0f };
-
-							bg_color =
-								shader
-								(
-									lerp
-									(
-										sample_at(&state->game.mipmap.wall, distance / 4.0f + MIPMAP_LEVELS * square(1.0f - fabsf(dot(ray, normal))), { wall_portion, y_portion }),
-										overlay_color.xyz,
-										overlay_color.w
-									),
-									ray,
-									normal,
-									distance
-								);
+							scan_pixel = sample_at(&node->image, { node->portion, (static_cast<f32>(y) - node->starting_y) / (node->ending_y - node->starting_y) });
+							if (scan_pixel.w)
+							{
+								view_pixels[(VIEW_RES.y - 1 - y) * VIEW_RES.x + x] = pack_color(shader(scan_pixel.xyz, ray, vx3(node->normal, 0.0f), node->distance));
+								goto NEXT_Y;
+							}
 						}
-						else if (fabs(ray.z) > 0.0001f)
+					}
+
+					if (IN_RANGE(y, pixel_starting_y, pixel_ending_y))
+					{
+						f32 y_portion = static_cast<f32>(y - starting_y) / (ending_y - starting_y);
+
+						distance      = sqrtf(square(wall_distance) + square(y_portion * WALL_HEIGHT - state->game.lucia_position.z));
+						normal        = vxx(wall_normal, 0.0f);
+
+						if (overlay && IN_RANGE(y_portion, overlay_uv_position.y, overlay_uv_position.y + overlay_uv_dimensions.y))
 						{
-							f32     distance;
-							vf2     uv;
-							vf3     normal;
-							Mipmap* mipmap;
+							overlay_color = sample_at(overlay, { (wall_portion - overlay_uv_position.x) / overlay_uv_dimensions.x, (y_portion - overlay_uv_position.y) / overlay_uv_dimensions.y });
+						}
 
-							if (y < VIEW_RES.y / 2)
-							{
-								f32 zk   = -state->game.lucia_position.z / ray.z;
-								uv       = state->game.lucia_position.xy + zk * ray.xy;
-								distance = sqrtf(norm_sq(uv - state->game.lucia_position.xy) + square(state->game.lucia_position.z));
-								normal   = { 0.0f, 0.0f, 1.0f };
-								mipmap   = &state->game.mipmap.floor;
-							}
-							else
-							{
-								f32 zk   = (WALL_HEIGHT - state->game.lucia_position.z) / ray.z;
-								uv       = state->game.lucia_position.xy + zk * ray.xy;
-								distance = sqrtf(norm_sq(uv - state->game.lucia_position.xy) + square(WALL_HEIGHT - state->game.lucia_position.z));
-								normal   = { 0.0f, 0.0f, -1.0f };
-								mipmap   = &state->game.mipmap.ceiling;
-							}
+						if (overlay_color.w < 1.0f)
+						{
+							bg_color = sample_at(&state->game.mipmap.wall, distance / 4.0f + state->game.mipmap.wall.level_count * square(1.0f - fabsf(dot(ray, normal))), { wall_portion, y_portion });
+						}
+					}
+					else if (fabs(ray.z) > 0.0001f)
+					{
+						vf2     uv;
+						Mipmap* mipmap;
 
-							uv.x = mod(uv.x / 4.0f, 1.0f);
-							uv.y = mod(uv.y / 4.0f, 1.0f);
-
-							bg_color = shader(sample_at(mipmap, distance / 16.0f + MIPMAP_LEVELS * square(1.0f - fabsf(dot(ray, normal))), uv), ray, normal, distance);
+						if (y < VIEW_RES.y / 2)
+						{
+							f32 zk   = -state->game.lucia_position.z / ray.z;
+							uv       = state->game.lucia_position.xy + zk * ray.xy;
+							distance = sqrtf(norm_sq(uv - state->game.lucia_position.xy) + square(state->game.lucia_position.z));
+							normal   = { 0.0f, 0.0f, 1.0f };
+							mipmap   = &state->game.mipmap.floor;
 						}
 						else
 						{
-							continue;
+							f32 zk   = (WALL_HEIGHT - state->game.lucia_position.z) / ray.z;
+							uv       = state->game.lucia_position.xy + zk * ray.xy;
+							distance = sqrtf(norm_sq(uv - state->game.lucia_position.xy) + square(WALL_HEIGHT - state->game.lucia_position.z));
+							normal   = { 0.0f, 0.0f, -1.0f };
+							mipmap   = &state->game.mipmap.ceiling;
 						}
 
-						view_pixels[(VIEW_RES.y - 1 - y) * VIEW_RES.x + x] = pack_color(scan_line[y].w ? lerp(bg_color, scan_line[y].xyz, scan_line[y].w) : bg_color);
+						uv.x = mod(uv.x / 4.0f, 1.0f);
+						uv.y = mod(uv.y / 4.0f, 1.0f);
+
+						bg_color = sample_at(mipmap, distance / 16.0f + mipmap->level_count * square(1.0f - fabsf(dot(ray, normal))), uv);
 					}
+					else
+					{
+						continue;
+					}
+
+					// @TODO@ Lerp is slow!
+					view_pixels[(VIEW_RES.y - 1 - y) * VIEW_RES.x + x] =
+						pack_color
+						(
+							shader
+							(
+								overlay_color.w == 0.0f
+									? bg_color
+									: overlay_color.w == 1.0f
+										? overlay_color.xyz
+										: lerp(bg_color, overlay_color.xyz, overlay_color.w),
+								ray,
+								normal,
+								distance
+							)
+						);
+
+					NEXT_Y:;
 				}
 			}
 
@@ -3282,8 +3286,8 @@ extern "C" PROTOTYPE_RENDER(render)
 							(
 								platform->renderer,
 								{
-									CLAMP(fabsf((state->game.hud.circuit_breaker.goal_voltage - portion) / state->game.hud.circuit_breaker.goal_voltage), 0.0f, 1.0f),
-									1.0f - CLAMP(fabsf((state->game.hud.circuit_breaker.goal_voltage - portion) / state->game.hud.circuit_breaker.goal_voltage), 0.0f, 1.0f),
+									clamp(fabsf((state->game.hud.circuit_breaker.goal_voltage - portion) / state->game.hud.circuit_breaker.goal_voltage), 0.0f, 1.0f),
+									1.0f - clamp(fabsf((state->game.hud.circuit_breaker.goal_voltage - portion) / state->game.hud.circuit_breaker.goal_voltage), 0.0f, 1.0f),
 									0.0f,
 									1.0f
 								}
@@ -3357,7 +3361,7 @@ extern "C" PROTOTYPE_RENDER(render)
 						(
 							monochrome((level->x + level->y + level->z) / (3.0f + level_index)),
 							*level,
-							CLAMP((state->game.hud.status.battery_level_keytime - static_cast<f32>(level_index) / ARRAY_CAPACITY(BATTERY_LEVEL_COLORS)) * ARRAY_CAPACITY(BATTERY_LEVEL_COLORS), 0.0f, 1.0f)
+							clamp((state->game.hud.status.battery_level_keytime - static_cast<f32>(level_index) / ARRAY_CAPACITY(BATTERY_LEVEL_COLORS)) * ARRAY_CAPACITY(BATTERY_LEVEL_COLORS), 0.0f, 1.0f)
 						)
 					);
 
@@ -3385,8 +3389,8 @@ extern "C" PROTOTYPE_RENDER(render)
 					render_line
 					(
 						platform->renderer,
-						HEART_RATE_MONITOR_COORDINATES + vxx(vf2 {  it_index         / static_cast<f32>(ARRAY_CAPACITY(state->game.heart_rate_values)) * HEART_RATE_MONITOR_DIMENSIONS.x, CLAMP(0.75f - * it      / 2.0f, 0.0f, 1.0f) * HEART_RATE_MONITOR_DIMENSIONS.y }),
-						HEART_RATE_MONITOR_COORDINATES + vxx(vf2 { (it_index + 1.0f) / static_cast<f32>(ARRAY_CAPACITY(state->game.heart_rate_values)) * HEART_RATE_MONITOR_DIMENSIONS.x, CLAMP(0.75f - *(it + 1) / 2.0f, 0.0f, 1.0f) * HEART_RATE_MONITOR_DIMENSIONS.y })
+						HEART_RATE_MONITOR_COORDINATES + vxx(vf2 {  it_index         / static_cast<f32>(ARRAY_CAPACITY(state->game.heart_rate_values)) * HEART_RATE_MONITOR_DIMENSIONS.x, clamp(0.75f - * it      / 2.0f, 0.0f, 1.0f) * HEART_RATE_MONITOR_DIMENSIONS.y }),
+						HEART_RATE_MONITOR_COORDINATES + vxx(vf2 { (it_index + 1.0f) / static_cast<f32>(ARRAY_CAPACITY(state->game.heart_rate_values)) * HEART_RATE_MONITOR_DIMENSIONS.x, clamp(0.75f - *(it + 1) / 2.0f, 0.0f, 1.0f) * HEART_RATE_MONITOR_DIMENSIONS.y })
 					);
 				}
 			}
