@@ -7,73 +7,49 @@ global constexpr f32 SQRT2         = 1.41421356237f;
 global constexpr f32 INVSQRT2      = 0.70710678118f;
 global constexpr i32 MIPMAP_LEVELS = 4;
 
-// @TODO@ Use an actual RNG lol.
-// @NOTE@ Is in interval [0, 65536).
-global constexpr u16 RAND_TABLE[] =
+struct RGBA
+{
+	union
 	{
-		0x9b9d, 0x4e65, 0x8ec9, 0x910d, 0xfdf3, 0x73dc, 0x424b, 0xc8f9, 0x30e9, 0x5477, 0xe845, 0xab16, 0x27a1, 0xe07a, 0x6803, 0xb8c1,
-		0x9525, 0x1c29, 0xcf1f, 0xeae4, 0x7e41, 0x945e, 0xbbbf, 0x5ac7, 0x3e18, 0xc463, 0x165f, 0x7018, 0x15a4, 0xa666, 0xa8f1, 0xbc54,
-		0xe604, 0x3393, 0x5cad, 0xa37b, 0x1880, 0x26cd, 0xb131, 0x3f59, 0x061f, 0x98b7, 0x93fd, 0xc762, 0xae82, 0x264f, 0x9355, 0xc0e8,
-		0x5e46, 0x76bd, 0xd8f2, 0x936a, 0x0ccd, 0x8497, 0xd08d, 0x92ad, 0x2e69, 0xb158, 0x0317, 0x127f, 0xa3d3, 0xcf59, 0x1dc6, 0xbb4b,
-		0x7ecb, 0xb664, 0x93c7, 0x8c17, 0xdfee, 0xd19c, 0x3bff, 0x6ac7, 0xd3f1, 0xd23c, 0x9b2f, 0x5fae, 0x078c, 0x8282, 0x9fe3, 0xa7fd,
-		0xa653, 0xd182, 0x31ad, 0x4e64, 0xeb1f, 0x3da6, 0x133d, 0x6f45, 0x0938, 0x5ac8, 0xcd79, 0x8622, 0xe061, 0x6449, 0xe19e, 0xf63b,
-		0x5440, 0xe667, 0x9be6, 0x54b6, 0x8061, 0x6e0b, 0x36f5, 0xdd0d, 0x27f1, 0xfbee, 0x407b, 0x3c76, 0xbaa5, 0xe8dc, 0x2a46, 0x4f8f,
-		0x63ab, 0xda6c, 0x5950, 0xe9d2, 0xb825, 0x31b8, 0x2a7c, 0x49f0, 0x1df6, 0xd32a, 0xf42b, 0x68dd, 0xe859, 0x4041, 0x2fce, 0x72f9,
-		0x8224, 0x9615, 0x888f, 0xfaef, 0xf191, 0xd627, 0x2dae, 0x69da, 0x2050, 0x9172, 0x5744, 0xe53a, 0xe4b3, 0x4a30, 0x9436, 0x80cd,
-		0xb863, 0x7ac0, 0xd72b, 0xb683, 0xc820, 0x36d8, 0xeb86, 0x3bc5, 0xb49c, 0x20fc, 0xa0c6, 0x29c2, 0xd2f4, 0xa04e, 0x90b4, 0xe5f0,
-		0x44df, 0x442b, 0xf29c, 0x734a, 0x00c9, 0x40c1, 0xbddf, 0x7fcd, 0x72db, 0x0fdf, 0x366f, 0x36e7, 0xff1e, 0x31a9, 0xd998, 0x67c7,
-		0x328f, 0xbf19, 0xaa42, 0xe0ac, 0x6cf0, 0x6c4d, 0x7a87, 0x73b5, 0x165a, 0x3975, 0x99fb, 0x0df0, 0xc3fc, 0x8878, 0xe755, 0x01ab,
-		0x2d9e, 0x19dc, 0x2f14, 0xd81a, 0xd4ba, 0x757a, 0xfe60, 0x58fd, 0xcaca, 0x4510, 0x2983, 0xfa28, 0xb899, 0x24e8, 0x90ac, 0x1a92,
-		0x4b26, 0xb050, 0xd8e1, 0xcfc4, 0xaabd, 0x0394, 0x1a64, 0x59da, 0x96d1, 0x6ad2, 0x330d, 0x9e1a, 0x4f65, 0xac6f, 0x381d, 0x1c57,
-		0xbc45, 0xab88, 0x0f90, 0x4e64, 0x1f1e, 0xbb90, 0xa3d7, 0xa04a, 0x2dd3, 0x468b, 0x71ac, 0xe1d1, 0xd59b, 0x8778, 0x38ed, 0xd353,
-		0x5e6f, 0xd907, 0xbbcf, 0xb302, 0xda05, 0xd0df, 0x0cbf, 0x2efe, 0xe53e, 0xe37a, 0x7c8d, 0x9d9d, 0x38aa, 0xbd2d, 0x1a53, 0x0f2b,
-		0x32a0, 0x7bf1, 0x1b46, 0x9c7e, 0x4edd, 0x629f, 0x163e, 0x96b4, 0x6584, 0x3e36, 0x6354, 0x3615, 0xb608, 0x1c16, 0xf10e, 0x0301,
-		0x2937, 0xd751, 0x3537, 0xf89e, 0x4cd4, 0x2957, 0x891f, 0x0e02, 0x08ba, 0x2c0c, 0xf871, 0x2d8d, 0x4128, 0xb303, 0x57f4, 0xd352,
-		0x4237, 0x1cb9, 0x56c9, 0x5afe, 0x364a, 0xa3f8, 0xd495, 0x6bfb, 0x0f84, 0xae4c, 0x99ed, 0x5c8f, 0xfba2, 0xeb6b, 0x1d31, 0x4e18,
-		0x79a1, 0x3aaf, 0x1cbd, 0xae7c, 0x2dc4, 0xb8d2, 0xee0f, 0x80b3, 0x9c6f, 0x876f, 0x2689, 0x609c, 0xf114, 0x2797, 0x4b37, 0xa1aa,
-		0x51f6, 0xff82, 0x1516, 0xbb8b, 0x7120, 0xeb30, 0xf391, 0x30d5, 0xe7a1, 0x703f, 0x49d1, 0xf6a2, 0xa8df, 0x330f, 0x9c87, 0xe51d,
-		0xd436, 0xc0b7, 0x5b31, 0xab89, 0x4e09, 0x7923, 0xa824, 0xeca9, 0x1c7d, 0x426d, 0x1d1d, 0x71f5, 0x6ab9, 0xa53e, 0x3adc, 0xcdc3,
-		0x17f3, 0xa949, 0xefef, 0xace4, 0x39f4, 0xc5a6, 0x1b16, 0xc720, 0xc0ae, 0xaca3, 0xd3d1, 0xd5cc, 0xe628, 0x9d40, 0x7ca0, 0x3635,
-		0x867f, 0xe054, 0x012e, 0x0cc6, 0xf45f, 0x1b3b, 0x0c23, 0x256e, 0xf062, 0x4721, 0x745a, 0xd40b, 0x53e5, 0xa4c0, 0x2f8e, 0x7696,
-		0x4e3b, 0x8d68, 0x0f37, 0x75a9, 0xc4d8, 0xd8e1, 0x2f9d, 0x7bbe, 0xc524, 0xfefe, 0xffee, 0xc746, 0xee9e, 0x7543, 0x9835, 0xcb9b,
-		0xf7cf, 0xa8f3, 0xa606, 0x30f4, 0x609b, 0xfa30, 0xad31, 0xbbd7, 0x2a56, 0x8ce4, 0x637e, 0x5ff3, 0xb077, 0xbe95, 0x4c18, 0xa763,
-		0xf76e, 0xa450, 0x42b6, 0x0db7, 0x1bee, 0x7e93, 0x5deb, 0xcec3, 0xe19a, 0x4552, 0x90cd, 0x6a68, 0x7d5f, 0xbf81, 0xd899, 0xc69f,
-		0xe168, 0x544b, 0x6a1b, 0x11e0, 0x781c, 0x6b9f, 0xe59c, 0xf645, 0x90c7, 0xf833, 0x91fd, 0x094c, 0x1198, 0x30fd, 0x4206, 0x0af2,
-		0x59ce, 0x6362, 0x2bef, 0x6a11, 0xff28, 0xb353, 0x481a, 0x8716, 0x44ba, 0x3ea1, 0x8eab, 0x0daf, 0x52de, 0x9656, 0xa848, 0x4adb,
-		0xdcfd, 0x3de3, 0xafb0, 0x9a53, 0x2180, 0xfb19, 0x786c, 0xb781, 0x3c8e, 0x7083, 0xc054, 0x3e78, 0x20f4, 0xdf59, 0xfa62, 0x117b,
-		0x7ac9, 0x8489, 0xbd24, 0xfccd, 0x5b47, 0x2a9a, 0xde3b, 0x7c1d, 0x7dc0, 0xfc17, 0xba5c, 0x9c4e, 0x5e9e, 0xbcfd, 0x6f0b, 0x82fd,
-		0x517b, 0xf57b, 0xacac, 0x5be7, 0x5bb9, 0x6cc2, 0xbd39, 0xdb17, 0x4be8, 0x4eea, 0xeffb, 0x13ed, 0x2391, 0x0b62, 0xd9eb, 0x7b5f
-	};
+		struct
+		{
+			u8 r;
+			u8 g;
+			u8 b;
+			u8 a;
+		};
 
-struct Img
+		u32 rgba;
+	};
+};
+
+struct Image
+{
+	vi2   dim;
+	RGBA* data;
+};
+
+struct TextureSprite
 {
 	vi2          dim;
-	vf4*         rgba;
+	RGBA*        data;
 	SDL_Texture* texture;
 };
 
-struct Animated
+struct AnimatedSprite
 {
-	vi2  sprite_dim;
-	u32* data;
-	i32  frame_count;
-	i32  current_index;
-	f32  age_hertz;
-	f32  age_keytime;
-};
-
-struct RGB
-{
-	u8 r;
-	u8 g;
-	u8 b;
-	u8 PADDING_;
+	f32   age_hertz;
+	f32   age_keytime;
+	i32   current_index;
+	i32   frame_count;
+	vi2   frame_dim;
+	RGBA* data;
 };
 
 struct Mipmap
 {
-	vi2  base_dim;
-	RGB* data;
+	vi2   base_dim;
+	RGBA* data;
 };
 
 template <typename TYPE>
@@ -163,109 +139,98 @@ internal constexpr vf4 unpack_color(u32 pixel)
 		};
 }
 
-internal Img init_img(SDL_Renderer* renderer, strlit file_path)
+internal Image init_image(strlit file_path)
 {
-	Img img;
+	Image image;
 
-	i32  iw;
-	i32  ih;
-	u32* stbimg = reinterpret_cast<u32*>(stbi_load(file_path, &iw, &ih, 0, STBI_rgb_alpha));
+	u32* stbimg = reinterpret_cast<u32*>(stbi_load(file_path, &image.dim.x, &image.dim.y, 0, STBI_rgb_alpha));
 	DEFER { stbi_image_free(stbimg); };
 	ASSERT(stbimg);
 
-	img.dim  = { iw, ih };
-	img.rgba = reinterpret_cast<vf4*>(malloc(img.dim.x * img.dim.y * sizeof(vf4)));
+	image.data = reinterpret_cast<RGBA*>(malloc(image.dim.x * image.dim.y * sizeof(RGBA)));
 
-	FOR_RANGE(y, img.dim.y)
+	FOR_RANGE(y, image.dim.y)
 	{
-		FOR_RANGE(x, img.dim.x)
+		FOR_RANGE(x, image.dim.x)
 		{
-			u32 pixel = *(stbimg + y * img.dim.x + x);
-			*(img.rgba + x * img.dim.y + (img.dim.y - 1 - y)) =
-				{
-					static_cast<f32>(pixel >>  0 & 0xFF) / 0xFF,
-					static_cast<f32>(pixel >>  8 & 0xFF) / 0xFF,
-					static_cast<f32>(pixel >> 16 & 0xFF) / 0xFF,
-					static_cast<f32>(pixel >> 24 & 0xFF) / 0xFF
-				};
+			u32 pixel = stbimg[y * image.dim.x + x];
+			image.data[x * image.dim.y + y] = { (pixel >> 0) & 0xFF, (pixel >> 8) & 0xFF, (pixel >> 16) & 0xFF, (pixel >> 24) & 0xFF };
 		}
 	}
 
-	img.texture = IMG_LoadTexture(renderer, file_path);
-	ASSERT(img.texture);
-
-	return img;
+	return image;
 }
 
-internal Animated init_animated(strlit file_path, vi2 sheet_dim, f32 age_hertz)
+internal void deinit_image(Image* image)
+{
+	free(image->data);
+}
+
+internal TextureSprite init_texture_sprite(SDL_Renderer* renderer, strlit file_path)
+{
+	TextureSprite sprite;
+
+	u32* stbimg = reinterpret_cast<u32*>(stbi_load(file_path, &sprite.dim.x, &sprite.dim.y, 0, STBI_rgb_alpha));
+	DEFER { stbi_image_free(stbimg); };
+	ASSERT(stbimg);
+
+	sprite.data = reinterpret_cast<RGBA*>(malloc(sprite.dim.x * sprite.dim.y * sizeof(RGBA)));
+
+	FOR_RANGE(y, sprite.dim.y)
+	{
+		FOR_RANGE(x, sprite.dim.x)
+		{
+			u32 pixel = stbimg[y * sprite.dim.x + x];
+			sprite.data[x * sprite.dim.y + y] = { (pixel >> 0) & 0xFF, (pixel >> 8) & 0xFF, (pixel >> 16) & 0xFF, (pixel >> 24) & 0xFF };
+		}
+	}
+
+	sprite.texture = IMG_LoadTexture(renderer, file_path);
+	ASSERT(sprite.texture);
+
+	return sprite;
+}
+
+internal void deinit_texture_sprite(TextureSprite* sprite)
+{
+	free(sprite->data);
+	SDL_DestroyTexture(sprite->texture);
+}
+
+internal AnimatedSprite init_animated_sprite(strlit file_path, vi2 sheet_dim, f32 age_hertz)
 {
 	vi2  stbdim;
 	u32* stbimg = reinterpret_cast<u32*>(stbi_load(file_path, &stbdim.x, &stbdim.y, 0, STBI_rgb_alpha));
 	DEFER { stbi_image_free(stbimg); };
 	ASSERT(stbimg);
 
-	Animated animated;
-	animated.sprite_dim    = { stbdim.x / sheet_dim.x, stbdim.y / sheet_dim.y };
-	animated.data          = reinterpret_cast<u32*>(malloc(stbdim.x * stbdim.y * sizeof(u32)));
-	animated.frame_count   = sheet_dim.x * sheet_dim.y;
-	animated.current_index = 0;
-	animated.age_hertz     = age_hertz;
-	animated.age_keytime   = 0.0f;
+	AnimatedSprite sprite;
+
+	sprite.age_hertz     = age_hertz;
+	sprite.age_keytime   = 0.0f;
+	sprite.current_index = 0;
+	sprite.frame_dim     = { stbdim.x / sheet_dim.x, stbdim.y / sheet_dim.y };
+	sprite.data          = reinterpret_cast<RGBA*>(malloc(stbdim.x * stbdim.y * sizeof(RGBA)));
+	sprite.frame_count   = sheet_dim.x * sheet_dim.y;
 
 	FOR_RANGE(i, sheet_dim.x * sheet_dim.y)
 	{
-		FOR_RANGE(x, animated.sprite_dim.x)
+		FOR_RANGE(y, sprite.frame_dim.y)
 		{
-			FOR_RANGE(y, animated.sprite_dim.y)
+			FOR_RANGE(x, sprite.frame_dim.x)
 			{
-				animated.data[i * animated.sprite_dim.x * animated.sprite_dim.y + x * animated.sprite_dim.y + y] = stbimg[(i / sheet_dim.x * animated.sprite_dim.y + y) * stbdim.x + (i % sheet_dim.x * animated.sprite_dim.x + x)];
+				u32 pixel = stbimg[(i / sheet_dim.x * sprite.frame_dim.y + y) * stbdim.x + (i % sheet_dim.x * sprite.frame_dim.x + x)];
+				sprite.data[i * sprite.frame_dim.x * sprite.frame_dim.y + x * sprite.frame_dim.y + y] = { (pixel >> 0) & 0xFF, (pixel >> 8) & 0xFF, (pixel >> 16) & 0xFF, (pixel >> 24) & 0xFF };
 			}
 		}
 	}
 
-	return animated;
+	return sprite;
 }
 
-internal void deinit_animated(Animated* animated)
+internal void deinit_animated_sprite(AnimatedSprite* sprite)
 {
-	free(animated->data);
-}
-
-internal vf4 sample_at(Animated* animated, vf2 uv)
-{
-	ASSERT(0.0f <= uv.x && uv.x <= 1.0f);
-	ASSERT(0.0f <= uv.y && uv.y <= 1.0f);
-	u32 pixel = animated->data[animated->current_index * animated->sprite_dim.x * animated->sprite_dim.y + static_cast<i32>(uv.x * (animated->sprite_dim.x - 1.0f)) * animated->sprite_dim.y + static_cast<i32>(uv.y * (animated->sprite_dim.y - 1.0f))];
-	return
-		{
-			static_cast<f32>(pixel >>  0 & 0xFF) / 0xFF,
-			static_cast<f32>(pixel >>  8 & 0xFF) / 0xFF,
-			static_cast<f32>(pixel >> 16 & 0xFF) / 0xFF,
-			static_cast<f32>(pixel >> 24 & 0xFF) / 0xFF
-		};
-}
-
-internal void age_animated(Animated* animated, f32 delta_time)
-{
-	animated->age_keytime += delta_time * animated->age_hertz;
-	if (animated->age_keytime >= 1.0f)
-	{
-		animated->current_index  = (animated->current_index + static_cast<i32>(animated->age_keytime)) % animated->frame_count;
-		animated->age_keytime    -= static_cast<i32>(animated->age_keytime);
-	}
-}
-
-internal void deinit_img(Img* img)
-{
-	free(img->rgba);
-	SDL_DestroyTexture(img->texture);
-}
-
-internal vf4 img_color_at(Img* img, vf2 uv)
-{
-	ASSERT(0.0f <= uv.x && uv.x <= 1.0f);
-	ASSERT(0.0f <= uv.y && uv.y <= 1.0f);
-	return img->rgba[static_cast<i32>(uv.x * (img->dim.x - 1.0f)) * img->dim.y + static_cast<i32>(uv.y * (img->dim.y - 1.0f))];
+	free(sprite->data);
 }
 
 internal Mipmap init_mipmap(strlit file_path)
@@ -278,10 +243,10 @@ internal Mipmap init_mipmap(strlit file_path)
 	ASSERT(stbimg);
 
 	mipmap.base_dim = { absolute_dim.x * 2 / 3, absolute_dim.y };
-	mipmap.data     = reinterpret_cast<RGB*>(malloc((mipmap.base_dim.x * mipmap.base_dim.y * 2 - mipmap.base_dim.x * mipmap.base_dim.y * 2 / (1 << MIPMAP_LEVELS)) * sizeof(RGB)));
+	mipmap.data     = reinterpret_cast<RGBA*>(malloc((mipmap.base_dim.x * mipmap.base_dim.y * 2 - mipmap.base_dim.x * mipmap.base_dim.y * 2 / (1 << MIPMAP_LEVELS)) * sizeof(RGBA)));
 
-	vi2  stbimg_coordinates = { 0, 0 };
-	RGB* mipmap_pixel = mipmap.data;
+	vi2   stbimg_coordinates = { 0, 0 };
+	RGBA* mipmap_pixel       = mipmap.data;
 	FOR_RANGE(i, MIPMAP_LEVELS)
 	{
 		FOR_RANGE(ix, mipmap.base_dim.x / (1 << i))
@@ -291,9 +256,10 @@ internal Mipmap init_mipmap(strlit file_path)
 				u32 stbimg_pixel = *(stbimg + (stbimg_coordinates.y + iy) * absolute_dim.x + stbimg_coordinates.x + ix);
 				*mipmap_pixel++ =
 					{
-						static_cast<u8>(stbimg_pixel >>  0 & 0xFF),
-						static_cast<u8>(stbimg_pixel >>  8 & 0xFF),
-						static_cast<u8>(stbimg_pixel >> 16 & 0xFF)
+						static_cast<u8>((stbimg_pixel >>  0) & 0xFF),
+						static_cast<u8>((stbimg_pixel >>  8) & 0xFF),
+						static_cast<u8>((stbimg_pixel >> 16) & 0xFF),
+						static_cast<u8>((stbimg_pixel >> 24) & 0xFF)
 					};
 			}
 		}
@@ -309,31 +275,55 @@ internal void deinit_mipmap(Mipmap* mipmap)
 	free(mipmap->data);
 }
 
-internal vf3 mipmap_color_at(Mipmap* mipmap, f32 level, vf2 uv)
+internal vf4 sample_at(Image* image, vf2 uv)
+{
+	ASSERT(0.0f <= uv.x && uv.x <= 1.0f);
+	ASSERT(0.0f <= uv.y && uv.y <= 1.0f);
+	RGBA rgba = image->data[static_cast<i32>(uv.x * (image->dim.x - 1.0f)) * image->dim.y + static_cast<i32>((1.0f - uv.y) * (image->dim.y - 1.0f))];
+	return { rgba.r / 255.0f, rgba.g / 255.0f, rgba.b / 255.0f, rgba.a / 255.0f };
+}
+
+internal vf4 sample_at(TextureSprite* sprite, vf2 uv)
+{
+	ASSERT(0.0f <= uv.x && uv.x <= 1.0f);
+	ASSERT(0.0f <= uv.y && uv.y <= 1.0f);
+	RGBA rgba = sprite->data[static_cast<i32>(uv.x * (sprite->dim.x - 1.0f)) * sprite->dim.y + static_cast<i32>((1.0f - uv.y) * (sprite->dim.y - 1.0f))];
+	return { rgba.r / 255.0f, rgba.g / 255.0f, rgba.b / 255.0f, rgba.a / 255.0f };
+}
+
+internal vf4 sample_at(AnimatedSprite* sprite, vf2 uv)
+{
+	ASSERT(0.0f <= uv.x && uv.x <= 1.0f);
+	ASSERT(0.0f <= uv.y && uv.y <= 1.0f);
+	RGBA rgba = sprite->data[(sprite->current_index * sprite->frame_dim.x + static_cast<i32>(uv.x * (sprite->frame_dim.x - 1.0f))) * sprite->frame_dim.y + static_cast<i32>((1.0f - uv.y) * (sprite->frame_dim.y - 1.0f))];
+	return { rgba.r / 255.0f, rgba.g / 255.0f, rgba.b / 255.0f, rgba.a / 255.0f };
+}
+
+internal vf3 sample_at(Mipmap* mipmap, f32 level, vf2 uv)
 {
 	ASSERT(0.0f <= uv.x && uv.x <= 1.0f);
 	ASSERT(0.0f <= uv.y && uv.y <= 1.0f);
 
 	i32 l = static_cast<i32>(CLAMP(level, 0.0f, MIPMAP_LEVELS - 1.0f));
-	RGB p =
-		*(
-			mipmap->data
-				+ mipmap->base_dim.x * mipmap->base_dim.y * 4 / 3 - mipmap->base_dim.x * mipmap->base_dim.y * 4 / 3 / (1 << (l * 2))
-				+ static_cast<i32>(uv.x * (mipmap->base_dim.x / (1 << l) - 1.0f)) * (mipmap->base_dim.y / (1 << l))
-				+ static_cast<i32>((1.0f - uv.y) * (mipmap->base_dim.y / (1 << l) - 1.0f))
-		);
+	RGBA p =
+		mipmap->data
+		[
+			mipmap->base_dim.x * mipmap->base_dim.y * 4 / 3 - mipmap->base_dim.x * mipmap->base_dim.y * 4 / 3 / (1 << (l * 2))
+			+ static_cast<i32>(uv.x * (mipmap->base_dim.x / (1 << l) - 1.0f)) * (mipmap->base_dim.y / (1 << l))
+			+ static_cast<i32>((1.0f - uv.y) * (mipmap->base_dim.y / (1 << l) - 1.0f))
+		];
 
 	if (IN_RANGE(level, 0.0f, MIPMAP_LEVELS - 1.0f))
 	{
-		RGB q =
-			*(
-				mipmap->data
-					+ mipmap->base_dim.x * mipmap->base_dim.y * 4 / 3 - mipmap->base_dim.x * mipmap->base_dim.y * 4 / 3 / (1 << ((l + 1) * 2))
-					+ static_cast<i32>(uv.x * (mipmap->base_dim.x / (1 << (l + 1)) - 1.0f)) * (mipmap->base_dim.y / (1 << (l + 1)))
-					+ static_cast<i32>((1.0f - uv.y) * (mipmap->base_dim.y / (1 << (l + 1)) - 1.0f))
-			);
+		RGBA q =
+			mipmap->data
+			[
+				mipmap->base_dim.x * mipmap->base_dim.y * 4 / 3 - mipmap->base_dim.x * mipmap->base_dim.y * 4 / 3 / (1 << ((l + 1) * 2))
+				+ static_cast<i32>(uv.x * (mipmap->base_dim.x / (1 << (l + 1)) - 1.0f)) * (mipmap->base_dim.y / (1 << (l + 1)))
+				+ static_cast<i32>((1.0f - uv.y) * (mipmap->base_dim.y / (1 << (l + 1)) - 1.0f))
+			];
 
-		return vf3 { lerp(p.r, q.r, level - l), lerp(p.g, q.g, level - l), lerp(p.b, q.b, level - l) } / 255.0f;
+		return vf3 { lerp(p.r, q.r, level - l), lerp(p.g, q.g, level - l), lerp(p.b, q.b, level - l) } / 255.0f; // @TODO@ Profile this.
 	}
 	else
 	{
@@ -341,35 +331,16 @@ internal vf3 mipmap_color_at(Mipmap* mipmap, f32 level, vf2 uv)
 	}
 }
 
-internal f32 rng(u32* seed)
+internal void age_animated_sprite(AnimatedSprite* sprite, f32 delta_time)
 {
-	return RAND_TABLE[(RAND_TABLE[++*seed % ARRAY_CAPACITY(RAND_TABLE)] + *seed) % ARRAY_CAPACITY(RAND_TABLE)] / 65536.0f;
+	sprite->age_keytime += delta_time * sprite->age_hertz;
+	if (sprite->age_keytime >= 1.0f)
+	{
+		sprite->current_index  = (sprite->current_index + static_cast<i32>(sprite->age_keytime)) % sprite->frame_count;
+		sprite->age_keytime    -= static_cast<i32>(sprite->age_keytime);
+	}
 }
 
-internal i32 rng(u32* seed, i32 start, i32 end)
-{
-	return static_cast<i32>(rng(seed) * (end - start) + start);
-}
-
-internal f32 rng(u32* seed, f32 start, f32 end)
-{
-	return rng(seed) * (end - start) + start;
-}
-
-internal constexpr f32 rng_static(u32 seed)
-{
-	return RAND_TABLE[seed * seed % ARRAY_CAPACITY(RAND_TABLE)] / 65536.0f;
-}
-
-internal constexpr i32 rng_static(u32 seed, i32 start, i32 end)
-{
-	return static_cast<i32>(rng_static(seed) * (end - start) + start);
-}
-
-internal constexpr f32 rng_static(u32 seed, f32 start, f32 end)
-{
-	return rng_static(seed) * (end - start) + start;
-}
 internal bool32 ray_cast_line(f32* scalar, f32* portion, vf2 position, vf2 ray, vf2 start, vf2 end)
 {
 	*scalar = ((start.x - end.x) * (start.y - position.y) - (start.y - end.y) * (start.x - position.x)) / ((start.x - end.x) * ray.y - (start.y - end.y) * ray.x);

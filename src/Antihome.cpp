@@ -51,6 +51,7 @@
 #include <stb_image.h>
 #include "unified.h"
 #include "platform.h"
+#include "rng.cpp"
 #include "utilities.cpp"
 
 global constexpr i32 COMPUTER_TASKBAR_HEIGHT            = 50;
@@ -338,10 +339,37 @@ struct State
 		{
 			struct
 			{
-				Animated fire;
-			} animated;
+				Image door;
+				Image circuit_breaker;
+				Image wall_left_arrow;
+				Image wall_right_arrow;
+			} image;
 
-			Mipmap animateds[sizeof(animated) / sizeof(Animated)];
+			Image images[sizeof(image) / sizeof(Image)];
+		};
+
+		union
+		{
+			struct
+			{
+				TextureSprite hand;
+				TextureSprite flashlight_on;
+				TextureSprite default_items[ItemType::ITEM_COUNT];
+				TextureSprite papers[ARRAY_CAPACITY(PAPER_DATA)];
+			} texture_sprite;
+
+			TextureSprite texture_sprites[sizeof(texture_sprite) / sizeof(TextureSprite)];
+		};
+
+		union
+		{
+			struct
+			{
+				AnimatedSprite monster;
+				AnimatedSprite fire;
+			} animated_sprite;
+
+			AnimatedSprite animated_sprites[sizeof(animated_sprite) / sizeof(AnimatedSprite)];
 		};
 
 		union
@@ -354,25 +382,6 @@ struct State
 			} mipmap;
 
 			Mipmap mipmaps[sizeof(mipmap) / sizeof(Mipmap)];
-		};
-
-		union
-		{
-			struct
-			{
-				Img monster;
-				Img hand;
-				Img flashlight_on;
-				Img door;
-				Img circuit_breaker;
-				Img wall_left_arrow;
-				Img wall_right_arrow;
-				Img fire;
-				Img default_items[ItemType::ITEM_COUNT];
-				Img papers[ARRAY_CAPACITY(PAPER_DATA)];
-			} img;
-
-			Img imgs[sizeof(img) / sizeof(Img)];
 		};
 
 		union
@@ -573,7 +582,7 @@ internal vf2 get_position_of_wall_side(WallSide wall_side, f32 normal_length = 1
 	return (wall_side.coordinates + (data->start + data->end) / 2.0f) * WALL_SPACING + data->normal * (wall_side.is_antinormal ? -1.0f : 1.0f) * normal_length;
 }
 
-internal Img* get_corresponding_item_img(State* state, Item* item)
+internal TextureSprite* get_corresponding_texture_sprite_of_item(State* state, Item* item)
 {
 	switch (item->type)
 	{
@@ -586,12 +595,12 @@ internal Img* get_corresponding_item_img(State* state, Item* item)
 		{
 			if (state->game.holding.flashlight == item)
 			{
-				return &state->game.img.flashlight_on;
+				return &state->game.texture_sprite.flashlight_on;
 			}
 		} break;
 	}
 
-	return &state->game.img.default_items[+item->type - +ItemType::ITEM_START];
+	return &state->game.texture_sprite.default_items[+item->type - +ItemType::ITEM_START];
 }
 
 internal bool32 check_combine(Item** out_a, ItemType a_type, Item** out_b, ItemType b_type, Item* fst, Item* snd)
@@ -962,30 +971,28 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 
 		case StateContext::game:
 		{
-			state->game.animated.fire = init_animated(DATA_DIR "fire.png", { 10, 6 }, 60.0f);
+			state->game.image.door             = init_image(DATA_DIR "overlays/door.png");
+			state->game.image.circuit_breaker  = init_image(DATA_DIR "overlays/circuit_breaker.png");
+			state->game.image.wall_left_arrow  = init_image(DATA_DIR "overlays/streak_left_0.png");
+			state->game.image.wall_right_arrow = init_image(DATA_DIR "overlays/streak_right_0.png");
+
+			state->game.texture_sprite.hand          = init_texture_sprite(renderer, DATA_DIR "hand.png");
+			state->game.texture_sprite.flashlight_on = init_texture_sprite(renderer, DATA_DIR "items/flashlight_on.png");
+			FOR_ELEMS(it, ITEM_DATA)
+			{
+				state->game.texture_sprite.default_items[it_index] = init_texture_sprite(renderer, it->img_file_path);
+			}
+			FOR_ELEMS(it, state->game.texture_sprite.papers)
+			{
+				*it = init_texture_sprite(renderer, PAPER_DATA[it_index].file_path);
+			}
+
+			state->game.animated_sprite.monster = init_animated_sprite(DATA_DIR "eye.png", { 1, 1 }, 0.0f);
+			state->game.animated_sprite.fire    = init_animated_sprite(DATA_DIR "fire.png", { 10, 6 }, 60.0f);
 
 			state->game.mipmap.wall    = init_mipmap(DATA_DIR "room/wall.png");
 			state->game.mipmap.floor   = init_mipmap(DATA_DIR "room/floor.png");
 			state->game.mipmap.ceiling = init_mipmap(DATA_DIR "room/ceiling.png");
-
-			state->game.img.monster          = init_img(renderer, DATA_DIR "eye.png");
-			state->game.img.hand             = init_img(renderer, DATA_DIR "hand.png");
-			state->game.img.flashlight_on    = init_img(renderer, DATA_DIR "items/flashlight_on.png");
-			state->game.img.door             = init_img(renderer, DATA_DIR "overlays/door.png");
-			state->game.img.circuit_breaker  = init_img(renderer, DATA_DIR "overlays/circuit_breaker.png");
-			state->game.img.wall_left_arrow  = init_img(renderer, DATA_DIR "overlays/streak_left_0.png");
-			state->game.img.wall_right_arrow = init_img(renderer, DATA_DIR "overlays/streak_right_0.png");
-			state->game.img.fire             = init_img(renderer, DATA_DIR "fire.png");
-
-			FOR_ELEMS(it, ITEM_DATA)
-			{
-				state->game.img.default_items[it_index] = init_img(renderer, it->img_file_path);
-			}
-
-			FOR_ELEMS(it, state->game.img.papers)
-			{
-				*it = init_img(renderer, PAPER_DATA[it_index].file_path);
-			}
 
 			state->game.texture.screen                          = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET   , SCREEN_RES.x, SCREEN_RES.y);
 			state->game.texture.view                            = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_STREAMING, VIEW_RES.x  , VIEW_RES.y  );
@@ -1014,17 +1021,14 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 			state->game.audio.generator              = Mix_LoadWAV(DATA_DIR "audio/generator.wav");
 			state->game.audio.heartbeats[0]          = Mix_LoadWAV(DATA_DIR "audio/heartbeat_0.wav");
 			state->game.audio.heartbeats[1]          = Mix_LoadWAV(DATA_DIR "audio/heartbeat_1.wav");
-
 			FOR_ELEMS(it, state->game.audio.walk_steps)
 			{
 				*it = Mix_LoadWAV(WALK_STEP_WAV_FILE_PATHS[it_index]);
 			}
-
 			FOR_ELEMS(it, state->game.audio.run_steps)
 			{
 				*it = Mix_LoadWAV(RUN_STEP_WAV_FILE_PATHS[it_index]);
 			}
-
 			FOR_ELEMS(it, state->game.audio.creepy_sounds)
 			{
 				*it = Mix_LoadWAV(CREEPY_SOUND_WAV_FILE_PATHS[it_index]);
@@ -1073,10 +1077,12 @@ internal void boot_down_state(State* state)
 
 		case StateContext::game:
 		{
-			FOR_ELEMS(it, state->game.mipmaps ) { deinit_mipmap(it);       }
-			FOR_ELEMS(it, state->game.imgs    ) { deinit_img(it);          }
-			FOR_ELEMS(it, state->game.textures) { SDL_DestroyTexture(*it); }
-			FOR_ELEMS(it, state->game.audios  ) { Mix_FreeChunk(*it);      }
+			FOR_ELEMS(it, state->game.images          ) { deinit_image(it);           }
+			FOR_ELEMS(it, state->game.texture_sprites ) { deinit_texture_sprite(it);  }
+			FOR_ELEMS(it, state->game.animated_sprites) { deinit_animated_sprite(it); }
+			FOR_ELEMS(it, state->game.mipmaps         ) { deinit_mipmap(it);          }
+			FOR_ELEMS(it, state->game.textures        ) { SDL_DestroyTexture(*it);    }
+			FOR_ELEMS(it, state->game.audios          ) { Mix_FreeChunk(*it);         }
 		} break;
 
 		case StateContext::end:
@@ -1812,8 +1818,8 @@ extern "C" PROTOTYPE_UPDATE(update)
 						!in_rect
 						(
 							state->game.hud.cursor,
-							VIEW_RES / 2.0f + (state->game.hud.paper.delta_position - state->game.img.papers[state->game.hud.paper.index].dim / 2.0f) * state->game.hud.paper.scalar,
-							state->game.img.papers[state->game.hud.paper.index].dim * state->game.hud.paper.scalar
+							VIEW_RES / 2.0f + (state->game.hud.paper.delta_position - state->game.texture_sprite.papers[state->game.hud.paper.index].dim / 2.0f) * state->game.hud.paper.scalar,
+							state->game.texture_sprite.papers[state->game.hud.paper.index].dim * state->game.hud.paper.scalar
 						)
 					)
 					{
@@ -1847,8 +1853,8 @@ extern "C" PROTOTYPE_UPDATE(update)
 						constexpr f32 PAPER_MARGIN = 25.0f;
 						vf2 region =
 							vf2 {
-								(VIEW_RES.x + state->game.img.papers[state->game.hud.paper.index].dim.x * state->game.hud.paper.scalar) / 2.0f - PAPER_MARGIN,
-								(VIEW_RES.y + state->game.img.papers[state->game.hud.paper.index].dim.y * state->game.hud.paper.scalar) / 2.0f - PAPER_MARGIN
+								(VIEW_RES.x + state->game.texture_sprite.papers[state->game.hud.paper.index].dim.x * state->game.hud.paper.scalar) / 2.0f - PAPER_MARGIN,
+								(VIEW_RES.y + state->game.texture_sprite.papers[state->game.hud.paper.index].dim.y * state->game.hud.paper.scalar) / 2.0f - PAPER_MARGIN
 							} / state->game.hud.paper.scalar;
 
 						if (fabsf(state->game.hud.paper.delta_position.x) > region.x)
@@ -2388,12 +2394,6 @@ extern "C" PROTOTYPE_UPDATE(update)
 				state->game.lucia_position.xy = get_position_of_wall_side(state->game.door_wall_side, 1.0f);
 			}
 
-			if (HOLDING(Input::up))
-			{
-				state->game.animated.fire.current_index += 1;
-				state->game.animated.fire.current_index %= state->game.animated.fire.frame_count;
-			}
-
 			state->game.hand_on_state     = HandOnState::null;
 			state->game.hand_hovered_item = 0;
 
@@ -2543,7 +2543,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 				state->game.hud.status.battery_level_keytime   = dampen(state->game.hud.status.battery_level_keytime, 0.0f, 8.0f, SECONDS_PER_UPDATE);
 			}
 
-			age_animated(&state->game.animated.fire, SECONDS_PER_UPDATE);
+			age_animated_sprite(&state->game.animated_sprite.fire, SECONDS_PER_UPDATE);
 		} break;
 
 		case StateContext::end:
@@ -2876,13 +2876,13 @@ extern "C" PROTOTYPE_RENDER(render)
 				wall_coordinates.x = mod(wall_coordinates.x, MAP_DIM);
 				wall_coordinates.y = mod(wall_coordinates.y, MAP_DIM);
 
-				i32  starting_y            = 0;
-				i32  ending_y              = 0;
-				i32  pixel_starting_y      = 0;
-				i32  pixel_ending_y        = 0;
-				Img* overlay_img           = 0;
-				vf2  overlay_uv_position   = { 0.0f, 0.0f };
-				vf2  overlay_uv_dimensions = { 0.0f, 0.0f };
+				i32    starting_y            = 0;
+				i32    ending_y              = 0;
+				i32    pixel_starting_y      = 0;
+				i32    pixel_ending_y        = 0;
+				Image* overlay               = 0;
+				vf2    overlay_uv_position   = { 0.0f, 0.0f };
+				vf2    overlay_uv_dimensions = { 0.0f, 0.0f };
 
 				if (wall_exists)
 				{
@@ -2897,20 +2897,20 @@ extern "C" PROTOTYPE_RENDER(render)
 					{
 						if (+(state->game.door_wall_side.voxel & (WallVoxel::back_slash | WallVoxel::forward_slash)))
 						{
-							overlay_img           = &state->game.img.door;
+							overlay               = &state->game.image.door;
 							overlay_uv_position   = { 0.5f - SLASH_SPAN / 2.0f, 0.0f };
 							overlay_uv_dimensions = { SLASH_SPAN, 0.85f };
 						}
 						else
 						{
-							overlay_img           = &state->game.img.door;
+							overlay               = &state->game.image.door;
 							overlay_uv_position   = { 0.5f - ALIGNED_SPAN / 2.0f, 0.0f };
 							overlay_uv_dimensions = { ALIGNED_SPAN, 0.85f };
 						}
 					}
 					else if (wall_coordinates == state->game.circuit_breaker_wall_side.coordinates && wall_voxel == state->game.circuit_breaker_wall_side.voxel && dot(ray_horizontal, wall_normal) * (state->game.circuit_breaker_wall_side.is_antinormal ? -1.0f : 1.0f) < 0.0f)
 					{
-						overlay_img           = &state->game.img.circuit_breaker;
+						overlay               = &state->game.image.circuit_breaker;
 						overlay_uv_position   = { 0.35f, 0.25f };
 						overlay_uv_dimensions = { 0.30f, 0.50f };
 					}
@@ -2939,15 +2939,15 @@ extern "C" PROTOTYPE_RENDER(render)
 							direction *= -1.0f;
 						}
 
-						if (rng_static((wall_coordinates.x + wall_coordinates.y) * 317 + wall_coordinates.y * 171 + (dot(ray_horizontal, wall_normal) < 0.0f ? 72 : 24)) < 0.15f)
+						if (rng(static_cast<i32>((wall_coordinates.x + wall_coordinates.y) * 317 + wall_coordinates.y * 171 + (dot(ray_horizontal, wall_normal) < 0.0f ? 72 : 24))) < 0.15f)
 						{
 							if (direction < -THRESHOLD)
 							{
-								overlay_img = &state->game.img.wall_left_arrow;
+								overlay     = &state->game.image.wall_left_arrow;
 							}
 							else if (direction > THRESHOLD)
 							{
-								overlay_img = &state->game.img.wall_right_arrow;
+								overlay     = &state->game.image.wall_right_arrow;
 							}
 						}
 
@@ -2957,7 +2957,7 @@ extern "C" PROTOTYPE_RENDER(render)
 
 					if (!IN_RANGE(wall_portion, overlay_uv_position.x, overlay_uv_position.x + overlay_uv_dimensions.x))
 					{
-						overlay_img = 0;
+						overlay = 0;
 					}
 				}
 
@@ -3004,8 +3004,8 @@ extern "C" PROTOTYPE_RENDER(render)
 					bool32          is_img;
 					union
 					{
-						Img*        img;
-						Animated*   animated;
+						Image*          img;
+						AnimatedSprite* animated_sprite;
 					};
 					vf2             normal;
 					f32             distance;
@@ -3058,11 +3058,11 @@ extern "C" PROTOTYPE_RENDER(render)
 								new_node->is_img     = is_img;
 								if (new_node->is_img)
 								{
-									new_node->img = reinterpret_cast<Img*>(ptr);
+									new_node->img = reinterpret_cast<Image*>(ptr);
 								}
 								else
 								{
-									new_node->animated = reinterpret_cast<Animated*>(ptr);
+									new_node->animated_sprite = reinterpret_cast<AnimatedSprite*>(ptr);
 								}
 								new_node->normal     = normal;
 								new_node->distance   = distance;
@@ -3087,19 +3087,19 @@ extern "C" PROTOTYPE_RENDER(render)
 						}
 					};
 
-				scan(false, &state->game.animated.fire, { 16.0f, 24.0f, WALL_HEIGHT / 2.0f }, { 1.0f, 0.0f }, { 1.0f, 1.0f });
-
 				// @TEMP@
-				scan(true, &state->game.img.monster, state->game.monster_position, state->game.monster_normal, { 1.0f, 1.0f });
+				scan(false, &state->game.animated_sprite.fire, { 77.0f, 62.0f, WALL_HEIGHT / 2.0f }, { 1.0f, 0.0f }, { 1.0f, 1.0f });
+
+				scan(false, &state->game.animated_sprite.monster, state->game.monster_position, state->game.monster_normal, { 1.0f, 1.0f });
 
 				if (state->game.hand_on_state != HandOnState::null)
 				{
-					scan(true, &state->game.img.hand, state->game.hand_position, normalize(ray_to_closest(state->game.hand_position.xy, state->game.lucia_position.xy)), { 0.05f, 0.05f });
+					scan(true, &state->game.texture_sprite.hand, state->game.hand_position, normalize(ray_to_closest(state->game.hand_position.xy, state->game.lucia_position.xy)), { 0.05f, 0.05f });
 				}
 
 				FOR_ELEMS(item, state->game.item_buffer, state->game.item_count)
 				{
-					scan(true, &state->game.img.default_items[+item->type - +ItemType::ITEM_START], item->position, item->normal, { 0.25f, 0.25f });
+					scan(true, &state->game.texture_sprite.default_items[+item->type - +ItemType::ITEM_START], item->position, item->normal, { 0.25f, 0.25f });
 				}
 
 				vf4* scan_line = memory_arena_allocate_zero<vf4>(&state->transient_arena, VIEW_RES.y);
@@ -3111,8 +3111,8 @@ extern "C" PROTOTYPE_RENDER(render)
 						vf3 ray          = normalize({ ray_horizontal.x, ray_horizontal.y, (y - VIEW_RES.y / 2.0f) * state->game.lucia_fov / HORT_TO_VERT_K });
 						vf4 sprite_pixel =
 							node->is_img
-								? img_color_at(node->img, { node->portion, (static_cast<f32>(y) - node->starting_y) / (node->ending_y - node->starting_y) })
-								: sample_at(node->animated, { node->portion, (static_cast<f32>(y) - node->starting_y) / (node->ending_y - node->starting_y) });
+								? sample_at(node->img, { node->portion, (static_cast<f32>(y) - node->starting_y) / (node->ending_y - node->starting_y) })
+								: sample_at(node->animated_sprite, { node->portion, (static_cast<f32>(y) - node->starting_y) / (node->ending_y - node->starting_y) });
 
 						if (IN_RANGE(state->game.lucia_position.z + ray.z * node->distance, 0.0f, WALL_HEIGHT))
 						{
@@ -3144,8 +3144,8 @@ extern "C" PROTOTYPE_RENDER(render)
 							vf3 normal    = vxx(wall_normal, 0.0f);
 
 							vf4 overlay_color =
-								overlay_img && IN_RANGE(y_portion, overlay_uv_position.y, overlay_uv_position.y + overlay_uv_dimensions.y)
-									? img_color_at(overlay_img, { (wall_portion - overlay_uv_position.x) / overlay_uv_dimensions.x, (y_portion - overlay_uv_position.y) / overlay_uv_dimensions.y })
+								overlay && IN_RANGE(y_portion, overlay_uv_position.y, overlay_uv_position.y + overlay_uv_dimensions.y)
+									? sample_at(overlay, { (wall_portion - overlay_uv_position.x) / overlay_uv_dimensions.x, (y_portion - overlay_uv_position.y) / overlay_uv_dimensions.y })
 									: vf4 { 0.0f, 0.0, 0.0f, 0.0f };
 
 							bg_color =
@@ -3153,7 +3153,7 @@ extern "C" PROTOTYPE_RENDER(render)
 								(
 									lerp
 									(
-										mipmap_color_at(&state->game.mipmap.wall, distance / 4.0f + MIPMAP_LEVELS * square(1.0f - fabsf(dot(ray, normal))), { wall_portion, y_portion }),
+										sample_at(&state->game.mipmap.wall, distance / 4.0f + MIPMAP_LEVELS * square(1.0f - fabsf(dot(ray, normal))), { wall_portion, y_portion }),
 										overlay_color.xyz,
 										overlay_color.w
 									),
@@ -3189,7 +3189,7 @@ extern "C" PROTOTYPE_RENDER(render)
 							uv.x = mod(uv.x / 4.0f, 1.0f);
 							uv.y = mod(uv.y / 4.0f, 1.0f);
 
-							bg_color = shader(mipmap_color_at(mipmap, distance / 16.0f + MIPMAP_LEVELS * square(1.0f - fabsf(dot(ray, normal))), uv), ray, normal, distance);
+							bg_color = shader(sample_at(mipmap, distance / 16.0f + MIPMAP_LEVELS * square(1.0f - fabsf(dot(ray, normal))), uv), ray, normal, distance);
 						}
 						else
 						{
@@ -3228,10 +3228,10 @@ extern "C" PROTOTYPE_RENDER(render)
 							set_color(platform->renderer, monochrome(0.3f));
 							render_filled_rect(platform->renderer, position + vf2 { 1.0f, 1.0f }, vx2(INVENTORY_DIM) - vf2 { 2.0f, 2.0f });
 
-							Img* img = get_corresponding_item_img(state, &state->game.hud.inventory.array[y][x]);
-							if (img && !(state->game.hud.inventory.grabbing && &state->game.hud.inventory.array[y][x] == state->game.hud.inventory.selected_item))
+							TextureSprite* sprite = get_corresponding_texture_sprite_of_item(state, &state->game.hud.inventory.array[y][x]);
+							if (sprite && !(state->game.hud.inventory.grabbing && &state->game.hud.inventory.array[y][x] == state->game.hud.inventory.selected_item))
 							{
-								render_texture(platform->renderer, img->texture, position, vx2(INVENTORY_DIM) - vf2 { 2.0f, 2.0f });
+								render_texture(platform->renderer, sprite->texture, position, vx2(INVENTORY_DIM) - vf2 { 2.0f, 2.0f });
 							}
 						}
 					}
@@ -3242,7 +3242,7 @@ extern "C" PROTOTYPE_RENDER(render)
 						render_texture
 						(
 							platform->renderer,
-							get_corresponding_item_img(state, state->game.hud.inventory.selected_item)->texture,
+							get_corresponding_texture_sprite_of_item(state, state->game.hud.inventory.selected_item)->texture,
 							vf2 { state->game.hud.cursor.x, VIEW_RES.y - state->game.hud.cursor.y } - vx2(INVENTORY_DIM) / 2.0f * ITEM_SCALAR,
 							vx2(INVENTORY_DIM) * ITEM_SCALAR
 						);
@@ -3254,9 +3254,9 @@ extern "C" PROTOTYPE_RENDER(render)
 					render_texture
 					(
 						platform->renderer,
-						state->game.img.papers[state->game.hud.paper.index].texture,
-						VIEW_RES / 2.0f + conjugate(state->game.hud.paper.delta_position) * state->game.hud.paper.scalar - state->game.img.papers[state->game.hud.paper.index].dim * state->game.hud.paper.scalar / 2.0f,
-						state->game.img.papers[state->game.hud.paper.index].dim * state->game.hud.paper.scalar
+						state->game.texture_sprite.papers[state->game.hud.paper.index].texture,
+						VIEW_RES / 2.0f + conjugate(state->game.hud.paper.delta_position) * state->game.hud.paper.scalar - state->game.texture_sprite.papers[state->game.hud.paper.index].dim * state->game.hud.paper.scalar / 2.0f,
+						state->game.texture_sprite.papers[state->game.hud.paper.index].dim * state->game.hud.paper.scalar
 					);
 				} break;
 
@@ -3325,7 +3325,7 @@ extern "C" PROTOTYPE_RENDER(render)
 			if (state->game.hud.type != HudType::null)
 			{
 				f32 cursor_dim = HOLDING(Input::left_mouse) ? 10.0f : 15.0f;
-				render_texture(platform->renderer, state->game.img.hand.texture, vf2 { state->game.hud.cursor.x, VIEW_RES.y - state->game.hud.cursor.y } - vx2(cursor_dim) / 2.0f, vx2(cursor_dim));
+				render_texture(platform->renderer, state->game.texture_sprite.hand.texture, vf2 { state->game.hud.cursor.x, VIEW_RES.y - state->game.hud.cursor.y } - vx2(cursor_dim) / 2.0f, vx2(cursor_dim));
 			}
 
 			set_color(platform->renderer, monochrome(0.1f));
@@ -3444,7 +3444,7 @@ extern "C" PROTOTYPE_RENDER(render)
 				state->game.circuit_breaker_wall_side.coordinates.x * WALL_SPACING, state->game.circuit_breaker_wall_side.coordinates.y * WALL_SPACING,
 				state->game.hud.cursor.x, state->game.hud.cursor.y,
 				state->game.hud.circuit_breaker.active_voltage,
-				state->game.animated.fire.current_index
+				state->game.animated_sprite.fire.current_index
 			);
 		} break;
 
