@@ -287,8 +287,6 @@ internal constexpr vf3    vx3(f32 a)        { return {   a,   a,   a    }; }
 internal constexpr vf3    vx3(vf2 v, f32 a) { return { v.x, v.y,      a }; }
 internal constexpr vf4    vx4(vf3 v, f32 a) { return { v.x, v.y, v.z, a }; }
 
-internal constexpr vf3    vxx(f32 a) { return { a, a, a }; }
-
 internal constexpr vf3    vxx(vf2 v, f32 a) { return { v.x, v.y, a      }; }
 internal constexpr vf4    vxx(vf3 v, f32 a) { return { v.x, v.y, v.z, a }; }
 

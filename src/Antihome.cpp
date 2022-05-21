@@ -2793,6 +2793,7 @@ extern "C" PROTOTYPE_RENDER(render)
 				Image*    wall_overlay               = 0;
 				vf2       wall_overlay_uv_position   = { NAN, NAN };
 				vf2       wall_overlay_uv_dimensions = { NAN, NAN };
+				bool32    wall_in_light              = true;
 
 				{
 					vi2 step    = { sign(ray_horizontal.x), sign(ray_horizontal.y) };
@@ -2901,6 +2902,15 @@ extern "C" PROTOTYPE_RENDER(render)
 								wall_overlay_uv_dimensions = { 1.0f, 1.0f };
 							}
 
+							if (wall_overlay && !IN_RANGE(wall_portion, wall_overlay_uv_position.x, wall_overlay_uv_position.x + wall_overlay_uv_dimensions.x))
+							{
+								wall_overlay = 0;
+							}
+
+							wall_in_light =
+								dot(ray_to_closest(state->game.lucia_position.xy + ray_horizontal * wall_distance, state->game.monster_position.xy), ray_casted_wall_side.normal) > 0.0f
+									&& exists_clear_way(state, state->game.monster_position.xy, state->game.lucia_position.xy + ray_horizontal * wall_distance * 0.99f);
+
 							break;
 						}
 
@@ -2917,60 +2927,93 @@ extern "C" PROTOTYPE_RENDER(render)
 					}
 				}
 
-				*get_wall_voxel(state, ray_casted_wall_side.coordinates) &= ~ray_casted_wall_side.voxel;
-				vf2 wall_intersection = state->game.lucia_position.xy + ray_horizontal * wall_distance;
-				bool32 in_light = dot(ray_casted_wall_side.normal, ray_to_closest(wall_intersection, state->game.monster_position.xy)) > 0.0f && exists_clear_way(state, state->game.monster_position.xy, state->game.lucia_position.xy + ray_horizontal * wall_distance * 0.9f);
-				*get_wall_voxel(state, ray_casted_wall_side.coordinates) |= ray_casted_wall_side.voxel;
+				enum struct Material : u8
+				{
+					null,
+					wall,
+					floor,
+					ceiling,
+					item,
+					monster,
+					hand,
+					fire
+				};
 
+				constexpr f32 SHADER_INV_EPSILON = 0.9f;
 				lambda shader =
-					[&](vf3 color, vf3 ray, vf3 normal, f32 distance, bool32 is_wall)
+					[&](Material material, bool32 in_light, vf3 color, vf3 ray, vf3 normal, f32 distance)
 					{
-						constexpr f32 FLASHLIGHT_INNER_CUTOFF = 1.00f;
-						constexpr f32 FLASHLIGHT_OUTER_CUTOFF = 0.91f;
+						if (material == Material::hand)
+						{
+							return color;
+						}
+						else
+						{
+							f32 ceiling_lights_t = 0.5f - 4.0f * cube(0.5f - state->game.ceiling_lights_keytime);
 
-						f32 flashlight_k =
-							clamp
-							(
-								clamp((dot(ray, state->game.flashlight_ray) - FLASHLIGHT_OUTER_CUTOFF) / (FLASHLIGHT_INNER_CUTOFF - FLASHLIGHT_OUTER_CUTOFF), 0.0f, 1.0f)
-									/ (square(distance) + 0.1f)
-									* 32.0f
-									* state->game.flashlight_activation,
-								0.0f,
-								1.0f
-							);
-
-						f32 ceiling_lights_t = 0.5f - 4.0f * cube(0.5f - state->game.ceiling_lights_keytime);
-
-						vf3 fragment_position = state->game.lucia_position + ray * distance;
-						vf3 frag_ray          = vx3(ray_to_closest(fragment_position.xy, state->game.monster_position.xy), state->game.monster_position.z - fragment_position.z);
-						f32 light =
-							is_wall && in_light || !is_wall && exists_clear_way(state, state->game.monster_position.xy, state->game.lucia_position.xy + ray.xy * distance * 0.9f)
-								? square(clamp(1.0f / (norm(frag_ray) + 0.1f), 0.0f, 1.0f))
-									* clamp(dot(frag_ray, normal), 0.0f, 1.0f)
-								: 0.0f;
-
-						vf3 new_color =
-							color
-								* clamp
-									(
+							vf3 new_color =
+								color
+									* clamp
 										(
-											0.30f
-												- fabsf(dot(ray, normal)) * 0.01f
-												+ ((state->game.lucia_position.z + ray.z * distance) / WALL_HEIGHT + 0.95f) * 0.7f * ceiling_lights_t
-										)
-											* clamp(1.0f - distance / lerp(8.0f, 48.0f, ceiling_lights_t), 0.0f, 1.0f)
-											+ flashlight_k,
-										0.0f,
-										1.0f
-									)
-								+ vxx(powf(square(dot(ray, normal)), 64) * square(dot(ray, state->game.flashlight_ray)) * 0.4f * flashlight_k)
-								+ vf3 { 0.8863f, 0.3451f, 0.1333f } * 6.0f * light;
+											(
+												material == Material::item ? 0.8f : 0.3f
+													- fabsf(dot(ray, normal)) * 0.01f
+													+ ((state->game.lucia_position.z + ray.z * distance) / WALL_HEIGHT + 0.95f) * 0.7f * ceiling_lights_t
+											) * clamp(1.0f - distance / lerp(8.0f, 48.0f, ceiling_lights_t), 0.0f, 1.0f),
+											0.0f,
+											1.0f
+										);
 
-						return vf3 { clamp(new_color.x, 0.0f, 1.0f), clamp(new_color.y, 0.0f, 1.0f), clamp(new_color.z, 0.0f, 1.0f) };
+							if (state->game.flashlight_activation)
+							{
+								constexpr f32 FLASHLIGHT_INNER_CUTOFF = 1.00f;
+								constexpr f32 FLASHLIGHT_OUTER_CUTOFF = 0.91f;
+
+								new_color +=
+									color
+										* (1.0f + powf(square(dot(ray, normal)), 64) * square(dot(ray, state->game.flashlight_ray)) * 0.8f)
+										* clamp
+											(
+												clamp((dot(ray, state->game.flashlight_ray) - FLASHLIGHT_OUTER_CUTOFF) / (FLASHLIGHT_INNER_CUTOFF - FLASHLIGHT_OUTER_CUTOFF), 0.0f, 1.0f)
+													/ (square(distance) + 0.1f)
+													* 32.0f
+													* state->game.flashlight_activation,
+												0.0f,
+												1.0f
+											);
+							}
+
+							if (in_light)
+							{
+								switch (material)
+								{
+									case Material::monster:
+									{
+										new_color += color;
+									} break;
+
+									default:
+									{
+										vf3 frag_position = state->game.lucia_position + ray * distance;
+										vf3 frag_ray      = vx3(ray_to_closest(frag_position.xy, state->game.monster_position.xy), state->game.monster_position.z - frag_position.z);
+
+										new_color +=
+											(color * 3.0f + vf3 { 0.8863f, 0.3451f, 0.1333f } * 4.0f)
+												* 2.0f
+												* square(clamp(1.0f / (norm(frag_ray) + 0.1f), 0.0f, 1.0f))
+												* fabsf(dot(normalize(frag_ray), normal));
+									};
+								}
+							}
+
+							return vf3 { clamp(new_color.x, 0.0f, 1.0f), clamp(new_color.y, 0.0f, 1.0f), clamp(new_color.z, 0.0f, 1.0f) };
+						}
 					};
 
 				struct RenderScanNode
 				{
+					Material        material;
+					bool32          in_light;
 					Image           image;
 					vf2             normal;
 					f32             distance;
@@ -2999,7 +3042,7 @@ extern "C" PROTOTYPE_RENDER(render)
 				}
 
 				lambda scan =
-					[&](Image image, vf3 position, vf2 normal, vf2 dimensions)
+					[&](Material material, Image image, vf3 position, vf2 normal, vf2 dimensions)
 					{
 						FOR_ELEMS(it, delta_checks)
 						{
@@ -3027,6 +3070,8 @@ extern "C" PROTOTYPE_RENDER(render)
 								}
 
 								RenderScanNode* new_node = memory_arena_allocate<RenderScanNode>(&state->transient_arena);
+								new_node->material   = material;
+								new_node->in_light   = exists_clear_way(state, state->game.lucia_position.xy + ray_horizontal * distance * SHADER_INV_EPSILON, state->game.monster_position.xy);
 								new_node->image      = image;
 								new_node->normal     = normal;
 								new_node->distance   = distance;
@@ -3042,32 +3087,28 @@ extern "C" PROTOTYPE_RENDER(render)
 
 				DEBUG_once // @TEMP@
 				{
-					//state->game.lucia_position.xy = get_position_of_wall_side(state->game.door_wall_side, 1.0f);
+					state->game.lucia_position.xy = get_position_of_wall_side(state->game.door_wall_side, 1.0f);
 					//state->game.lucia_position.xy = get_position_of_wall_side(state->game.circuit_breaker_wall_side, 1.0f);
 				}
 
-				scan(get_image_of_frame(&state->game.animated_sprite.fire), { 70.0f, 60.0f, WALL_HEIGHT / 2.0f }, { 1.0f, 0.0f }, { 1.0f, 1.0f });
+				scan(Material::fire, get_image_of_frame(&state->game.animated_sprite.fire), { 70.0f, 60.0f, WALL_HEIGHT / 2.0f }, { 1.0f, 0.0f }, { 1.0f, 1.0f });
 
-				scan(get_image_of_frame(&state->game.animated_sprite.monster), state->game.monster_position, state->game.monster_normal, { 1.0f, 1.0f });
+				scan(Material::monster, get_image_of_frame(&state->game.animated_sprite.monster), state->game.monster_position, state->game.monster_normal, { 1.0f, 1.0f });
 
 				if (state->game.hand_on_state != HandOnState::null)
 				{
-					scan(state->game.texture_sprite.hand.image, state->game.hand_position, normalize(ray_to_closest(state->game.hand_position.xy, state->game.lucia_position.xy)), { 0.05f, 0.05f });
+					scan(Material::hand, state->game.texture_sprite.hand.image, state->game.hand_position, normalize(ray_to_closest(state->game.hand_position.xy, state->game.lucia_position.xy)), { 0.05f, 0.05f });
 				}
 
 				FOR_ELEMS(it, state->game.item_buffer, state->game.item_count)
 				{
-					scan(state->game.texture_sprite.default_items[+it->type - +ItemType::ITEM_START].image, it->position, it->normal, { 0.25f, 0.25f });
+					scan(Material::item, state->game.texture_sprite.default_items[+it->type - +ItemType::ITEM_START].image, it->position, it->normal, { 0.5f, 0.5f });
 				}
 
 				FOR_RANGE(y, VIEW_RES.y)
 				{
-					vf3 ray                = normalize({ ray_horizontal.x, ray_horizontal.y, (y - VIEW_RES.y / 2.0f) * state->game.lucia_fov / HORT_TO_VERT_K });
-					vf4 scan_pixel         = { NAN, NAN, NAN, NAN };
-					f32 distance           = NAN;
-					vf3 normal             = { NAN, NAN, NAN };
-					vf4 wall_overlay_color = { 0.0f, 0.0f, 0.0f, 0.0f };
-					vf3 bg_color           = { NAN, NAN, NAN };
+					vf3 ray        = normalize({ ray_horizontal.x, ray_horizontal.y, (y - VIEW_RES.y / 2.0f) * state->game.lucia_fov / HORT_TO_VERT_K });
+					vf4 scan_pixel = { NAN, NAN, NAN, NAN };
 
 					for (RenderScanNode* node = render_scan_node; node; node = node->next_node)
 					{
@@ -3076,7 +3117,7 @@ extern "C" PROTOTYPE_RENDER(render)
 							scan_pixel = sample_at(&node->image, { node->portion, (static_cast<f32>(y) - node->starting_y) / (node->ending_y - node->starting_y) });
 							if (scan_pixel.w)
 							{
-								view_pixels[(VIEW_RES.y - 1 - y) * VIEW_RES.x + x] = pack_color(shader(scan_pixel.xyz, ray, vx3(node->normal, 0.0f), node->distance, false));
+								view_pixels[(VIEW_RES.y - 1 - y) * VIEW_RES.x + x] = pack_color(shader(node->material, node->in_light, scan_pixel.xyz, ray, vx3(node->normal, 0.0f), node->distance));
 								goto NEXT_Y;
 							}
 						}
@@ -3084,18 +3125,19 @@ extern "C" PROTOTYPE_RENDER(render)
 
 					if (IN_RANGE(y, wall_starting_y, wall_ending_y))
 					{
-						f32 y_portion = static_cast<f32>(y - wall_starting_y) / (wall_ending_y - wall_starting_y);
+						f32 y_portion          = static_cast<f32>(y - wall_starting_y) / (wall_ending_y - wall_starting_y);
+						f32 distance           = sqrtf(square(wall_distance) + square(y_portion * WALL_HEIGHT - state->game.lucia_position.z));
 
-						distance = sqrtf(square(wall_distance) + square(y_portion * WALL_HEIGHT - state->game.lucia_position.z));
-
+						vf4 wall_overlay_color = { NAN, NAN, NAN, 0.0f };
 						if (wall_overlay && IN_RANGE(y_portion, wall_overlay_uv_position.y, wall_overlay_uv_position.y + wall_overlay_uv_dimensions.y))
 						{
 							wall_overlay_color = sample_at(wall_overlay, { (wall_portion - wall_overlay_uv_position.x) / wall_overlay_uv_dimensions.x, (y_portion - wall_overlay_uv_position.y) / wall_overlay_uv_dimensions.y });
 						}
 
+						vf3 wall_color = { NAN, NAN, NAN };
 						if (wall_overlay_color.w < 1.0f)
 						{
-							bg_color = sample_at(&state->game.mipmap.wall, distance / 4.0f + state->game.mipmap.wall.level_count * square(1.0f - fabsf(dot(ray, vx3(ray_casted_wall_side.normal, 0.0f)))), { wall_portion, y_portion });
+							wall_color = sample_at(&state->game.mipmap.wall, distance / 4.0f + state->game.mipmap.wall.level_count * square(1.0f - fabsf(dot(ray, vx3(ray_casted_wall_side.normal, 0.0f)))), { wall_portion, y_portion });
 						}
 
 						// @TODO@ Lerp is slow!
@@ -3104,22 +3146,26 @@ extern "C" PROTOTYPE_RENDER(render)
 							(
 								shader
 								(
+									Material::wall,
+									wall_in_light,
 									wall_overlay_color.w == 0.0f
-										? bg_color
+										? wall_color
 										: wall_overlay_color.w == 1.0f
 											? wall_overlay_color.xyz
-											: lerp(bg_color, wall_overlay_color.xyz, wall_overlay_color.w),
+											: lerp(wall_color, wall_overlay_color.xyz, wall_overlay_color.w),
 									ray,
 									vx3(ray_casted_wall_side.normal, 0.0f),
-									distance,
-									true
+									distance
 								)
 							);
 					}
 					else if (fabs(ray.z) > 0.0001f)
 					{
-						vf2     uv;
-						Mipmap* mipmap;
+						vf2      uv;
+						f32      distance;
+						vf3      normal;
+						Mipmap*  mipmap;
+						Material material;
 
 						if (y < VIEW_RES.y / 2)
 						{
@@ -3128,6 +3174,7 @@ extern "C" PROTOTYPE_RENDER(render)
 							distance = sqrtf(norm_sq(uv - state->game.lucia_position.xy) + square(state->game.lucia_position.z));
 							normal   = { 0.0f, 0.0f, 1.0f };
 							mipmap   = &state->game.mipmap.floor;
+							material = Material::floor;
 						}
 						else
 						{
@@ -3136,12 +3183,13 @@ extern "C" PROTOTYPE_RENDER(render)
 							distance = sqrtf(norm_sq(uv - state->game.lucia_position.xy) + square(WALL_HEIGHT - state->game.lucia_position.z));
 							normal   = { 0.0f, 0.0f, -1.0f };
 							mipmap   = &state->game.mipmap.ceiling;
+							material = Material::ceiling;
 						}
 
 						uv.x = mod(uv.x / 4.0f, 1.0f);
 						uv.y = mod(uv.y / 4.0f, 1.0f);
 
-						bg_color = sample_at(mipmap, distance / 16.0f + mipmap->level_count * square(1.0f - fabsf(dot(ray, normal))), uv);
+						vf3 floor_ceiling_color = sample_at(mipmap, distance / 16.0f + mipmap->level_count * square(1.0f - fabsf(dot(ray, normal))), uv);
 
 						// @TODO@ Lerp is slow!
 						view_pixels[(VIEW_RES.y - 1 - y) * VIEW_RES.x + x] =
@@ -3149,15 +3197,12 @@ extern "C" PROTOTYPE_RENDER(render)
 							(
 								shader
 								(
-									wall_overlay_color.w == 0.0f
-										? bg_color
-										: wall_overlay_color.w == 1.0f
-											? wall_overlay_color.xyz
-											: lerp(bg_color, wall_overlay_color.xyz, wall_overlay_color.w),
+									material,
+									exists_clear_way(state, state->game.lucia_position.xy + ray.xy * distance * SHADER_INV_EPSILON, state->game.monster_position.xy),
+									floor_ceiling_color,
 									ray,
 									normal,
-									distance,
-									false
+									distance
 								)
 							);
 					}
