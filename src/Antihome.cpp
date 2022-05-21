@@ -211,7 +211,7 @@ struct WallSide
 {
 	vi2       coordinates;
 	WallVoxel voxel;
-	bool32    is_antinormal;
+	vf2       normal;
 };
 
 struct PathCoordinatesNode
@@ -558,18 +558,15 @@ internal const WallVoxelData* get_wall_voxel_data(WallVoxel voxel)
 	return 0;
 }
 
-internal vf2 get_normal_of_wall_side(WallSide wall_side)
-{
-	// @TODO@ Get rid of this.
-	const WallVoxelData* data = get_wall_voxel_data(wall_side.voxel);
-	return wall_side.is_antinormal ? -data->normal : data->normal;
-}
-
 internal vf2 get_position_of_wall_side(WallSide wall_side, f32 normal_length = 1.0f)
 {
-	// @TODO@ Get rid of this.
 	const WallVoxelData* data = get_wall_voxel_data(wall_side.voxel);
-	return (wall_side.coordinates + (data->start + data->end) / 2.0f) * WALL_SPACING + data->normal * (wall_side.is_antinormal ? -1.0f : 1.0f) * normal_length;
+	return (wall_side.coordinates + (data->start + data->end) / 2.0f) * WALL_SPACING + data->normal * normal_length;
+}
+
+internal bool32 equal_wall_sides(WallSide a, WallSide b)
+{
+	return a.coordinates == b.coordinates && a.voxel == b.voxel && a.normal == b.normal;
 }
 
 internal TextureSprite* get_corresponding_texture_sprite_of_item(State* state, Item* item)
@@ -1308,20 +1305,20 @@ extern "C" PROTOTYPE_UPDATE(update)
 												{
 													{
 														WallSideNode* node = memory_arena_allocate<WallSideNode>(&state->transient_arena);
-														node->wall_side.coordinates   = { x, y };
-														node->wall_side.voxel         = it->voxel;
-														node->wall_side.is_antinormal = false;
-														node->next_node               = wall_side_node;
+														node->wall_side.coordinates = { x, y };
+														node->wall_side.voxel       = it->voxel;
+														node->wall_side.normal      = it->normal;
+														node->next_node             = wall_side_node;
 														wall_side_node   = node;
 														wall_side_count += 1;
 													}
 
 													{
 														WallSideNode* node = memory_arena_allocate<WallSideNode>(&state->transient_arena);
-														node->wall_side.coordinates   = { x, y };
-														node->wall_side.voxel         = it->voxel;
-														node->wall_side.is_antinormal = true;
-														node->next_node               = wall_side_node;
+														node->wall_side.coordinates = { x, y };
+														node->wall_side.voxel       = it->voxel;
+														node->wall_side.normal      = -it->normal;
+														node->next_node             = wall_side_node;
 														wall_side_node   = node;
 														wall_side_count += 1;
 													}
@@ -2369,10 +2366,14 @@ extern "C" PROTOTYPE_UPDATE(update)
 				}
 			}
 
+			#if 0
 			if (HOLDING(Input::space))
 			{
 				state->game.monster_position.xy = move(state, state->game.monster_position.xy, state->game.monster_velocity * SECONDS_PER_UPDATE);
 			}
+			#else
+			state->game.monster_position.xy = move(state, state->game.monster_position.xy, state->game.monster_velocity * SECONDS_PER_UPDATE);
+			#endif
 
 			state->game.monster_position.x  = mod(state->game.monster_position.x, MAP_DIM * WALL_SPACING);
 			state->game.monster_position.y  = mod(state->game.monster_position.y, MAP_DIM * WALL_SPACING);
@@ -2784,166 +2785,142 @@ extern "C" PROTOTYPE_RENDER(render)
 
 				vf2 ray_horizontal = polar(state->game.lucia_angle + (0.5f - static_cast<f32>(x) / VIEW_RES.x) * state->game.lucia_fov);
 
-				bool32    wall_exists   = false;
-				vf2       wall_normal   = { NAN, NAN }; // @TODO@ Make this where it points towards the player?
-				f32       wall_distance = NAN;
-				f32       wall_portion  = NAN;
-				WallVoxel wall_voxel = {};
-				vi2 step    = { sign(ray_horizontal.x), sign(ray_horizontal.y) };
-				vf2 t_delta = vf2 { step.x / ray_horizontal.x, step.y / ray_horizontal.y } * WALL_SPACING;
-				vf2 t_max   =
-					{
-						(floorf(state->game.lucia_position.x / WALL_SPACING + (ray_horizontal.x >= 0.0f)) * WALL_SPACING - state->game.lucia_position.x) / ray_horizontal.x,
-						(floorf(state->game.lucia_position.y / WALL_SPACING + (ray_horizontal.y >= 0.0f)) * WALL_SPACING - state->game.lucia_position.y) / ray_horizontal.y
-					};
-				vi2 wall_coordinates =
-					{
-						static_cast<i32>(floorf(state->game.lucia_position.x / WALL_SPACING)),
-						static_cast<i32>(floorf(state->game.lucia_position.y / WALL_SPACING))
-					};
-				FOR_RANGE(MAP_DIM * MAP_DIM)
+				WallSide  ray_casted_wall_side       = {};
+				f32       wall_distance              = NAN;
+				f32       wall_portion               = NAN;
+				i32       wall_starting_y            = 0;
+				i32       wall_ending_y              = 0;
+				Image*    wall_overlay               = 0;
+				vf2       wall_overlay_uv_position   = { NAN, NAN };
+				vf2       wall_overlay_uv_dimensions = { NAN, NAN };
+
 				{
-					FOR_ELEMS(voxel_data, WALL_VOXEL_DATA)
-					{
-						if (+(*get_wall_voxel(state, wall_coordinates) & voxel_data->voxel))
+					vi2 step    = { sign(ray_horizontal.x), sign(ray_horizontal.y) };
+					vf2 t_delta = vf2 { step.x / ray_horizontal.x, step.y / ray_horizontal.y } * WALL_SPACING;
+					vf2 t_max   =
 						{
-							f32 distance;
-							f32 portion;
-							if
-							(
-								ray_cast_line
-								(
-									&distance,
-									&portion,
-									state->game.lucia_position.xy,
-									ray_horizontal,
-									(wall_coordinates + voxel_data->start) * WALL_SPACING,
-									(wall_coordinates + voxel_data->end  ) * WALL_SPACING
-								)
-								&& IN_RANGE(portion, 0.0f, 1.0f)
-								&& (!wall_exists || distance < wall_distance)
-							)
+							(floorf(state->game.lucia_position.x / WALL_SPACING + (ray_horizontal.x >= 0.0f)) * WALL_SPACING - state->game.lucia_position.x) / ray_horizontal.x,
+							(floorf(state->game.lucia_position.y / WALL_SPACING + (ray_horizontal.y >= 0.0f)) * WALL_SPACING - state->game.lucia_position.y) / ray_horizontal.y
+						};
+
+					ray_casted_wall_side.coordinates =
+						{
+							static_cast<i32>(floorf(state->game.lucia_position.x / WALL_SPACING)),
+							static_cast<i32>(floorf(state->game.lucia_position.y / WALL_SPACING))
+						};
+
+					FOR_RANGE(MAP_DIM * MAP_DIM)
+					{
+						FOR_ELEMS(voxel_data, WALL_VOXEL_DATA)
+						{
+							if (+(*get_wall_voxel(state, ray_casted_wall_side.coordinates) & voxel_data->voxel))
 							{
-								wall_exists   = true;
-								wall_normal   = voxel_data->normal;
-								wall_distance = distance;
-								wall_portion  = portion;
-								wall_voxel    = voxel_data->voxel;
+								f32 distance;
+								f32 portion;
+								if
+								(
+									ray_cast_line
+									(
+										&distance,
+										&portion,
+										state->game.lucia_position.xy,
+										ray_horizontal,
+										(ray_casted_wall_side.coordinates + voxel_data->start) * WALL_SPACING,
+										(ray_casted_wall_side.coordinates + voxel_data->end  ) * WALL_SPACING
+									)
+									&& IN_RANGE(portion, 0.0f, 1.0f)
+									&& (!+ray_casted_wall_side.voxel || distance < wall_distance)
+								)
+								{
+									ray_casted_wall_side.normal = voxel_data->normal * (dot(ray_horizontal, voxel_data->normal) < 0.0f ? 1.0f : -1.0f);
+									ray_casted_wall_side.voxel  = voxel_data->voxel;
+									wall_distance               = distance;
+									wall_portion                = portion;
+								}
 							}
 						}
-					}
 
-					if (wall_exists)
-					{
-						break;
-					}
-
-					if (t_max.x < t_max.y)
-					{
-						t_max.x            += t_delta.x;
-						wall_coordinates.x += step.x;
-					}
-					else
-					{
-						t_max.y            += t_delta.y;
-						wall_coordinates.y += step.y;
-					}
-				}
-
-				wall_coordinates.x = mod(wall_coordinates.x, MAP_DIM);
-				wall_coordinates.y = mod(wall_coordinates.y, MAP_DIM);
-
-				i32    starting_y            = 0;
-				i32    ending_y              = 0;
-				i32    pixel_starting_y      = 0;
-				i32    pixel_ending_y        = 0;
-				Image* overlay               = 0;
-				vf2    overlay_uv_position   = { 0.0f, 0.0f };
-				vf2    overlay_uv_dimensions = { 0.0f, 0.0f };
-
-				if (wall_exists)
-				{
-					starting_y       = static_cast<i32>(VIEW_RES.y / 2.0f - HORT_TO_VERT_K / state->game.lucia_fov *                state->game.lucia_position.z  / (wall_distance + 0.1f));
-					ending_y         = static_cast<i32>(VIEW_RES.y / 2.0f + HORT_TO_VERT_K / state->game.lucia_fov * (WALL_HEIGHT - state->game.lucia_position.z) / (wall_distance + 0.1f));
-					pixel_starting_y = max(0, starting_y);
-					pixel_ending_y   = min(ending_y, VIEW_RES.y);
-
-					constexpr f32 ALIGNED_SPAN = 0.5f;
-					constexpr f32 SLASH_SPAN   = ALIGNED_SPAN / SQRT2;
-					if (wall_coordinates == state->game.door_wall_side.coordinates && wall_voxel == state->game.door_wall_side.voxel && dot(ray_horizontal, wall_normal) * (state->game.door_wall_side.is_antinormal ? -1.0f : 1.0f) < 0.0f)
-					{
-						if (+(state->game.door_wall_side.voxel & (WallVoxel::back_slash | WallVoxel::forward_slash)))
+						if (+ray_casted_wall_side.voxel)
 						{
-							overlay               = &state->game.image.door;
-							overlay_uv_position   = { 0.5f - SLASH_SPAN / 2.0f, 0.0f };
-							overlay_uv_dimensions = { SLASH_SPAN, 0.85f };
+							ray_casted_wall_side.coordinates.x = mod(ray_casted_wall_side.coordinates.x, MAP_DIM);
+							ray_casted_wall_side.coordinates.y = mod(ray_casted_wall_side.coordinates.y, MAP_DIM);
+
+							wall_starting_y = static_cast<i32>(VIEW_RES.y / 2.0f - HORT_TO_VERT_K / state->game.lucia_fov *                state->game.lucia_position.z  / (wall_distance + 0.01f));
+							wall_ending_y   = static_cast<i32>(VIEW_RES.y / 2.0f + HORT_TO_VERT_K / state->game.lucia_fov * (WALL_HEIGHT - state->game.lucia_position.z) / (wall_distance + 0.01f));
+
+							if (equal_wall_sides(ray_casted_wall_side, state->game.door_wall_side))
+							{
+								if (+(state->game.door_wall_side.voxel & (WallVoxel::back_slash | WallVoxel::forward_slash)))
+								{
+									wall_overlay               = &state->game.image.door;
+									wall_overlay_uv_position   = { 0.5f - 0.25f / SQRT2, 0.0f };
+									wall_overlay_uv_dimensions = { 0.25f / SQRT2, 0.85f };
+								}
+								else
+								{
+									wall_overlay               = &state->game.image.door;
+									wall_overlay_uv_position   = { 0.25f, 0.0f };
+									wall_overlay_uv_dimensions = { 0.5f, 0.85f };
+								}
+							}
+							else if (equal_wall_sides(ray_casted_wall_side, state->game.circuit_breaker_wall_side))
+							{
+								// @TODO@ Prevent diagonal stretching.
+								wall_overlay               = &state->game.image.circuit_breaker;
+								wall_overlay_uv_position   = { 0.35f, 0.25f };
+								wall_overlay_uv_dimensions = { 0.30f, 0.50f };
+							}
+							else
+							{
+								f32 direction =
+									dot
+									(
+										rotate90(ray_casted_wall_side.normal),
+										normalize(ray_to_closest(get_position_of_wall_side(ray_casted_wall_side, 0.0f), get_position_of_wall_side(state->game.door_wall_side, 0.0f)))
+									);
+
+								if (dot(ray_horizontal, get_wall_voxel_data(ray_casted_wall_side.voxel)->normal) > 0.0f)
+								{
+									direction = -direction;
+								}
+
+								constexpr f32 THRESHOLD = 0.7f;
+								if (rng(static_cast<i32>((ray_casted_wall_side.coordinates.x + ray_casted_wall_side.coordinates.y) * 317 + ray_casted_wall_side.coordinates.y * 171)) < 0.2f)
+								{
+									if (direction < -THRESHOLD)
+									{
+										wall_overlay = &state->game.image.wall_left_arrow;
+									}
+									else if (direction > THRESHOLD)
+									{
+										wall_overlay = &state->game.image.wall_right_arrow;
+									}
+								}
+
+								wall_overlay_uv_position   = { 0.0f, 0.0f };
+								wall_overlay_uv_dimensions = { 1.0f, 1.0f };
+							}
+
+							break;
+						}
+
+						if (t_max.x < t_max.y)
+						{
+							t_max.x                            += t_delta.x;
+							ray_casted_wall_side.coordinates.x += step.x;
 						}
 						else
 						{
-							overlay               = &state->game.image.door;
-							overlay_uv_position   = { 0.5f - ALIGNED_SPAN / 2.0f, 0.0f };
-							overlay_uv_dimensions = { ALIGNED_SPAN, 0.85f };
+							t_max.y                            += t_delta.y;
+							ray_casted_wall_side.coordinates.y += step.y;
 						}
-					}
-					else if (wall_coordinates == state->game.circuit_breaker_wall_side.coordinates && wall_voxel == state->game.circuit_breaker_wall_side.voxel && dot(ray_horizontal, wall_normal) * (state->game.circuit_breaker_wall_side.is_antinormal ? -1.0f : 1.0f) < 0.0f)
-					{
-						overlay               = &state->game.image.circuit_breaker;
-						overlay_uv_position   = { 0.35f, 0.25f };
-						overlay_uv_dimensions = { 0.30f, 0.50f };
-					}
-					else
-					{
-						const WallVoxelData* intersected_data = get_wall_voxel_data(wall_voxel);
-						const WallVoxelData* door_data        = get_wall_voxel_data(state->game.door_wall_side.voxel);
-
-						f32 direction =
-							dot
-							(
-								rotate90(dot(ray_horizontal, wall_normal) < 0.0f ? -intersected_data->normal : intersected_data->normal),
-								normalize
-								(
-									ray_to_closest
-									(
-										(state->game.door_wall_side.coordinates + (door_data->start + door_data->end) / 2.0f) * WALL_SPACING + (state->game.door_wall_side.is_antinormal ? -door_data->normal : door_data->normal),
-										(wall_coordinates + (intersected_data->start + intersected_data->end) / 2.0f) * WALL_SPACING + (dot(ray_horizontal, wall_normal) > 0.0f ? -intersected_data->normal : intersected_data->normal)
-									)
-								)
-							);
-
-						constexpr f32 THRESHOLD = 0.7f;
-						if (dot(ray_horizontal, wall_normal) > 0.0f)
-						{
-							direction *= -1.0f;
-						}
-
-						if (rng(static_cast<i32>((wall_coordinates.x + wall_coordinates.y) * 317 + wall_coordinates.y * 171 + (dot(ray_horizontal, wall_normal) < 0.0f ? 72 : 24))) < 0.15f)
-						{
-							if (direction < -THRESHOLD)
-							{
-								overlay     = &state->game.image.wall_left_arrow;
-							}
-							else if (direction > THRESHOLD)
-							{
-								overlay     = &state->game.image.wall_right_arrow;
-							}
-						}
-
-						overlay_uv_position   = { 0.0f, 0.0f };
-						overlay_uv_dimensions = { 1.0f, 1.0f };
-					}
-
-					if (!IN_RANGE(wall_portion, overlay_uv_position.x, overlay_uv_position.x + overlay_uv_dimensions.x))
-					{
-						overlay = 0;
 					}
 				}
 
-				*get_wall_voxel(state, wall_coordinates) &= ~wall_voxel;
+				*get_wall_voxel(state, ray_casted_wall_side.coordinates) &= ~ray_casted_wall_side.voxel;
 				vf2 wall_intersection = state->game.lucia_position.xy + ray_horizontal * wall_distance;
-				bool32 in_light =
-					dot(wall_normal * (dot(wall_normal, ray_horizontal) < 0.0f ? -1.0f : 1.0f), ray_to_closest(wall_intersection, state->game.monster_position.xy)) < 0.0f
-					&& exists_clear_way(state, state->game.monster_position.xy, state->game.lucia_position.xy + ray_horizontal * wall_distance * 0.9f);
-				*get_wall_voxel(state, wall_coordinates) |= wall_voxel;
+				bool32 in_light = dot(ray_casted_wall_side.normal, ray_to_closest(wall_intersection, state->game.monster_position.xy)) > 0.0f && exists_clear_way(state, state->game.monster_position.xy, state->game.lucia_position.xy + ray_horizontal * wall_distance * 0.9f);
+				*get_wall_voxel(state, ray_casted_wall_side.coordinates) |= ray_casted_wall_side.voxel;
 
 				lambda shader =
 					[&](vf3 color, vf3 ray, vf3 normal, f32 distance, bool32 is_wall)
@@ -3039,7 +3016,7 @@ extern "C" PROTOTYPE_RENDER(render)
 									position.xy + *it - rotate90(normal) * dimensions.x / 2.0f,
 									position.xy + *it + rotate90(normal) * dimensions.x / 2.0f
 								)
-								&& (!wall_exists || wall_distance > distance)
+								&& (!+ray_casted_wall_side.voxel || wall_distance > distance)
 								&& IN_RANGE(portion, 0.0f, 1.0f)
 							)
 							{
@@ -3063,7 +3040,6 @@ extern "C" PROTOTYPE_RENDER(render)
 						}
 					};
 
-				// @TEMP@
 				DEBUG_once // @TEMP@
 				{
 					//state->game.lucia_position.xy = get_position_of_wall_side(state->game.door_wall_side, 1.0f);
@@ -3086,12 +3062,12 @@ extern "C" PROTOTYPE_RENDER(render)
 
 				FOR_RANGE(y, VIEW_RES.y)
 				{
-					vf3 ray           = normalize({ ray_horizontal.x, ray_horizontal.y, (y - VIEW_RES.y / 2.0f) * state->game.lucia_fov / HORT_TO_VERT_K });
-					vf4 scan_pixel    = { NAN, NAN, NAN, NAN };
-					f32 distance      = NAN;
-					vf3 normal        = { NAN, NAN, NAN };
-					vf4 overlay_color = { 0.0f, 0.0f, 0.0f, 0.0f };
-					vf3 bg_color      = { NAN, NAN, NAN };
+					vf3 ray                = normalize({ ray_horizontal.x, ray_horizontal.y, (y - VIEW_RES.y / 2.0f) * state->game.lucia_fov / HORT_TO_VERT_K });
+					vf4 scan_pixel         = { NAN, NAN, NAN, NAN };
+					f32 distance           = NAN;
+					vf3 normal             = { NAN, NAN, NAN };
+					vf4 wall_overlay_color = { 0.0f, 0.0f, 0.0f, 0.0f };
+					vf3 bg_color           = { NAN, NAN, NAN };
 
 					for (RenderScanNode* node = render_scan_node; node; node = node->next_node)
 					{
@@ -3106,21 +3082,20 @@ extern "C" PROTOTYPE_RENDER(render)
 						}
 					}
 
-					if (IN_RANGE(y, pixel_starting_y, pixel_ending_y))
+					if (IN_RANGE(y, wall_starting_y, wall_ending_y))
 					{
-						f32 y_portion = static_cast<f32>(y - starting_y) / (ending_y - starting_y);
+						f32 y_portion = static_cast<f32>(y - wall_starting_y) / (wall_ending_y - wall_starting_y);
 
-						distance      = sqrtf(square(wall_distance) + square(y_portion * WALL_HEIGHT - state->game.lucia_position.z));
-						normal        = vxx(wall_normal, 0.0f);
+						distance = sqrtf(square(wall_distance) + square(y_portion * WALL_HEIGHT - state->game.lucia_position.z));
 
-						if (overlay && IN_RANGE(y_portion, overlay_uv_position.y, overlay_uv_position.y + overlay_uv_dimensions.y))
+						if (wall_overlay && IN_RANGE(y_portion, wall_overlay_uv_position.y, wall_overlay_uv_position.y + wall_overlay_uv_dimensions.y))
 						{
-							overlay_color = sample_at(overlay, { (wall_portion - overlay_uv_position.x) / overlay_uv_dimensions.x, (y_portion - overlay_uv_position.y) / overlay_uv_dimensions.y });
+							wall_overlay_color = sample_at(wall_overlay, { (wall_portion - wall_overlay_uv_position.x) / wall_overlay_uv_dimensions.x, (y_portion - wall_overlay_uv_position.y) / wall_overlay_uv_dimensions.y });
 						}
 
-						if (overlay_color.w < 1.0f)
+						if (wall_overlay_color.w < 1.0f)
 						{
-							bg_color = sample_at(&state->game.mipmap.wall, distance / 4.0f + state->game.mipmap.wall.level_count * square(1.0f - fabsf(dot(ray, normal))), { wall_portion, y_portion });
+							bg_color = sample_at(&state->game.mipmap.wall, distance / 4.0f + state->game.mipmap.wall.level_count * square(1.0f - fabsf(dot(ray, vx3(ray_casted_wall_side.normal, 0.0f)))), { wall_portion, y_portion });
 						}
 
 						// @TODO@ Lerp is slow!
@@ -3129,13 +3104,13 @@ extern "C" PROTOTYPE_RENDER(render)
 							(
 								shader
 								(
-									overlay_color.w == 0.0f
+									wall_overlay_color.w == 0.0f
 										? bg_color
-										: overlay_color.w == 1.0f
-											? overlay_color.xyz
-											: lerp(bg_color, overlay_color.xyz, overlay_color.w),
+										: wall_overlay_color.w == 1.0f
+											? wall_overlay_color.xyz
+											: lerp(bg_color, wall_overlay_color.xyz, wall_overlay_color.w),
 									ray,
-									normal * (dot(wall_normal, ray_horizontal) < 0.0f ? 1.0f : -1.0f),
+									vx3(ray_casted_wall_side.normal, 0.0f),
 									distance,
 									true
 								)
@@ -3174,11 +3149,11 @@ extern "C" PROTOTYPE_RENDER(render)
 							(
 								shader
 								(
-									overlay_color.w == 0.0f
+									wall_overlay_color.w == 0.0f
 										? bg_color
-										: overlay_color.w == 1.0f
-											? overlay_color.xyz
-											: lerp(bg_color, overlay_color.xyz, overlay_color.w),
+										: wall_overlay_color.w == 1.0f
+											? wall_overlay_color.xyz
+											: lerp(bg_color, wall_overlay_color.xyz, wall_overlay_color.w),
 									ray,
 									normal,
 									distance,
