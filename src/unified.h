@@ -283,6 +283,7 @@ internal constexpr vi4&   operator/=(vi4& v, i32 k) { return v = v / k; }
 
 internal constexpr vf2    vx2(f32 a)        { return {   a,   a         }; }
 internal constexpr vi2    vx2(i32 a)        { return {   a,   a         }; }
+internal constexpr vf3    vx3(f32 a)        { return {   a,   a,   a    }; }
 internal constexpr vf3    vx3(vf2 v, f32 a) { return { v.x, v.y,      a }; }
 internal constexpr vf4    vx4(vf3 v, f32 a) { return { v.x, v.y, v.z, a }; }
 
