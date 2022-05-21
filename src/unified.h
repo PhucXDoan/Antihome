@@ -41,7 +41,7 @@
 #define FOR_ELEMS(...)              EXPAND_(OVERLOADED_MACRO_3_(__VA_ARGS__, FOR_POINTER_, FOR_ARRAY_)(__VA_ARGS__))
 #define FOR_ELEMS_REV(...)          EXPAND_(OVERLOADED_MACRO_3_(__VA_ARGS__, FOR_POINTER_REV_, FOR_ARRAY_REV_)(__VA_ARGS__))
 #define IN_RANGE(X, MINI, MAXI)     ((MINI) <= (X) && (X) < (MAXI))
-#define SWAP(X, Y)                  do { auto MACRO_CONCAT_(TEMP_SWAP_, __LINE__) = X; X = Y; Y = MACRO_CONCAT_(TEMP_SWAP_, __LINE__); } while (false)
+#define SWAP(X, Y)                  do { auto MACRO_CONCAT_(TEMP_SWAP_, __LINE__) = *(X); *(X) = *(Y); *(Y) = MACRO_CONCAT_(TEMP_SWAP_, __LINE__); } while (false)
 #define KIBIBYTES_OF(N)             (1024LL *             (N))
 #define MEBIBYTES_OF(N)             (1024LL * KIBIBYTES_OF(N))
 #define GIBIBYTES_OF(N)             (1024LL * MEBIBYTES_OF(N))

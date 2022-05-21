@@ -1,16 +1,6 @@
 /* @TODO@
-	- Thursday 2022-5-19:
-		- Anomaly: Serpent.
-			- Multiple sprites in a row chasing player.
-			- Constant hissing sound.
-		- Anomaly: Guardian Angel.
-			- Glows.
-			- Moves rigidly.
-			- Flapping noises when moving.
-
-	- Friday 2022-5-20:
-
 	- Saturday 2022-5-21:
+		- Fix heart beat sfx.
 
 	- Sunday 2022-5-22:
 
@@ -2379,7 +2369,11 @@ extern "C" PROTOTYPE_UPDATE(update)
 				}
 			}
 
-			state->game.monster_position.xy = move(state, state->game.monster_position.xy, state->game.monster_velocity * SECONDS_PER_UPDATE);
+			if (HOLDING(Input::space))
+			{
+				state->game.monster_position.xy = move(state, state->game.monster_position.xy, state->game.monster_velocity * SECONDS_PER_UPDATE);
+			}
+
 			state->game.monster_position.x  = mod(state->game.monster_position.x, MAP_DIM * WALL_SPACING);
 			state->game.monster_position.y  = mod(state->game.monster_position.y, MAP_DIM * WALL_SPACING);
 			state->game.monster_position.z  = cosf(state->time * 3.0f) * 0.15f + WALL_HEIGHT / 2.0f;
@@ -3012,131 +3006,61 @@ extern "C" PROTOTYPE_RENDER(render)
 				memory_arena_checkpoint(&state->transient_arena);
 				RenderScanNode* render_scan_node = 0;
 
+				vf2 delta_checks[4];
+				{
+					vf2 lucia_position_uv = state->game.lucia_position.xy / (MAP_DIM * WALL_SPACING);
+
+					delta_checks[0]  = { 0.0f, 0.0f };
+					delta_checks[3]  = vf2 { 2.0f * roundf(lucia_position_uv.x) - 1.0f, 2.0f * roundf(lucia_position_uv.y) - 1.0f } * MAP_DIM * WALL_SPACING;
+					delta_checks[1]  = { delta_checks[3].x, 0.0f              };
+					delta_checks[2]  = { 0.0f             , delta_checks[3].y };
+
+					if (fabs(lucia_position_uv.x - roundf(lucia_position_uv.x)) > fabs(lucia_position_uv.y - roundf(lucia_position_uv.y)))
+					{
+						SWAP(&delta_checks[1], &delta_checks[2]);
+					}
+				}
+
 				lambda scan =
 					[&](Image image, vf3 position, vf2 normal, vf2 dimensions)
 					{
-						lambda attempt_intersect =
-							[&](vf3 offset_position)
-							{
-								f32 distance;
-								f32 portion;
-								if
+						FOR_ELEMS(it, delta_checks)
+						{
+							f32 distance;
+							f32 portion;
+							if
+							(
+								ray_cast_line
 								(
-									ray_cast_line
-									(
-										&distance,
-										&portion,
-										state->game.lucia_position.xy,
-										ray_horizontal,
-										offset_position.xy - rotate90(normal) * dimensions.x / 2.0f,
-										offset_position.xy + rotate90(normal) * dimensions.x / 2.0f
-									)
-									&& (!wall_exists || wall_distance > distance)
-									&& IN_RANGE(portion, 0.0f, 1.0f)
+									&distance,
+									&portion,
+									state->game.lucia_position.xy,
+									ray_horizontal,
+									position.xy + *it - rotate90(normal) * dimensions.x / 2.0f,
+									position.xy + *it + rotate90(normal) * dimensions.x / 2.0f
 								)
+								&& (!wall_exists || wall_distance > distance)
+								&& IN_RANGE(portion, 0.0f, 1.0f)
+							)
+							{
+								RenderScanNode** post_node = &render_scan_node;
+								while (*post_node && (*post_node)->distance < distance)
 								{
-									RenderScanNode** post_node = &render_scan_node;
-									while (*post_node && (*post_node)->distance < distance)
-									{
-										post_node = &(*post_node)->next_node;
-									}
+									post_node = &(*post_node)->next_node;
+								}
 
-									RenderScanNode* new_node = memory_arena_allocate<RenderScanNode>(&state->transient_arena);
-									new_node->image      = image;
-									new_node->normal     = normal;
-									new_node->distance   = distance;
-									new_node->portion    = portion;
-									new_node->next_node  = *post_node;
-									new_node->starting_y = static_cast<i32>(VIEW_RES.y / 2.0f + HORT_TO_VERT_K / state->game.lucia_fov * (offset_position.z - 0.5f * dimensions.y - state->game.lucia_position.z) / (distance + 0.1f));
-									new_node->ending_y   = static_cast<i32>(VIEW_RES.y / 2.0f + HORT_TO_VERT_K / state->game.lucia_fov * (offset_position.z + 0.5f * dimensions.y - state->game.lucia_position.z) / (distance + 0.1f));
-									*post_node = new_node;
-									return true;
-								}
-								else
-								{
-									return false;
-								}
-							};
-
-						#if 1
-						if (attempt_intersect(position))
-						{
-							return;
-						}
-
-						if (fabs(state->game.lucia_position.x / (MAP_DIM * WALL_SPACING) - roundf(state->game.lucia_position.x / (MAP_DIM * WALL_SPACING))) < fabs(state->game.lucia_position.y / (MAP_DIM * WALL_SPACING) - roundf(state->game.lucia_position.y / (MAP_DIM * WALL_SPACING))))
-						{
-							if (state->game.lucia_position.x / (MAP_DIM * WALL_SPACING) < 0.5f)
-							{
-								if (attempt_intersect(position + vi3 { -1, 0, 0 } * MAP_DIM * WALL_SPACING))
-								{
-									return;
-								}
-							}
-							else
-							{
-								if (attempt_intersect(position + vi3 { 1, 0, 0 } * MAP_DIM * WALL_SPACING))
-								{
-									return;
-								}
-							}
-							if (state->game.lucia_position.y / (MAP_DIM * WALL_SPACING) < 0.5f)
-							{
-								if (attempt_intersect(position + vi3 { 0, -1, 0 } * MAP_DIM * WALL_SPACING))
-								{
-									return;
-								}
-							}
-							else
-							{
-								if (attempt_intersect(position + vi3 { 0, 1, 0 } * MAP_DIM * WALL_SPACING))
-								{
-									return;
-								}
-							}
-						}
-						else
-						{
-							if (state->game.lucia_position.y / (MAP_DIM * WALL_SPACING) < 0.5f)
-							{
-								if (attempt_intersect(position + vi3 { 0, -1, 0 } * MAP_DIM * WALL_SPACING))
-								{
-									return;
-								}
-							}
-							else
-							{
-								if (attempt_intersect(position + vi3 { 0, 1, 0 } * MAP_DIM * WALL_SPACING))
-								{
-									return;
-								}
-							}
-							if (state->game.lucia_position.x / (MAP_DIM * WALL_SPACING) < 0.5f)
-							{
-								if (attempt_intersect(position + vi3 { -1, 0, 0 } * MAP_DIM * WALL_SPACING))
-								{
-									return;
-								}
-							}
-							else
-							{
-								if (attempt_intersect(position + vi3 { 1, 0, 0 } * MAP_DIM * WALL_SPACING))
-								{
-									return;
-								}
-							}
-						}
-
-						attempt_intersect(position + vf3 { 2.0f * roundf(position.x / (MAP_DIM * WALL_SPACING)) - 1.0f, 2.0f * roundf(position.y / (MAP_DIM * WALL_SPACING)) - 1.0f, 0.0f } * MAP_DIM * WALL_SPACING);
-						#else
-						FOR_RANGE(i, 9)
-						{
-							if (attempt_intersect(position + vi3 { i % 3 - 1, i / 3 - 1, 0 } * WALL_SPACING * MAP_DIM))
-							{
+								RenderScanNode* new_node = memory_arena_allocate<RenderScanNode>(&state->transient_arena);
+								new_node->image      = image;
+								new_node->normal     = normal;
+								new_node->distance   = distance;
+								new_node->portion    = portion;
+								new_node->next_node  = *post_node;
+								new_node->starting_y = static_cast<i32>(VIEW_RES.y / 2.0f + HORT_TO_VERT_K / state->game.lucia_fov * (position.z - 0.5f * dimensions.y - state->game.lucia_position.z) / (distance + 0.1f));
+								new_node->ending_y   = static_cast<i32>(VIEW_RES.y / 2.0f + HORT_TO_VERT_K / state->game.lucia_fov * (position.z + 0.5f * dimensions.y - state->game.lucia_position.z) / (distance + 0.1f));
+								*post_node = new_node;
 								break;
 							}
 						}
-						#endif
 					};
 
 				// @TEMP@
