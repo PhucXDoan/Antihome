@@ -1539,6 +1539,12 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 		case StateContext::game:
 		{
+			DEBUG_once // @TEMP@
+			{
+				state->game.lucia_position.xy = get_position_of_wall_side(state->game.door_wall_side, 1.0f);
+				//state->game.lucia_position.xy = get_position_of_wall_side(state->game.circuit_breaker_wall_side, 1.0f);
+			}
+
 			Mix_VolumeChunk(state->game.audio.drone    , static_cast<i32>(MIX_MAX_VOLUME *         state->game.ceiling_lights_keytime  * (1.0f - state->game.exiting_keytime)));
 			Mix_VolumeChunk(state->game.audio.drone_low, static_cast<i32>(MIX_MAX_VOLUME * (1.0f - state->game.ceiling_lights_keytime) * (1.0f - state->game.exiting_keytime)));
 
@@ -2750,9 +2756,13 @@ extern "C" PROTOTYPE_RENDER(render)
 			i32  view_pitch_;
 			SDL_LockTexture(state->game.texture.view, 0, reinterpret_cast<void**>(&view_pixels), &view_pitch_);
 
-			DEBUG_begin_profiling(FRAME);
+			// DEBUG_profiling_start(FRAME);
+
 			FOR_RANGE(x, VIEW_RES.x)
 			{
+				constexpr i32 SCANS = 10'000;
+				DEBUG_profiling_start(WALL_RAY_CASTING);
+
 				vf2 ray_horizontal = polar(state->game.lucia_angle + (0.5f - static_cast<f32>(x) / VIEW_RES.x) * state->game.lucia_fov);
 
 				WallSide  ray_casted_wall_side       = {};
@@ -2897,6 +2907,9 @@ extern "C" PROTOTYPE_RENDER(render)
 					}
 				}
 
+				DEBUG_profiling_end_accumulated(WALL_RAY_CASTING, SCANS);
+				DEBUG_profiling_start(SPRITE_RAY_CASTING);
+
 				enum struct Material : u8
 				{
 					null,
@@ -2986,12 +2999,6 @@ extern "C" PROTOTYPE_RENDER(render)
 						}
 					};
 
-				DEBUG_once // @TEMP@
-				{
-					state->game.lucia_position.xy = get_position_of_wall_side(state->game.door_wall_side, 1.0f);
-					//state->game.lucia_position.xy = get_position_of_wall_side(state->game.circuit_breaker_wall_side, 1.0f);
-				}
-
 				scan(Material::fire, get_image_of_frame(&state->game.animated_sprite.fire), { 70.0f, 60.0f, WALL_HEIGHT / 2.0f }, { 1.0f, 0.0f }, { 1.0f, 1.0f });
 
 				scan(Material::monster, get_image_of_frame(&state->game.animated_sprite.monster), state->game.monster_position, state->game.monster_normal, { 1.0f, 1.0f });
@@ -3005,6 +3012,9 @@ extern "C" PROTOTYPE_RENDER(render)
 				{
 					scan(Material::item, state->game.texture_sprite.default_items[+it->type - +ItemType::ITEM_START].image, it->position, it->normal, { 0.5f, 0.5f });
 				}
+
+				DEBUG_profiling_end_accumulated(SPRITE_RAY_CASTING, 10'000);
+				DEBUG_profiling_start(SHADING);
 
 				lambda shader =
 					[&](Material material, bool32 in_light, vf3 color, vf3 ray, vf3 normal, f32 distance)
@@ -3180,8 +3190,10 @@ extern "C" PROTOTYPE_RENDER(render)
 
 					NEXT_Y:;
 				}
+				DEBUG_profiling_end_accumulated(SHADING, SCANS);
 			}
-			DEBUG_end_profiling_averaged(FRAME, 32);
+
+			// DEBUG_profiling_end_averaged_printf(FRAME, 64, "Frame : %f / %f (%fx of goal)\n", DEBUG_get_profiling(FRAME), 1.0f / 60.0f, DEBUG_get_profiling(FRAME) * 60.0f);
 
 			SDL_UnlockTexture(state->game.texture.view);
 			render_texture(platform->renderer, state->game.texture.view, { 0.0f, 0.0f }, { static_cast<f32>(VIEW_RES.x) / SCREEN_RES.x * WIN_DIM.x, static_cast<f32>(VIEW_RES.y) / SCREEN_RES.y * WIN_DIM.y });
