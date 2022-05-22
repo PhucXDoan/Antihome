@@ -2746,43 +2746,13 @@ extern "C" PROTOTYPE_RENDER(render)
 			set_color(platform->renderer, monochrome(0.0f));
 			SDL_RenderClear(platform->renderer);
 
-			LARGE_INTEGER DEBUG_PERFORMANCE_FREQ;
-			QueryPerformanceFrequency(&DEBUG_PERFORMANCE_FREQ);
-
 			u32* view_pixels;
 			i32  view_pitch_;
 			SDL_LockTexture(state->game.texture.view, 0, reinterpret_cast<void**>(&view_pixels), &view_pitch_);
 
+			DEBUG_begin_profiling(FRAME);
 			FOR_RANGE(x, VIEW_RES.x)
 			{
-				#define PROFILING true
-				#if PROFILING
-				constexpr i32           DEBUG_SCANS       = 10'000;
-				persist   u64           DEBUG_ACCUMULATOR = 0;
-				persist   i32           DEBUG_COUNTER     = 0;
-				persist   LARGE_INTEGER DEBUG_FREQUENCY;
-
-				QueryPerformanceFrequency(&DEBUG_FREQUENCY);
-
-				LARGE_INTEGER DEBUG_LI_0;
-				QueryPerformanceCounter(&DEBUG_LI_0);
-
-				DEFER
-				{
-					LARGE_INTEGER DEBUG_LI_1;
-					QueryPerformanceCounter(&DEBUG_LI_1);
-
-					DEBUG_ACCUMULATOR += DEBUG_LI_1.QuadPart - DEBUG_LI_0.QuadPart;
-					DEBUG_COUNTER     += 1;
-					if (DEBUG_COUNTER > DEBUG_SCANS)
-					{
-						DEBUG_printf("%f\n", DEBUG_ACCUMULATOR / static_cast<f64>(DEBUG_FREQUENCY.QuadPart));
-						DEBUG_ACCUMULATOR = 0;
-						DEBUG_COUNTER     = 0;
-					}
-				};
-				#endif
-
 				vf2 ray_horizontal = polar(state->game.lucia_angle + (0.5f - static_cast<f32>(x) / VIEW_RES.x) * state->game.lucia_fov);
 
 				WallSide  ray_casted_wall_side       = {};
@@ -2939,7 +2909,103 @@ extern "C" PROTOTYPE_RENDER(render)
 					fire
 				};
 
+				struct RenderScanNode
+				{
+					Material        material;
+					bool32          in_light;
+					Image           image;
+					vf2             normal;
+					f32             distance;
+					f32             portion;
+					i32             starting_y;
+					i32             ending_y;
+					RenderScanNode* next_node;
+				};
+
+				memory_arena_checkpoint(&state->transient_arena);
+				RenderScanNode* render_scan_node = 0;
+
+				vf2 delta_checks[4];
+				{
+					vf2 lucia_position_uv = state->game.lucia_position.xy / (MAP_DIM * WALL_SPACING);
+
+					delta_checks[0]  = { 0.0f, 0.0f };
+					delta_checks[3]  = vf2 { 2.0f * roundf(lucia_position_uv.x) - 1.0f, 2.0f * roundf(lucia_position_uv.y) - 1.0f } * MAP_DIM * WALL_SPACING;
+					delta_checks[1]  = { delta_checks[3].x, 0.0f              };
+					delta_checks[2]  = { 0.0f             , delta_checks[3].y };
+
+					if (fabs(lucia_position_uv.x - roundf(lucia_position_uv.x)) > fabs(lucia_position_uv.y - roundf(lucia_position_uv.y)))
+					{
+						SWAP(&delta_checks[1], &delta_checks[2]);
+					}
+				}
+
 				constexpr f32 SHADER_INV_EPSILON = 0.9f;
+
+				lambda scan =
+					[&](Material material, Image image, vf3 position, vf2 normal, vf2 dimensions)
+					{
+						FOR_ELEMS(it, delta_checks)
+						{
+							f32 distance;
+							f32 portion;
+							if
+							(
+								ray_cast_line
+								(
+									&distance,
+									&portion,
+									state->game.lucia_position.xy,
+									ray_horizontal,
+									position.xy + *it - rotate90(normal) * dimensions.x / 2.0f,
+									position.xy + *it + rotate90(normal) * dimensions.x / 2.0f
+								)
+								&& (!+ray_casted_wall_side.voxel || wall_distance > distance)
+								&& IN_RANGE(portion, 0.0f, 1.0f)
+							)
+							{
+								RenderScanNode** post_node = &render_scan_node;
+								while (*post_node && (*post_node)->distance < distance)
+								{
+									post_node = &(*post_node)->next_node;
+								}
+
+								RenderScanNode* new_node = memory_arena_allocate<RenderScanNode>(&state->transient_arena);
+								new_node->material   = material;
+								new_node->in_light   = exists_clear_way(state, state->game.lucia_position.xy + ray_horizontal * distance * SHADER_INV_EPSILON, state->game.monster_position.xy);
+								new_node->image      = image;
+								new_node->normal     = normal;
+								new_node->distance   = distance;
+								new_node->portion    = portion;
+								new_node->next_node  = *post_node;
+								new_node->starting_y = static_cast<i32>(VIEW_RES.y / 2.0f + HORT_TO_VERT_K / state->game.lucia_fov * (position.z - 0.5f * dimensions.y - state->game.lucia_position.z) / (distance + 0.1f));
+								new_node->ending_y   = static_cast<i32>(VIEW_RES.y / 2.0f + HORT_TO_VERT_K / state->game.lucia_fov * (position.z + 0.5f * dimensions.y - state->game.lucia_position.z) / (distance + 0.1f));
+								*post_node = new_node;
+								break;
+							}
+						}
+					};
+
+				DEBUG_once // @TEMP@
+				{
+					state->game.lucia_position.xy = get_position_of_wall_side(state->game.door_wall_side, 1.0f);
+					//state->game.lucia_position.xy = get_position_of_wall_side(state->game.circuit_breaker_wall_side, 1.0f);
+				}
+
+				scan(Material::fire, get_image_of_frame(&state->game.animated_sprite.fire), { 70.0f, 60.0f, WALL_HEIGHT / 2.0f }, { 1.0f, 0.0f }, { 1.0f, 1.0f });
+
+				scan(Material::monster, get_image_of_frame(&state->game.animated_sprite.monster), state->game.monster_position, state->game.monster_normal, { 1.0f, 1.0f });
+
+				if (state->game.hand_on_state != HandOnState::null)
+				{
+					scan(Material::hand, state->game.texture_sprite.hand.image, state->game.hand_position, normalize(ray_to_closest(state->game.hand_position.xy, state->game.lucia_position.xy)), { 0.05f, 0.05f });
+				}
+
+				FOR_ELEMS(it, state->game.item_buffer, state->game.item_count)
+				{
+					scan(Material::item, state->game.texture_sprite.default_items[+it->type - +ItemType::ITEM_START].image, it->position, it->normal, { 0.5f, 0.5f });
+				}
+
 				lambda shader =
 					[&](Material material, bool32 in_light, vf3 color, vf3 ray, vf3 normal, f32 distance)
 					{
@@ -3009,101 +3075,6 @@ extern "C" PROTOTYPE_RENDER(render)
 							return vf3 { clamp(new_color.x, 0.0f, 1.0f), clamp(new_color.y, 0.0f, 1.0f), clamp(new_color.z, 0.0f, 1.0f) };
 						}
 					};
-
-				struct RenderScanNode
-				{
-					Material        material;
-					bool32          in_light;
-					Image           image;
-					vf2             normal;
-					f32             distance;
-					f32             portion;
-					i32             starting_y;
-					i32             ending_y;
-					RenderScanNode* next_node;
-				};
-
-				memory_arena_checkpoint(&state->transient_arena);
-				RenderScanNode* render_scan_node = 0;
-
-				vf2 delta_checks[4];
-				{
-					vf2 lucia_position_uv = state->game.lucia_position.xy / (MAP_DIM * WALL_SPACING);
-
-					delta_checks[0]  = { 0.0f, 0.0f };
-					delta_checks[3]  = vf2 { 2.0f * roundf(lucia_position_uv.x) - 1.0f, 2.0f * roundf(lucia_position_uv.y) - 1.0f } * MAP_DIM * WALL_SPACING;
-					delta_checks[1]  = { delta_checks[3].x, 0.0f              };
-					delta_checks[2]  = { 0.0f             , delta_checks[3].y };
-
-					if (fabs(lucia_position_uv.x - roundf(lucia_position_uv.x)) > fabs(lucia_position_uv.y - roundf(lucia_position_uv.y)))
-					{
-						SWAP(&delta_checks[1], &delta_checks[2]);
-					}
-				}
-
-				lambda scan =
-					[&](Material material, Image image, vf3 position, vf2 normal, vf2 dimensions)
-					{
-						FOR_ELEMS(it, delta_checks)
-						{
-							f32 distance;
-							f32 portion;
-							if
-							(
-								ray_cast_line
-								(
-									&distance,
-									&portion,
-									state->game.lucia_position.xy,
-									ray_horizontal,
-									position.xy + *it - rotate90(normal) * dimensions.x / 2.0f,
-									position.xy + *it + rotate90(normal) * dimensions.x / 2.0f
-								)
-								&& (!+ray_casted_wall_side.voxel || wall_distance > distance)
-								&& IN_RANGE(portion, 0.0f, 1.0f)
-							)
-							{
-								RenderScanNode** post_node = &render_scan_node;
-								while (*post_node && (*post_node)->distance < distance)
-								{
-									post_node = &(*post_node)->next_node;
-								}
-
-								RenderScanNode* new_node = memory_arena_allocate<RenderScanNode>(&state->transient_arena);
-								new_node->material   = material;
-								new_node->in_light   = exists_clear_way(state, state->game.lucia_position.xy + ray_horizontal * distance * SHADER_INV_EPSILON, state->game.monster_position.xy);
-								new_node->image      = image;
-								new_node->normal     = normal;
-								new_node->distance   = distance;
-								new_node->portion    = portion;
-								new_node->next_node  = *post_node;
-								new_node->starting_y = static_cast<i32>(VIEW_RES.y / 2.0f + HORT_TO_VERT_K / state->game.lucia_fov * (position.z - 0.5f * dimensions.y - state->game.lucia_position.z) / (distance + 0.1f));
-								new_node->ending_y   = static_cast<i32>(VIEW_RES.y / 2.0f + HORT_TO_VERT_K / state->game.lucia_fov * (position.z + 0.5f * dimensions.y - state->game.lucia_position.z) / (distance + 0.1f));
-								*post_node = new_node;
-								break;
-							}
-						}
-					};
-
-				DEBUG_once // @TEMP@
-				{
-					state->game.lucia_position.xy = get_position_of_wall_side(state->game.door_wall_side, 1.0f);
-					//state->game.lucia_position.xy = get_position_of_wall_side(state->game.circuit_breaker_wall_side, 1.0f);
-				}
-
-				scan(Material::fire, get_image_of_frame(&state->game.animated_sprite.fire), { 70.0f, 60.0f, WALL_HEIGHT / 2.0f }, { 1.0f, 0.0f }, { 1.0f, 1.0f });
-
-				scan(Material::monster, get_image_of_frame(&state->game.animated_sprite.monster), state->game.monster_position, state->game.monster_normal, { 1.0f, 1.0f });
-
-				if (state->game.hand_on_state != HandOnState::null)
-				{
-					scan(Material::hand, state->game.texture_sprite.hand.image, state->game.hand_position, normalize(ray_to_closest(state->game.hand_position.xy, state->game.lucia_position.xy)), { 0.05f, 0.05f });
-				}
-
-				FOR_ELEMS(it, state->game.item_buffer, state->game.item_count)
-				{
-					scan(Material::item, state->game.texture_sprite.default_items[+it->type - +ItemType::ITEM_START].image, it->position, it->normal, { 0.5f, 0.5f });
-				}
 
 				FOR_RANGE(y, VIEW_RES.y)
 				{
@@ -3210,6 +3181,7 @@ extern "C" PROTOTYPE_RENDER(render)
 					NEXT_Y:;
 				}
 			}
+			DEBUG_end_profiling_averaged(FRAME, 32);
 
 			SDL_UnlockTexture(state->game.texture.view);
 			render_texture(platform->renderer, state->game.texture.view, { 0.0f, 0.0f }, { static_cast<f32>(VIEW_RES.x) / SCREEN_RES.x * WIN_DIM.x, static_cast<f32>(VIEW_RES.y) / SCREEN_RES.y * WIN_DIM.y });
