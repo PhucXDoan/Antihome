@@ -1539,11 +1539,11 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 		case StateContext::game:
 		{
-			DEBUG_once // @TEMP@
-			{
-				state->game.lucia_position.xy = get_position_of_wall_side(state->game.door_wall_side, 1.0f);
-				//state->game.lucia_position.xy = get_position_of_wall_side(state->game.circuit_breaker_wall_side, 1.0f);
-			}
+			//DEBUG_once // @TEMP@
+			//{
+			//	state->game.lucia_position.xy = get_position_of_wall_side(state->game.door_wall_side, 1.0f);
+			//	state->game.lucia_position.xy = get_position_of_wall_side(state->game.circuit_breaker_wall_side, 1.0f);
+			//}
 
 			Mix_VolumeChunk(state->game.audio.drone    , static_cast<i32>(MIX_MAX_VOLUME *         state->game.ceiling_lights_keytime  * (1.0f - state->game.exiting_keytime)));
 			Mix_VolumeChunk(state->game.audio.drone_low, static_cast<i32>(MIX_MAX_VOLUME * (1.0f - state->game.ceiling_lights_keytime) * (1.0f - state->game.exiting_keytime)));
@@ -2372,7 +2372,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 				}
 			}
 
-			#if 0
+			#if 1
 			if (HOLDING(Input::space))
 			{
 				state->game.monster_position.xy = move(state, state->game.monster_position.xy, state->game.monster_velocity * SECONDS_PER_UPDATE);
@@ -2760,7 +2760,7 @@ extern "C" PROTOTYPE_RENDER(render)
 
 			FOR_RANGE(x, VIEW_RES.x)
 			{
-				constexpr i32 SCANS = 10'000;
+				constexpr i32 SCANS = 32'000;
 				DEBUG_profiling_start(WALL_RAY_CASTING);
 
 				vf2 ray_horizontal = polar(state->game.lucia_angle + (0.5f - static_cast<f32>(x) / VIEW_RES.x) * state->game.lucia_fov);
@@ -2938,63 +2938,78 @@ extern "C" PROTOTYPE_RENDER(render)
 				memory_arena_checkpoint(&state->transient_arena);
 				RenderScanNode* render_scan_node = 0;
 
-				vf2 delta_checks[4];
+				__m128 m_delta_checks_x;
+				__m128 m_delta_checks_y;
 				{
 					vf2 lucia_position_uv = state->game.lucia_position.xy / (MAP_DIM * WALL_SPACING);
 
-					delta_checks[0]  = { 0.0f, 0.0f };
-					delta_checks[3]  = vf2 { 2.0f * roundf(lucia_position_uv.x) - 1.0f, 2.0f * roundf(lucia_position_uv.y) - 1.0f } * MAP_DIM * WALL_SPACING;
-					delta_checks[1]  = { delta_checks[3].x, 0.0f              };
-					delta_checks[2]  = { 0.0f             , delta_checks[3].y };
+					m_delta_checks_x = _mm_mul_ps(_mm_set_ps(0.0f, 1.0f, 0.0f, 1.0f), _mm_set_ps1((2.0f * roundf(lucia_position_uv.x) - 1.0f) * MAP_DIM * WALL_SPACING));
+					m_delta_checks_y = _mm_mul_ps(_mm_set_ps(0.0f, 0.0f, 1.0f, 1.0f), _mm_set_ps1((2.0f * roundf(lucia_position_uv.y) - 1.0f) * MAP_DIM * WALL_SPACING));
 
 					if (fabs(lucia_position_uv.x - roundf(lucia_position_uv.x)) > fabs(lucia_position_uv.y - roundf(lucia_position_uv.y)))
 					{
-						SWAP(&delta_checks[1], &delta_checks[2]);
+						m_delta_checks_x = _mm_shuffle_ps(m_delta_checks_x, m_delta_checks_x, _MM_SHUFFLE(3, 1, 2, 0));
+						m_delta_checks_y = _mm_shuffle_ps(m_delta_checks_y, m_delta_checks_y, _MM_SHUFFLE(3, 1, 2, 0));
 					}
 				}
 
 				constexpr f32 SHADER_INV_EPSILON = 0.9f;
 
+				__m128 m_zero       = _mm_set_ps1(0.0f);
+				__m128 m_one        = _mm_set_ps1(1.0f);
+				__m128 m_inf        = _mm_set_ps1(INFINITY);
+				__m128 m_lucia_x    = _mm_set_ps1(state->game.lucia_position.x);
+				__m128 m_lucia_y    = _mm_set_ps1(state->game.lucia_position.y);
+				__m128 m_ray_x      = _mm_set_ps1(ray_horizontal.x);
+				__m128 m_ray_y      = _mm_set_ps1(ray_horizontal.y);
+				__m128 m_max_scalar = _mm_set_ps1(+ray_casted_wall_side.voxel ? wall_distance : INFINITY);
+
 				lambda scan =
 					[&](Material material, Image image, vf3 position, vf2 normal, vf2 dimensions)
 					{
-						FOR_ELEMS(it, delta_checks)
-						{
-							f32 distance;
-							f32 portion;
-							if
-							(
-								ray_cast_line
-								(
-									&distance,
-									&portion,
-									state->game.lucia_position.xy,
-									ray_horizontal,
-									position.xy + *it - rotate90(normal) * dimensions.x / 2.0f,
-									position.xy + *it + rotate90(normal) * dimensions.x / 2.0f
-								)
-								&& (!+ray_casted_wall_side.voxel || wall_distance > distance)
-								&& IN_RANGE(portion, 0.0f, 1.0f)
-							)
-							{
-								RenderScanNode** post_node = &render_scan_node;
-								while (*post_node && (*post_node)->distance < distance)
-								{
-									post_node = &(*post_node)->next_node;
-								}
+						__m128 m_start_x          = _mm_add_ps(_mm_set_ps1(position.x + normal.y * dimensions.x / 2.0f), m_delta_checks_x);
+						__m128 m_end_x            = _mm_add_ps(_mm_set_ps1(position.x - normal.y * dimensions.x / 2.0f), m_delta_checks_x);
+						__m128 m_start_y          = _mm_add_ps(_mm_set_ps1(position.y - normal.x * dimensions.x / 2.0f), m_delta_checks_y);
+						__m128 m_end_y            = _mm_add_ps(_mm_set_ps1(position.y + normal.x * dimensions.x / 2.0f), m_delta_checks_y);
+						__m128 m_start_to_end_x   = _mm_sub_ps(m_end_x, m_start_x);
+						__m128 m_start_to_end_y   = _mm_sub_ps(m_end_y, m_start_y);
+						__m128 m_start_to_lucia_x = _mm_sub_ps(m_lucia_x, m_start_x);
+						__m128 m_start_to_lucia_y = _mm_sub_ps(m_lucia_y, m_start_y);
+						__m128 m_det              = _mm_sub_ps(_mm_mul_ps(m_ray_x, m_start_to_end_y), _mm_mul_ps(m_ray_y, m_start_to_end_x));
+						__m128 m_scalar           = _mm_div_ps(_mm_sub_ps(_mm_mul_ps(m_start_to_lucia_y, m_start_to_end_x), _mm_mul_ps(m_start_to_lucia_x, m_start_to_end_y)), m_det);
+						__m128 m_portion          = _mm_div_ps(_mm_sub_ps(_mm_mul_ps(m_start_to_lucia_y, m_ray_x         ), _mm_mul_ps(m_start_to_lucia_x, m_ray_y         )), m_det);
+						i32    mask               = _mm_movemask_ps(_mm_and_ps(_mm_and_ps(_mm_cmpge_ps(m_scalar, m_zero), _mm_cmplt_ps(m_scalar, m_max_scalar)), _mm_and_ps(_mm_cmpge_ps(m_portion, m_zero), _mm_cmplt_ps(m_portion, m_one))));
 
-								RenderScanNode* new_node = memory_arena_allocate<RenderScanNode>(&state->transient_arena);
-								new_node->material   = material;
-								new_node->in_light   = exists_clear_way(state, state->game.lucia_position.xy + ray_horizontal * distance * SHADER_INV_EPSILON, state->game.monster_position.xy);
-								new_node->image      = image;
-								new_node->normal     = normal;
-								new_node->distance   = distance;
-								new_node->portion    = portion;
-								new_node->next_node  = *post_node;
-								new_node->starting_y = static_cast<i32>(VIEW_RES.y / 2.0f + HORT_TO_VERT_K / state->game.lucia_fov * (position.z - 0.5f * dimensions.y - state->game.lucia_position.z) / (distance + 0.1f));
-								new_node->ending_y   = static_cast<i32>(VIEW_RES.y / 2.0f + HORT_TO_VERT_K / state->game.lucia_fov * (position.z + 0.5f * dimensions.y - state->game.lucia_position.z) / (distance + 0.1f));
-								*post_node = new_node;
-								break;
+						if (mask)
+						{
+							f32 scalars[4];
+							f32 portions[4];
+							_mm_storeu_ps(scalars, m_scalar);
+							_mm_storeu_ps(portions, m_portion);
+
+							FOR_RANGE(i, 4)
+							{
+								if (mask & (1 << i))
+								{
+									RenderScanNode** post_node = &render_scan_node;
+									while (*post_node && (*post_node)->distance < scalars[i])
+									{
+										post_node = &(*post_node)->next_node;
+									}
+
+									RenderScanNode* new_node = memory_arena_allocate<RenderScanNode>(&state->transient_arena);
+									new_node->material   = material;
+									new_node->in_light   = exists_clear_way(state, state->game.lucia_position.xy + ray_horizontal * scalars[i] * SHADER_INV_EPSILON, state->game.monster_position.xy);
+									new_node->image      = image;
+									new_node->normal     = normal;
+									new_node->distance   = scalars[i];
+									new_node->portion    = portions[i];
+									new_node->next_node  = *post_node;
+									new_node->starting_y = static_cast<i32>(VIEW_RES.y / 2.0f + HORT_TO_VERT_K / state->game.lucia_fov * (position.z - 0.5f * dimensions.y - state->game.lucia_position.z) / (scalars[i] + 0.1f));
+									new_node->ending_y   = static_cast<i32>(VIEW_RES.y / 2.0f + HORT_TO_VERT_K / state->game.lucia_fov * (position.z + 0.5f * dimensions.y - state->game.lucia_position.z) / (scalars[i] + 0.1f));
+									*post_node = new_node;
+									break;
+								}
 							}
 						}
 					};
@@ -3013,7 +3028,7 @@ extern "C" PROTOTYPE_RENDER(render)
 					scan(Material::item, state->game.texture_sprite.default_items[+it->type - +ItemType::ITEM_START].image, it->position, it->normal, { 0.5f, 0.5f });
 				}
 
-				DEBUG_profiling_end_accumulated(SPRITE_RAY_CASTING, 10'000);
+				DEBUG_profiling_end_accumulated(SPRITE_RAY_CASTING, SCANS);
 				DEBUG_profiling_start(SHADING);
 
 				lambda shader =
