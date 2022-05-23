@@ -203,7 +203,7 @@ struct MemoryArena
 };
 
 template <typename TYPE>
-internal TYPE* memory_arena_allocate(MemoryArena* arena, i32 count = 1)
+internal TYPE* memory_arena_allocate(MemoryArena* arena, memsize count = 1)
 {
 	ASSERT(arena->used + sizeof(TYPE) * count <= arena->size);
 	byte* allocation = arena->base + arena->used;
@@ -212,7 +212,7 @@ internal TYPE* memory_arena_allocate(MemoryArena* arena, i32 count = 1)
 }
 
 template <typename TYPE>
-internal TYPE* memory_arena_allocate_zero(MemoryArena* arena, i32 count = 1)
+internal TYPE* memory_arena_allocate_zero(MemoryArena* arena, memsize count = 1)
 {
 	ASSERT(arena->used + sizeof(TYPE) * count <= arena->size);
 	byte* allocation = arena->base + arena->used;
