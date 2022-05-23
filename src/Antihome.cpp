@@ -1,30 +1,4 @@
 /* @TODO@
-	- Sunday 2022-5-22:
-
-	- Monday 2022-5-23:
-
-	- Tuesday 2022-5-24:
-
-	- Wednesday 2022-5-25:
-
-	- Thursday 2022-5-26:
-
-	- Friday 2022-5-27:
-
-	- Saturday 2022-5-28:
-
-	- Sunday 2022-5-29:
-
-	- Monday 2022-5-30:
-
-	- Tuesday 2022-5-31:
-
-	- Wednesday 2022-6-1:
-
-	- Thursday 2022-6-2:
-
-	- Friday 2022-6-3:
-
 	* Better input.
 	* Handle disconnected initial and updated values.
 	* Handle different resolutions.
@@ -71,7 +45,8 @@ global constexpr vf2 CIRCUIT_BREAKER_SWITCH_DIMENSIONS           = { 30.0f, CIRC
 global constexpr vf2 CIRCUIT_BREAKER_SWITCH_PADDINGS             = { (CIRCUIT_BREAKER_VOLTAGE_DISPLAY_COORDINATES.x - (VIEW_RES.x - CIRCUIT_BREAKER_HUD_DIMENSIONS.x) / 2.0f - CIRCUIT_BREAKER_SWITCH_DIMENSIONS.x * CIRCUIT_BREAKER_SWITCH_GRID.x) / (1.0f + CIRCUIT_BREAKER_SWITCH_GRID.x), 20.0f };
 global constexpr vf2 CIRCUIT_BREAKER_HUD_POSITION                = (VIEW_RES - CIRCUIT_BREAKER_HUD_DIMENSIONS) / 2.0f;
 
-global constexpr i32 RENDER_THREADS = 4;
+global constexpr bool32 USE_RENDER_THREADS = true;
+global constexpr i32    RENDER_THREADS     = 4;
 
 enum_loose (AudioChannel, i8)
 {
@@ -885,6 +860,7 @@ internal vf2 move(State* state, vf2 position, vf2 displacement)
 
 internal bool32 exists_clear_way(State* state, vf2 position, vf2 goal)
 {
+	#if 1
 	position.x = mod(position.x, MAP_DIM * WALL_SPACING);
 	position.y = mod(position.y, MAP_DIM * WALL_SPACING);
 	goal.x     = mod(goal.x    , MAP_DIM * WALL_SPACING);
@@ -940,424 +916,433 @@ internal bool32 exists_clear_way(State* state, vf2 position, vf2 goal)
 			coordinates.y += step.y;
 		}
 	}
+	#endif
 
 	return false;
 }
 
-internal void execute_on_render_thread_data(RenderThreadData* thread_data)
+// #define exists_clear_way(...) (exists_clear_way(__VA_ARGS__) || true)
+
+internal void render_scan_line(u32* view_pixels, i32 x, State* state, MemoryArena arena)
 {
-	for (i32 x = thread_data->start_x; x < VIEW_RES.x; x += RENDER_THREADS)
+	vf2 ray_horizontal = polar(state->game.lucia_angle + (0.5f - static_cast<f32>(x) / VIEW_RES.x) * state->game.lucia_fov);
+
+	WallSide ray_casted_wall_side       = {};
+	f32      wall_distance              = NAN;
+	f32      wall_portion               = NAN;
+	i32      wall_starting_y            = 0;
+	i32      wall_ending_y              = 0;
+	Image*   wall_overlay               = 0;
+	vf2      wall_overlay_uv_position   = { NAN, NAN };
+	vf2      wall_overlay_uv_dimensions = { NAN, NAN };
+	bool32   wall_in_light              = true;
+
 	{
-		thread_data->arena.used = 0;
-
-		vf2 ray_horizontal = polar(thread_data->state->game.lucia_angle + (0.5f - static_cast<f32>(x) / VIEW_RES.x) * thread_data->state->game.lucia_fov);
-
-		WallSide ray_casted_wall_side       = {};
-		f32      wall_distance              = NAN;
-		f32      wall_portion               = NAN;
-		i32      wall_starting_y            = 0;
-		i32      wall_ending_y              = 0;
-		Image*   wall_overlay               = 0;
-		vf2      wall_overlay_uv_position   = { NAN, NAN };
-		vf2      wall_overlay_uv_dimensions = { NAN, NAN };
-		bool32   wall_in_light              = true;
-
-		{
-			vi2 step    = { sign(ray_horizontal.x), sign(ray_horizontal.y) };
-			vf2 t_delta = vf2 { step.x / ray_horizontal.x, step.y / ray_horizontal.y } * WALL_SPACING;
-			vf2 t_max   =
-				{
-					(floorf(thread_data->state->game.lucia_position.x / WALL_SPACING + (ray_horizontal.x >= 0.0f)) * WALL_SPACING - thread_data->state->game.lucia_position.x) / ray_horizontal.x,
-					(floorf(thread_data->state->game.lucia_position.y / WALL_SPACING + (ray_horizontal.y >= 0.0f)) * WALL_SPACING - thread_data->state->game.lucia_position.y) / ray_horizontal.y
-				};
-
-			ray_casted_wall_side.coordinates =
-				{
-					static_cast<i32>(floorf(thread_data->state->game.lucia_position.x / WALL_SPACING)),
-					static_cast<i32>(floorf(thread_data->state->game.lucia_position.y / WALL_SPACING))
-				};
-
-			FOR_RANGE(MAP_DIM * MAP_DIM)
+		vi2 step    = { sign(ray_horizontal.x), sign(ray_horizontal.y) };
+		vf2 t_delta = vf2 { step.x / ray_horizontal.x, step.y / ray_horizontal.y } * WALL_SPACING;
+		vf2 t_max   =
 			{
-				FOR_ELEMS(voxel_data, WALL_VOXEL_DATA)
+				(floorf(state->game.lucia_position.x / WALL_SPACING + (ray_horizontal.x >= 0.0f)) * WALL_SPACING - state->game.lucia_position.x) / ray_horizontal.x,
+				(floorf(state->game.lucia_position.y / WALL_SPACING + (ray_horizontal.y >= 0.0f)) * WALL_SPACING - state->game.lucia_position.y) / ray_horizontal.y
+			};
+
+		ray_casted_wall_side.coordinates =
+			{
+				static_cast<i32>(floorf(state->game.lucia_position.x / WALL_SPACING)),
+				static_cast<i32>(floorf(state->game.lucia_position.y / WALL_SPACING))
+			};
+
+		FOR_RANGE(MAP_DIM * MAP_DIM)
+		{
+			FOR_ELEMS(voxel_data, WALL_VOXEL_DATA)
+			{
+				if (+(*get_wall_voxel(state, ray_casted_wall_side.coordinates) & voxel_data->voxel))
 				{
-					if (+(*get_wall_voxel(thread_data->state, ray_casted_wall_side.coordinates) & voxel_data->voxel))
-					{
-						f32 distance;
-						f32 portion;
-						if
+					f32 distance;
+					f32 portion;
+					if
+					(
+						ray_cast_line
 						(
-							ray_cast_line
-							(
-								&distance,
-								&portion,
-								thread_data->state->game.lucia_position.xy,
-								ray_horizontal,
-								(ray_casted_wall_side.coordinates + voxel_data->start) * WALL_SPACING,
-								(ray_casted_wall_side.coordinates + voxel_data->end  ) * WALL_SPACING
-							)
-							&& IN_RANGE(portion, 0.0f, 1.0f)
-							&& (!+ray_casted_wall_side.voxel || distance < wall_distance)
+							&distance,
+							&portion,
+							state->game.lucia_position.xy,
+							ray_horizontal,
+							(ray_casted_wall_side.coordinates + voxel_data->start) * WALL_SPACING,
+							(ray_casted_wall_side.coordinates + voxel_data->end  ) * WALL_SPACING
 						)
-						{
-							ray_casted_wall_side.normal = voxel_data->normal * (dot(ray_horizontal, voxel_data->normal) < 0.0f ? 1.0f : -1.0f);
-							ray_casted_wall_side.voxel  = voxel_data->voxel;
-							wall_distance               = distance;
-							wall_portion                = portion;
-						}
+						&& IN_RANGE(portion, 0.0f, 1.0f)
+						&& (!+ray_casted_wall_side.voxel || distance < wall_distance)
+					)
+					{
+						ray_casted_wall_side.normal = voxel_data->normal * (dot(ray_horizontal, voxel_data->normal) < 0.0f ? 1.0f : -1.0f);
+						ray_casted_wall_side.voxel  = voxel_data->voxel;
+						wall_distance               = distance;
+						wall_portion                = portion;
 					}
 				}
+			}
 
-				if (+ray_casted_wall_side.voxel)
+			if (+ray_casted_wall_side.voxel)
+			{
+				ray_casted_wall_side.coordinates.x = mod(ray_casted_wall_side.coordinates.x, MAP_DIM);
+				ray_casted_wall_side.coordinates.y = mod(ray_casted_wall_side.coordinates.y, MAP_DIM);
+
+				wall_starting_y = static_cast<i32>(VIEW_RES.y / 2.0f - HORT_TO_VERT_K / state->game.lucia_fov *                state->game.lucia_position.z  / (wall_distance + 0.01f));
+				wall_ending_y   = static_cast<i32>(VIEW_RES.y / 2.0f + HORT_TO_VERT_K / state->game.lucia_fov * (WALL_HEIGHT - state->game.lucia_position.z) / (wall_distance + 0.01f));
+
+				if (equal_wall_sides(ray_casted_wall_side, state->game.door_wall_side))
 				{
-					ray_casted_wall_side.coordinates.x = mod(ray_casted_wall_side.coordinates.x, MAP_DIM);
-					ray_casted_wall_side.coordinates.y = mod(ray_casted_wall_side.coordinates.y, MAP_DIM);
-
-					wall_starting_y = static_cast<i32>(VIEW_RES.y / 2.0f - HORT_TO_VERT_K / thread_data->state->game.lucia_fov *                thread_data->state->game.lucia_position.z  / (wall_distance + 0.01f));
-					wall_ending_y   = static_cast<i32>(VIEW_RES.y / 2.0f + HORT_TO_VERT_K / thread_data->state->game.lucia_fov * (WALL_HEIGHT - thread_data->state->game.lucia_position.z) / (wall_distance + 0.01f));
-
-					if (equal_wall_sides(ray_casted_wall_side, thread_data->state->game.door_wall_side))
+					if (+(state->game.door_wall_side.voxel & (WallVoxel::back_slash | WallVoxel::forward_slash)))
 					{
-						if (+(thread_data->state->game.door_wall_side.voxel & (WallVoxel::back_slash | WallVoxel::forward_slash)))
-						{
-							wall_overlay               = &thread_data->state->game.image.door;
-							wall_overlay_uv_position   = { 0.5f - 0.25f / SQRT2, 0.0f };
-							wall_overlay_uv_dimensions = { 0.25f / SQRT2, 0.85f };
-						}
-						else
-						{
-							wall_overlay               = &thread_data->state->game.image.door;
-							wall_overlay_uv_position   = { 0.25f, 0.0f };
-							wall_overlay_uv_dimensions = { 0.5f, 0.85f };
-						}
-					}
-					else if (equal_wall_sides(ray_casted_wall_side, thread_data->state->game.circuit_breaker_wall_side))
-					{
-						// @TODO@ Prevent diagonal stretching.
-						wall_overlay               = &thread_data->state->game.image.circuit_breaker;
-						wall_overlay_uv_position   = { 0.35f, 0.25f };
-						wall_overlay_uv_dimensions = { 0.30f, 0.50f };
+						wall_overlay               = &state->game.image.door;
+						wall_overlay_uv_position   = { 0.5f - 0.25f / SQRT2, 0.0f };
+						wall_overlay_uv_dimensions = { 0.25f / SQRT2, 0.85f };
 					}
 					else
 					{
-						f32 direction =
-							dot
-							(
-								rotate90(ray_casted_wall_side.normal),
-								normalize(ray_to_closest(get_position_of_wall_side(ray_casted_wall_side, 0.0f), get_position_of_wall_side(thread_data->state->game.door_wall_side, 0.0f)))
-							);
-
-						if (dot(ray_horizontal, get_wall_voxel_data(ray_casted_wall_side.voxel)->normal) > 0.0f)
-						{
-							direction = -direction;
-						}
-
-						constexpr f32 THRESHOLD = 0.7f;
-						if (rng(static_cast<i32>((ray_casted_wall_side.coordinates.x + ray_casted_wall_side.coordinates.y) * 317 + ray_casted_wall_side.coordinates.y * 171)) < 0.2f)
-						{
-							if (direction < -THRESHOLD)
-							{
-								wall_overlay = &thread_data->state->game.image.wall_left_arrow;
-							}
-							else if (direction > THRESHOLD)
-							{
-								wall_overlay = &thread_data->state->game.image.wall_right_arrow;
-							}
-						}
-
-						wall_overlay_uv_position   = { 0.0f, 0.0f };
-						wall_overlay_uv_dimensions = { 1.0f, 1.0f };
+						wall_overlay               = &state->game.image.door;
+						wall_overlay_uv_position   = { 0.25f, 0.0f };
+						wall_overlay_uv_dimensions = { 0.5f, 0.85f };
 					}
-
-					if (wall_overlay && !IN_RANGE(wall_portion, wall_overlay_uv_position.x, wall_overlay_uv_position.x + wall_overlay_uv_dimensions.x))
-					{
-						wall_overlay = 0;
-					}
-
-					wall_in_light =
-						dot(ray_to_closest(thread_data->state->game.lucia_position.xy + ray_horizontal * wall_distance, thread_data->state->game.monster_position.xy), ray_casted_wall_side.normal) > 0.0f
-							&& exists_clear_way(thread_data->state, thread_data->state->game.monster_position.xy, thread_data->state->game.lucia_position.xy + ray_horizontal * wall_distance * 0.99f);
-
-					break;
 				}
-
-				if (t_max.x < t_max.y)
+				else if (equal_wall_sides(ray_casted_wall_side, state->game.circuit_breaker_wall_side))
 				{
-					t_max.x                            += t_delta.x;
-					ray_casted_wall_side.coordinates.x += step.x;
+					// @TODO@ Prevent diagonal stretching.
+					wall_overlay               = &state->game.image.circuit_breaker;
+					wall_overlay_uv_position   = { 0.35f, 0.25f };
+					wall_overlay_uv_dimensions = { 0.30f, 0.50f };
 				}
 				else
 				{
-					t_max.y                            += t_delta.y;
-					ray_casted_wall_side.coordinates.y += step.y;
-				}
-			}
-		}
+					f32 direction =
+						dot
+						(
+							rotate90(ray_casted_wall_side.normal),
+							normalize(ray_to_closest(get_position_of_wall_side(ray_casted_wall_side, 0.0f), get_position_of_wall_side(state->game.door_wall_side, 0.0f)))
+						);
 
-		enum struct Material : u8
-		{
-			null,
-			wall,
-			floor,
-			ceiling,
-			item,
-			monster,
-			hand,
-			fire
-		};
-
-		struct RenderScanNode
-		{
-			Material        material;
-			bool32          in_light;
-			Image           image;
-			vf2             normal;
-			f32             distance;
-			f32             portion;
-			i32             starting_y;
-			i32             ending_y;
-			RenderScanNode* next_node;
-		};
-
-		RenderScanNode* render_scan_node = 0;
-
-		__m128 m_delta_checks_x;
-		__m128 m_delta_checks_y;
-		{
-			vf2 lucia_position_uv = thread_data->state->game.lucia_position.xy / (MAP_DIM * WALL_SPACING);
-
-			m_delta_checks_x = _mm_mul_ps(_mm_set_ps(0.0f, 1.0f, 0.0f, 1.0f), _mm_set_ps1((2.0f * roundf(lucia_position_uv.x) - 1.0f) * MAP_DIM * WALL_SPACING));
-			m_delta_checks_y = _mm_mul_ps(_mm_set_ps(0.0f, 0.0f, 1.0f, 1.0f), _mm_set_ps1((2.0f * roundf(lucia_position_uv.y) - 1.0f) * MAP_DIM * WALL_SPACING));
-
-			if (fabs(lucia_position_uv.x - roundf(lucia_position_uv.x)) > fabs(lucia_position_uv.y - roundf(lucia_position_uv.y)))
-			{
-				m_delta_checks_x = _mm_shuffle_ps(m_delta_checks_x, m_delta_checks_x, _MM_SHUFFLE(3, 1, 2, 0));
-				m_delta_checks_y = _mm_shuffle_ps(m_delta_checks_y, m_delta_checks_y, _MM_SHUFFLE(3, 1, 2, 0));
-			}
-		}
-
-		constexpr f32 SHADER_INV_EPSILON = 0.9f;
-
-		__m128 m_zero       = _mm_set_ps1(0.0f);
-		__m128 m_one        = _mm_set_ps1(1.0f);
-		__m128 m_inf        = _mm_set_ps1(INFINITY);
-		__m128 m_lucia_x    = _mm_set_ps1(thread_data->state->game.lucia_position.x);
-		__m128 m_lucia_y    = _mm_set_ps1(thread_data->state->game.lucia_position.y);
-		__m128 m_ray_x      = _mm_set_ps1(ray_horizontal.x);
-		__m128 m_ray_y      = _mm_set_ps1(ray_horizontal.y);
-		__m128 m_max_scalar = _mm_set_ps1(+ray_casted_wall_side.voxel ? wall_distance : INFINITY);
-
-		lambda scan =
-			[&](Material material, Image image, vf3 position, vf2 normal, vf2 dimensions)
-			{
-				__m128 m_start_x          = _mm_add_ps(_mm_set_ps1(position.x + normal.y * dimensions.x / 2.0f), m_delta_checks_x);
-				__m128 m_end_x            = _mm_add_ps(_mm_set_ps1(position.x - normal.y * dimensions.x / 2.0f), m_delta_checks_x);
-				__m128 m_start_y          = _mm_add_ps(_mm_set_ps1(position.y - normal.x * dimensions.x / 2.0f), m_delta_checks_y);
-				__m128 m_end_y            = _mm_add_ps(_mm_set_ps1(position.y + normal.x * dimensions.x / 2.0f), m_delta_checks_y);
-				__m128 m_start_to_end_x   = _mm_sub_ps(m_end_x, m_start_x);
-				__m128 m_start_to_end_y   = _mm_sub_ps(m_end_y, m_start_y);
-				__m128 m_start_to_lucia_x = _mm_sub_ps(m_lucia_x, m_start_x);
-				__m128 m_start_to_lucia_y = _mm_sub_ps(m_lucia_y, m_start_y);
-				__m128 m_det              = _mm_sub_ps(_mm_mul_ps(m_ray_x, m_start_to_end_y), _mm_mul_ps(m_ray_y, m_start_to_end_x));
-				__m128 m_scalar           = _mm_div_ps(_mm_sub_ps(_mm_mul_ps(m_start_to_lucia_y, m_start_to_end_x), _mm_mul_ps(m_start_to_lucia_x, m_start_to_end_y)), m_det);
-				__m128 m_portion          = _mm_div_ps(_mm_sub_ps(_mm_mul_ps(m_start_to_lucia_y, m_ray_x         ), _mm_mul_ps(m_start_to_lucia_x, m_ray_y         )), m_det);
-				i32    mask               = _mm_movemask_ps(_mm_and_ps(_mm_and_ps(_mm_cmpge_ps(m_scalar, m_zero), _mm_cmplt_ps(m_scalar, m_max_scalar)), _mm_and_ps(_mm_cmpge_ps(m_portion, m_zero), _mm_cmplt_ps(m_portion, m_one))));
-
-				if (mask)
-				{
-					f32 scalars[4];
-					f32 portions[4];
-					_mm_storeu_ps(scalars, m_scalar);
-					_mm_storeu_ps(portions, m_portion);
-
-					FOR_RANGE(i, 4)
+					if (dot(ray_horizontal, get_wall_voxel_data(ray_casted_wall_side.voxel)->normal) > 0.0f)
 					{
-						if (mask & (1 << i))
-						{
-							RenderScanNode** post_node = &render_scan_node;
-							while (*post_node && (*post_node)->distance < scalars[i])
-							{
-								post_node = &(*post_node)->next_node;
-							}
+						direction = -direction;
+					}
 
-							RenderScanNode* new_node = memory_arena_allocate<RenderScanNode>(&thread_data->arena);
-							new_node->material   = material;
-							new_node->in_light   = exists_clear_way(thread_data->state, thread_data->state->game.lucia_position.xy + ray_horizontal * scalars[i] * SHADER_INV_EPSILON, thread_data->state->game.monster_position.xy);
-							new_node->image      = image;
-							new_node->normal     = normal;
-							new_node->distance   = scalars[i];
-							new_node->portion    = portions[i];
-							new_node->next_node  = *post_node;
-							new_node->starting_y = static_cast<i32>(VIEW_RES.y / 2.0f + HORT_TO_VERT_K / thread_data->state->game.lucia_fov * (position.z - 0.5f * dimensions.y - thread_data->state->game.lucia_position.z) / (scalars[i] + 0.1f));
-							new_node->ending_y   = static_cast<i32>(VIEW_RES.y / 2.0f + HORT_TO_VERT_K / thread_data->state->game.lucia_fov * (position.z + 0.5f * dimensions.y - thread_data->state->game.lucia_position.z) / (scalars[i] + 0.1f));
-							*post_node = new_node;
-							break;
+					constexpr f32 THRESHOLD = 0.7f;
+					if (rng(static_cast<i32>((ray_casted_wall_side.coordinates.x + ray_casted_wall_side.coordinates.y) * 317 + ray_casted_wall_side.coordinates.y * 171)) < 0.2f)
+					{
+						if (direction < -THRESHOLD)
+						{
+							wall_overlay = &state->game.image.wall_left_arrow;
+						}
+						else if (direction > THRESHOLD)
+						{
+							wall_overlay = &state->game.image.wall_right_arrow;
 						}
 					}
-				}
-			};
 
-		scan(Material::fire, get_image_of_frame(&thread_data->state->game.animated_sprite.fire), { 70.0f, 60.0f, WALL_HEIGHT / 2.0f }, { 1.0f, 0.0f }, { 1.0f, 1.0f });
-
-		scan(Material::monster, get_image_of_frame(&thread_data->state->game.animated_sprite.monster), thread_data->state->game.monster_position, thread_data->state->game.monster_normal, { 1.0f, 1.0f });
-
-		if (thread_data->state->game.hand_on_state != HandOnState::null)
-		{
-			scan(Material::hand, thread_data->state->game.texture_sprite.hand.image, thread_data->state->game.hand_position, normalize(ray_to_closest(thread_data->state->game.hand_position.xy, thread_data->state->game.lucia_position.xy)), { 0.05f, 0.05f });
-		}
-
-		FOR_ELEMS(it, thread_data->state->game.item_buffer, thread_data->state->game.item_count)
-		{
-			scan(Material::item, thread_data->state->game.texture_sprite.default_items[+it->type - +ItemType::ITEM_START].image, it->position, it->normal, { 0.5f, 0.5f });
-		}
-
-		lambda shader =
-			[&](vf3 color, Material material, bool32 in_light, vf3 ray, vf3 normal, f32 distance)
-			{
-				constexpr f32 FLASHLIGHT_INNER_CUTOFF = 0.95f;
-				constexpr f32 FLASHLIGHT_OUTER_CUTOFF = 0.93f;
-
-				f32 ceiling_lights_t = 0.5f - 4.0f * cube(0.5f - thread_data->state->game.ceiling_lights_keytime);
-
-				vf3 lighting =
-					vf3 { 1.0f, 1.0f, 1.0f } * 0.5f / (square(distance) / 4.0f + 1.0f)
-					+ vf3 { 1.0f, 1.0f, 1.0f } * lerp(0.6f, 1.3f, (thread_data->state->game.lucia_position.z + ray.z * distance) / WALL_HEIGHT) * ceiling_lights_t
-					+ vf3 { 1.0f, 1.0f, 1.0f }
-						* (1.0f + powf(square(dot(ray, normal)), 64) * square(dot(ray, thread_data->state->game.flashlight_ray)) * 0.8f)
-						* clamp((dot(ray, thread_data->state->game.flashlight_ray) - FLASHLIGHT_OUTER_CUTOFF) / (FLASHLIGHT_INNER_CUTOFF - FLASHLIGHT_OUTER_CUTOFF), 0.0f, 1.0f)
-						/ (square(distance) * 0.1f + 7.0f)
-						* 6.0f
-						* thread_data->state->game.flashlight_activation;
-
-				if (in_light)
-				{
-					constexpr vf3 FIRE_COLOR = { 0.8863f, 0.3451f, 0.1333f };
-					if (material == Material::monster)
-					{
-						lighting += FIRE_COLOR * 0.7f;
-					}
-					else
-					{
-						vf3 frag_position = thread_data->state->game.lucia_position + ray * distance;
-						vf3 frag_ray      = vx3(ray_to_closest(frag_position.xy, thread_data->state->game.monster_position.xy), thread_data->state->game.monster_position.z - frag_position.z);
-
-						lighting +=
-							FIRE_COLOR
-								* 32.0f
-								* square(clamp(1.0f / (norm(frag_ray) + 0.1f), 0.0f, 1.0f))
-								* fabsf(dot(normalize(frag_ray), normal));
-					}
+					wall_overlay_uv_position   = { 0.0f, 0.0f };
+					wall_overlay_uv_dimensions = { 1.0f, 1.0f };
 				}
 
-				vf3 new_color = hadamard_multiply(color, lighting);
-
-				return vf3 { clamp(new_color.x, 0.0f, 1.0f), clamp(new_color.y, 0.0f, 1.0f), clamp(new_color.z, 0.0f, 1.0f) };
-			};
-
-		FOR_RANGE(y, VIEW_RES.y)
-		{
-			vf3 ray        = normalize({ ray_horizontal.x, ray_horizontal.y, (y - VIEW_RES.y / 2.0f) * thread_data->state->game.lucia_fov / HORT_TO_VERT_K });
-			vf4 scan_pixel = { NAN, NAN, NAN, NAN };
-
-			for (RenderScanNode* node = render_scan_node; node; node = node->next_node)
-			{
-				if (IN_RANGE(y, node->starting_y, node->ending_y) && IN_RANGE(thread_data->state->game.lucia_position.z + ray.z * node->distance, 0.0f, WALL_HEIGHT))
+				if (wall_overlay && !IN_RANGE(wall_portion, wall_overlay_uv_position.x, wall_overlay_uv_position.x + wall_overlay_uv_dimensions.x))
 				{
-					scan_pixel = sample_at(&node->image, { node->portion, (static_cast<f32>(y) - node->starting_y) / (node->ending_y - node->starting_y) });
-					if (scan_pixel.w)
+					wall_overlay = 0;
+				}
+
+				wall_in_light =
+					dot(ray_to_closest(state->game.lucia_position.xy + ray_horizontal * wall_distance, state->game.monster_position.xy), ray_casted_wall_side.normal) > 0.0f
+						&& exists_clear_way(state, state->game.monster_position.xy, state->game.lucia_position.xy + ray_horizontal * wall_distance * 0.99f);
+
+				break;
+			}
+
+			if (t_max.x < t_max.y)
+			{
+				t_max.x                            += t_delta.x;
+				ray_casted_wall_side.coordinates.x += step.x;
+			}
+			else
+			{
+				t_max.y                            += t_delta.y;
+				ray_casted_wall_side.coordinates.y += step.y;
+			}
+		}
+	}
+
+	enum struct Material : u8
+	{
+		null,
+		wall,
+		floor,
+		ceiling,
+		item,
+		monster,
+		hand,
+		fire
+	};
+
+	struct RenderScanNode
+	{
+		Material        material;
+		bool32          in_light;
+		Image           image;
+		vf2             normal;
+		f32             distance;
+		f32             portion;
+		i32             starting_y;
+		i32             ending_y;
+		RenderScanNode* next_node;
+	};
+
+	RenderScanNode* render_scan_node = 0;
+
+	__m128 m_delta_checks_x;
+	__m128 m_delta_checks_y;
+	{
+		vf2 lucia_position_uv = state->game.lucia_position.xy / (MAP_DIM * WALL_SPACING);
+
+		m_delta_checks_x = _mm_mul_ps(_mm_set_ps(0.0f, 1.0f, 0.0f, 1.0f), _mm_set_ps1((2.0f * roundf(lucia_position_uv.x) - 1.0f) * MAP_DIM * WALL_SPACING));
+		m_delta_checks_y = _mm_mul_ps(_mm_set_ps(0.0f, 0.0f, 1.0f, 1.0f), _mm_set_ps1((2.0f * roundf(lucia_position_uv.y) - 1.0f) * MAP_DIM * WALL_SPACING));
+
+		if (fabs(lucia_position_uv.x - roundf(lucia_position_uv.x)) > fabs(lucia_position_uv.y - roundf(lucia_position_uv.y)))
+		{
+			m_delta_checks_x = _mm_shuffle_ps(m_delta_checks_x, m_delta_checks_x, _MM_SHUFFLE(3, 1, 2, 0));
+			m_delta_checks_y = _mm_shuffle_ps(m_delta_checks_y, m_delta_checks_y, _MM_SHUFFLE(3, 1, 2, 0));
+		}
+	}
+
+	constexpr f32 SHADER_INV_EPSILON = 0.9f;
+
+	__m128 m_zero       = _mm_set_ps1(0.0f);
+	__m128 m_one        = _mm_set_ps1(1.0f);
+	__m128 m_inf        = _mm_set_ps1(INFINITY);
+	__m128 m_lucia_x    = _mm_set_ps1(state->game.lucia_position.x);
+	__m128 m_lucia_y    = _mm_set_ps1(state->game.lucia_position.y);
+	__m128 m_ray_x      = _mm_set_ps1(ray_horizontal.x);
+	__m128 m_ray_y      = _mm_set_ps1(ray_horizontal.y);
+	__m128 m_max_scalar = _mm_set_ps1(+ray_casted_wall_side.voxel ? wall_distance : INFINITY);
+
+	lambda scan =
+		[&](Material material, Image image, vf3 position, vf2 normal, vf2 dimensions)
+		{
+			__m128 m_start_x          = _mm_add_ps(_mm_set_ps1(position.x + normal.y * dimensions.x / 2.0f), m_delta_checks_x);
+			__m128 m_end_x            = _mm_add_ps(_mm_set_ps1(position.x - normal.y * dimensions.x / 2.0f), m_delta_checks_x);
+			__m128 m_start_y          = _mm_add_ps(_mm_set_ps1(position.y - normal.x * dimensions.x / 2.0f), m_delta_checks_y);
+			__m128 m_end_y            = _mm_add_ps(_mm_set_ps1(position.y + normal.x * dimensions.x / 2.0f), m_delta_checks_y);
+			__m128 m_start_to_end_x   = _mm_sub_ps(m_end_x, m_start_x);
+			__m128 m_start_to_end_y   = _mm_sub_ps(m_end_y, m_start_y);
+			__m128 m_start_to_lucia_x = _mm_sub_ps(m_lucia_x, m_start_x);
+			__m128 m_start_to_lucia_y = _mm_sub_ps(m_lucia_y, m_start_y);
+			__m128 m_det              = _mm_sub_ps(_mm_mul_ps(m_ray_x, m_start_to_end_y), _mm_mul_ps(m_ray_y, m_start_to_end_x));
+			__m128 m_scalar           = _mm_div_ps(_mm_sub_ps(_mm_mul_ps(m_start_to_lucia_y, m_start_to_end_x), _mm_mul_ps(m_start_to_lucia_x, m_start_to_end_y)), m_det);
+			__m128 m_portion          = _mm_div_ps(_mm_sub_ps(_mm_mul_ps(m_start_to_lucia_y, m_ray_x         ), _mm_mul_ps(m_start_to_lucia_x, m_ray_y         )), m_det);
+			i32    mask               = _mm_movemask_ps(_mm_and_ps(_mm_and_ps(_mm_cmpge_ps(m_scalar, m_zero), _mm_cmplt_ps(m_scalar, m_max_scalar)), _mm_and_ps(_mm_cmpge_ps(m_portion, m_zero), _mm_cmplt_ps(m_portion, m_one))));
+
+			if (mask)
+			{
+				f32 scalars[4];
+				f32 portions[4];
+				_mm_storeu_ps(scalars, m_scalar);
+				_mm_storeu_ps(portions, m_portion);
+
+				FOR_RANGE(i, 4)
+				{
+					if (mask & (1 << i))
 					{
-						thread_data->view_pixels[(VIEW_RES.y - 1 - y) * VIEW_RES.x + x] = pack_color(shader(scan_pixel.xyz, node->material, node->in_light, ray, vx3(node->normal, 0.0f), node->distance));
-						goto NEXT_Y;
+						RenderScanNode** post_node = &render_scan_node;
+						while (*post_node && (*post_node)->distance < scalars[i])
+						{
+							post_node = &(*post_node)->next_node;
+						}
+
+						RenderScanNode* new_node = memory_arena_allocate<RenderScanNode>(&arena);
+						new_node->material   = material;
+						new_node->in_light   = exists_clear_way(state, state->game.lucia_position.xy + ray_horizontal * scalars[i] * SHADER_INV_EPSILON, state->game.monster_position.xy);
+						new_node->image      = image;
+						new_node->normal     = normal;
+						new_node->distance   = scalars[i];
+						new_node->portion    = portions[i];
+						new_node->next_node  = *post_node;
+						new_node->starting_y = static_cast<i32>(VIEW_RES.y / 2.0f + HORT_TO_VERT_K / state->game.lucia_fov * (position.z - 0.5f * dimensions.y - state->game.lucia_position.z) / (scalars[i] + 0.1f));
+						new_node->ending_y   = static_cast<i32>(VIEW_RES.y / 2.0f + HORT_TO_VERT_K / state->game.lucia_fov * (position.z + 0.5f * dimensions.y - state->game.lucia_position.z) / (scalars[i] + 0.1f));
+						*post_node = new_node;
+						break;
 					}
 				}
 			}
+		};
 
-			if (IN_RANGE(y, wall_starting_y, wall_ending_y))
+	scan(Material::fire, get_image_of_frame(&state->game.animated_sprite.fire), { 70.0f, 60.0f, WALL_HEIGHT / 2.0f }, { 1.0f, 0.0f }, { 1.0f, 1.0f });
+
+	scan(Material::monster, get_image_of_frame(&state->game.animated_sprite.monster), state->game.monster_position, state->game.monster_normal, { 1.0f, 1.0f });
+
+	if (state->game.hand_on_state != HandOnState::null)
+	{
+		scan(Material::hand, state->game.texture_sprite.hand.image, state->game.hand_position, normalize(ray_to_closest(state->game.hand_position.xy, state->game.lucia_position.xy)), { 0.05f, 0.05f });
+	}
+
+	FOR_ELEMS(it, state->game.item_buffer, state->game.item_count)
+	{
+		scan(Material::item, state->game.texture_sprite.default_items[+it->type - +ItemType::ITEM_START].image, it->position, it->normal, { 0.5f, 0.5f });
+	}
+
+	lambda shader =
+		[&](vf3 color, Material material, bool32 in_light, vf3 ray, vf3 normal, f32 distance)
+		{
+			constexpr f32 FLASHLIGHT_INNER_CUTOFF = 0.95f;
+			constexpr f32 FLASHLIGHT_OUTER_CUTOFF = 0.93f;
+
+			f32 ceiling_lights_t = 0.5f - 4.0f * cube(0.5f - state->game.ceiling_lights_keytime);
+
+			f32 white_light =
+				0.5f / (square(distance) / 4.0f + 1.0f)
+				+ lerp(0.6f, 1.3f, (state->game.lucia_position.z + ray.z * distance) / WALL_HEIGHT) * ceiling_lights_t
+				+ (1.0f + powf(square(dot(ray, normal)), 64) * square(dot(ray, state->game.flashlight_ray)) * 0.8f)
+					* clamp((dot(ray, state->game.flashlight_ray) - FLASHLIGHT_OUTER_CUTOFF) / (FLASHLIGHT_INNER_CUTOFF - FLASHLIGHT_OUTER_CUTOFF), 0.0f, 1.0f)
+					/ (square(distance) * 0.1f + 7.0f)
+					* 6.0f
+					* state->game.flashlight_activation;
+
+			vf3 fire_light;
+			if (in_light)
 			{
-				f32 y_portion          = static_cast<f32>(y - wall_starting_y) / (wall_ending_y - wall_starting_y);
-				f32 distance           = sqrtf(square(wall_distance) + square(y_portion * WALL_HEIGHT - thread_data->state->game.lucia_position.z));
-
-				vf4 wall_overlay_color = { NAN, NAN, NAN, 0.0f };
-				if (wall_overlay && IN_RANGE(y_portion, wall_overlay_uv_position.y, wall_overlay_uv_position.y + wall_overlay_uv_dimensions.y))
+				constexpr vf3 FIRE_COLOR = { 0.8863f, 0.3451f, 0.1333f };
+				if (material == Material::monster)
 				{
-					wall_overlay_color = sample_at(wall_overlay, { (wall_portion - wall_overlay_uv_position.x) / wall_overlay_uv_dimensions.x, (y_portion - wall_overlay_uv_position.y) / wall_overlay_uv_dimensions.y });
-				}
-
-				vf3 wall_color = { NAN, NAN, NAN };
-				if (wall_overlay_color.w < 1.0f)
-				{
-					wall_color = sample_at(&thread_data->state->game.mipmap.wall, distance / 4.0f + thread_data->state->game.mipmap.wall.level_count * square(1.0f - fabsf(dot(ray, vx3(ray_casted_wall_side.normal, 0.0f)))), { wall_portion, y_portion });
-				}
-
-				// @TODO@ Lerp is slow!
-				thread_data->view_pixels[(VIEW_RES.y - 1 - y) * VIEW_RES.x + x] =
-					pack_color
-					(
-						shader
-						(
-							wall_overlay_color.w == 0.0f
-								? wall_color
-								: wall_overlay_color.w == 1.0f
-									? wall_overlay_color.xyz
-									: lerp(wall_color, wall_overlay_color.xyz, wall_overlay_color.w),
-							Material::wall,
-							wall_in_light,
-							ray,
-							vx3(ray_casted_wall_side.normal, 0.0f),
-							distance
-						)
-					);
-			}
-			else if (fabs(ray.z) > 0.0001f)
-			{
-				vf2      uv;
-				f32      distance;
-				vf3      normal;
-				Mipmap*  mipmap;
-				Material material;
-
-				if (y < VIEW_RES.y / 2)
-				{
-					f32 zk   = -thread_data->state->game.lucia_position.z / ray.z;
-					uv       = thread_data->state->game.lucia_position.xy + zk * ray.xy;
-					distance = sqrtf(norm_sq(uv - thread_data->state->game.lucia_position.xy) + square(thread_data->state->game.lucia_position.z));
-					normal   = { 0.0f, 0.0f, 1.0f };
-					mipmap   = &thread_data->state->game.mipmap.floor;
-					material = Material::floor;
+					fire_light = FIRE_COLOR * 0.7f;
 				}
 				else
 				{
-					f32 zk   = (WALL_HEIGHT - thread_data->state->game.lucia_position.z) / ray.z;
-					uv       = thread_data->state->game.lucia_position.xy + zk * ray.xy;
-					distance = sqrtf(norm_sq(uv - thread_data->state->game.lucia_position.xy) + square(WALL_HEIGHT - thread_data->state->game.lucia_position.z));
-					normal   = { 0.0f, 0.0f, -1.0f };
-					mipmap   = &thread_data->state->game.mipmap.ceiling;
-					material = Material::ceiling;
+					vf3 frag_position = state->game.lucia_position + ray * distance;
+					vf3 frag_ray      = vx3(ray_to_closest(frag_position.xy, state->game.monster_position.xy), state->game.monster_position.z - frag_position.z);
+
+					fire_light =
+						FIRE_COLOR
+							* 32.0f
+							* square(clamp(1.0f / (norm(frag_ray) + 0.1f), 0.0f, 1.0f))
+							* fabsf(dot(normalize(frag_ray), normal));
 				}
-
-				uv.x = mod(uv.x / 4.0f, 1.0f);
-				uv.y = mod(uv.y / 4.0f, 1.0f);
-
-				vf3 floor_ceiling_color = sample_at(mipmap, distance / 16.0f + mipmap->level_count * square(1.0f - fabsf(dot(ray, normal))), uv);
-
-				// @TODO@ Lerp is slow!
-				thread_data->view_pixels[(VIEW_RES.y - 1 - y) * VIEW_RES.x + x] =
-					pack_color
-					(
-						shader
-						(
-							floor_ceiling_color,
-							material,
-							exists_clear_way(thread_data->state, thread_data->state->game.lucia_position.xy + ray.xy * distance * SHADER_INV_EPSILON, thread_data->state->game.monster_position.xy),
-							ray,
-							normal,
-							distance
-						)
-					);
+			}
+			else
+			{
+				fire_light = { 0.0f, 0.0f, 0.0f };
 			}
 
-			NEXT_Y:;
+			return vf3
+				{
+					clamp(color.x * (white_light + fire_light.x), 0.0f, 1.0f),
+					clamp(color.y * (white_light + fire_light.y), 0.0f, 1.0f),
+					clamp(color.z * (white_light + fire_light.z), 0.0f, 1.0f)
+				};
+		};
+
+	FOR_RANGE(y, VIEW_RES.y)
+	{
+		#if 1
+		vf3 ray        = normalize({ ray_horizontal.x, ray_horizontal.y, (y - VIEW_RES.y / 2.0f) * state->game.lucia_fov / HORT_TO_VERT_K });
+		vf4 scan_pixel = { NAN, NAN, NAN, NAN };
+
+		for (RenderScanNode* node = render_scan_node; node; node = node->next_node)
+		{
+			if (IN_RANGE(y, node->starting_y, node->ending_y) && IN_RANGE(state->game.lucia_position.z + ray.z * node->distance, 0.0f, WALL_HEIGHT))
+			{
+				scan_pixel = sample_at(&node->image, { node->portion, (static_cast<f32>(y) - node->starting_y) / (node->ending_y - node->starting_y) });
+				if (scan_pixel.w)
+				{
+					view_pixels[(VIEW_RES.y - 1 - y) * VIEW_RES.x + x] = pack_color(shader(scan_pixel.xyz, node->material, node->in_light, ray, vx3(node->normal, 0.0f), node->distance));
+					goto NEXT_Y;
+				}
+			}
 		}
+
+		if (IN_RANGE(y, wall_starting_y, wall_ending_y))
+		{
+			f32 y_portion          = static_cast<f32>(y - wall_starting_y) / (wall_ending_y - wall_starting_y);
+			f32 distance           = sqrtf(square(wall_distance) + square(y_portion * WALL_HEIGHT - state->game.lucia_position.z));
+
+			vf4 wall_overlay_color = { NAN, NAN, NAN, 0.0f };
+			if (wall_overlay && IN_RANGE(y_portion, wall_overlay_uv_position.y, wall_overlay_uv_position.y + wall_overlay_uv_dimensions.y))
+			{
+				wall_overlay_color = sample_at(wall_overlay, { (wall_portion - wall_overlay_uv_position.x) / wall_overlay_uv_dimensions.x, (y_portion - wall_overlay_uv_position.y) / wall_overlay_uv_dimensions.y });
+			}
+
+			vf3 wall_color = { NAN, NAN, NAN };
+			if (wall_overlay_color.w < 1.0f)
+			{
+				wall_color = sample_at(&state->game.mipmap.wall, distance / 4.0f + state->game.mipmap.wall.level_count * square(1.0f - fabsf(dot(ray, vx3(ray_casted_wall_side.normal, 0.0f)))), { wall_portion, y_portion });
+			}
+
+			// @TODO@ Lerp is slow!
+			view_pixels[(VIEW_RES.y - 1 - y) * VIEW_RES.x + x] =
+				pack_color
+				(
+					shader
+					(
+						wall_overlay_color.w == 0.0f
+							? wall_color
+							: wall_overlay_color.w == 1.0f
+								? wall_overlay_color.xyz
+								: lerp(wall_color, wall_overlay_color.xyz, wall_overlay_color.w),
+						Material::wall,
+						wall_in_light,
+						ray,
+						vx3(ray_casted_wall_side.normal, 0.0f),
+						distance
+					)
+				);
+		}
+		else if (fabs(ray.z) > 0.0001f)
+		{
+			vf2      uv;
+			f32      distance;
+			vf3      normal;
+			Mipmap*  mipmap;
+			Material material;
+
+			if (y < VIEW_RES.y / 2)
+			{
+				f32 zk   = -state->game.lucia_position.z / ray.z;
+				uv       = state->game.lucia_position.xy + zk * ray.xy;
+				distance = sqrtf(norm_sq(uv - state->game.lucia_position.xy) + square(state->game.lucia_position.z));
+				normal   = { 0.0f, 0.0f, 1.0f };
+				mipmap   = &state->game.mipmap.floor;
+				material = Material::floor;
+			}
+			else
+			{
+				f32 zk   = (WALL_HEIGHT - state->game.lucia_position.z) / ray.z;
+				uv       = state->game.lucia_position.xy + zk * ray.xy;
+				distance = sqrtf(norm_sq(uv - state->game.lucia_position.xy) + square(WALL_HEIGHT - state->game.lucia_position.z));
+				normal   = { 0.0f, 0.0f, -1.0f };
+				mipmap   = &state->game.mipmap.ceiling;
+				material = Material::ceiling;
+			}
+
+			uv.x = mod(uv.x / 4.0f, 1.0f);
+			uv.y = mod(uv.y / 4.0f, 1.0f);
+
+			vf3 floor_ceiling_color = sample_at(mipmap, distance / 16.0f + mipmap->level_count * square(1.0f - fabsf(dot(ray, normal))), uv);
+
+			// @TODO@ Lerp is slow!
+			view_pixels[(VIEW_RES.y - 1 - y) * VIEW_RES.x + x] =
+				pack_color
+				(
+					shader
+					(
+						floor_ceiling_color,
+						material,
+						exists_clear_way(state, state->game.lucia_position.xy + ray.xy * distance * SHADER_INV_EPSILON, state->game.monster_position.xy),
+						ray,
+						normal,
+						distance
+					)
+				);
+		}
+
+		NEXT_Y:;
+		#else
+		view_pixels[(VIEW_RES.y - 1 - y) * VIEW_RES.x + x] = 0xFFAABBFF;
+		#endif
 	}
 }
 
@@ -1375,7 +1360,11 @@ internal int render_thread_procedure(void* void_data)
 		}
 		else
 		{
-			execute_on_render_thread_data(thread_data);
+			for (i32 x = thread_data->start_x; x < VIEW_RES.x; x += RENDER_THREADS)
+			{
+				render_scan_line(thread_data->view_pixels, x, thread_data->state, thread_data->arena);
+			}
+
 			SDL_SemPost(thread_data->state->game.render_thread_clock_out);
 		}
 	}
@@ -1406,13 +1395,16 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 
 		case StateContext::game:
 		{
-			FOR_ELEMS(it, state->game.render_thread_datas)
+			if (USE_RENDER_THREADS)
 			{
-				it->thread   = SDL_CreateThread(render_thread_procedure, "Render Thread", it);
-				it->clock_in = SDL_CreateSemaphore(0);
-			}
+				FOR_ELEMS(it, state->game.render_thread_datas)
+				{
+					it->thread   = SDL_CreateThread(render_thread_procedure, "Render Thread", it);
+					it->clock_in = SDL_CreateSemaphore(0);
+				}
 
-			state->game.render_thread_clock_out = SDL_CreateSemaphore(0);
+				state->game.render_thread_clock_out = SDL_CreateSemaphore(0);
+			}
 
 			state->game.image.door             = init_image(DATA_DIR "overlays/door.png");
 			state->game.image.circuit_breaker  = init_image(DATA_DIR "overlays/circuit_breaker.png");
@@ -1520,16 +1512,19 @@ internal void boot_down_state(State* state)
 
 		case StateContext::game:
 		{
-			FOR_ELEMS(it, state->game.render_thread_datas)
+			if (USE_RENDER_THREADS)
 			{
-				state->game.should_fire_render_threads = true;
-				SDL_SemPost(it->clock_in);
-				SDL_WaitThread(it->thread, 0);
-				SDL_DestroySemaphore(it->clock_in);
-			}
+				FOR_ELEMS(it, state->game.render_thread_datas)
+				{
+					state->game.should_fire_render_threads = true;
+					SDL_SemPost(it->clock_in);
+					SDL_WaitThread(it->thread, 0);
+					SDL_DestroySemaphore(it->clock_in);
+				}
 
-			SDL_DestroySemaphore(state->game.render_thread_clock_out);
-			state->game.should_fire_render_threads = false;
+				SDL_DestroySemaphore(state->game.render_thread_clock_out);
+				state->game.should_fire_render_threads = false;
+			}
 
 			FOR_ELEMS(it, state->game.images          ) { deinit_image(it);           }
 			FOR_ELEMS(it, state->game.texture_sprites ) { deinit_texture_sprite(it);  }
@@ -1657,13 +1652,16 @@ extern "C" PROTOTYPE_UPDATE(update)
 								state->game               = {};
 								boot_up_state(platform->renderer, state);
 
-								memsize render_arena_size = (state->context_arena.size - state->context_arena.used) / 2 / RENDER_THREADS;
-								FOR_ELEMS(it, state->game.render_thread_datas)
+								if (USE_RENDER_THREADS)
 								{
-									it->arena.size = render_arena_size;
-									it->arena.base = memory_arena_allocate<byte>(&state->context_arena, it->arena.size);
-									it->arena.used = 0;
-									it->start_x    = it_index;
+									memsize render_arena_size = (state->context_arena.size - state->context_arena.used) / 2 / RENDER_THREADS;
+									FOR_ELEMS(it, state->game.render_thread_datas)
+									{
+										it->arena.size = render_arena_size;
+										it->arena.base = memory_arena_allocate<byte>(&state->context_arena, it->arena.size);
+										it->arena.used = 0;
+										it->start_x    = it_index;
+									}
 								}
 
 								FOR_RANGE(MAP_DIM * MAP_DIM / 3)
@@ -2019,11 +2017,15 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 		case StateContext::game:
 		{
-			//DEBUG_once // @TEMP@
-			//{
-			//	state->game.lucia_position.xy = get_position_of_wall_side(state->game.door_wall_side, 1.0f);
-			//	state->game.lucia_position.xy = get_position_of_wall_side(state->game.circuit_breaker_wall_side, 1.0f);
-			//}
+			DEBUG_once // @TEMP@
+			{
+				//state->game.lucia_position.xy = get_position_of_wall_side(state->game.door_wall_side, 1.0f);
+				//state->game.lucia_position.xy = get_position_of_wall_side(state->game.circuit_breaker_wall_side, 1.0f);
+				state->game.lucia_position = { 64.637268f, 26.6f, 1.3239026f };
+				state->game.lucia_angle    = 5.3498487f;
+				state->game.monster_position = { 66.295441f, 25.49999f, 1.2878139f };
+				state->game.monster_normal   = { -0.83331096f, 0.55280459f };
+			}
 
 			Mix_VolumeChunk(state->game.audio.drone    , static_cast<i32>(MIX_MAX_VOLUME *         state->game.ceiling_lights_keytime  * (1.0f - state->game.exiting_keytime)));
 			Mix_VolumeChunk(state->game.audio.drone_low, static_cast<i32>(MIX_MAX_VOLUME * (1.0f - state->game.ceiling_lights_keytime) * (1.0f - state->game.exiting_keytime)));
@@ -3230,6 +3232,9 @@ extern "C" PROTOTYPE_RENDER(render)
 
 		case StateContext::game:
 		{
+			DEBUG_profiling_start(FRAME);
+			DEFER { DEBUG_profiling_end_averaged_printf(FRAME, 64, "Frame : %f / %f (%fx of goal)\n", DEBUG_get_profiling(FRAME), 1.0f / 60.0f, DEBUG_get_profiling(FRAME) * 60.0f); };
+
 			set_color(platform->renderer, monochrome(0.0f));
 			SDL_RenderClear(platform->renderer);
 
@@ -3237,24 +3242,22 @@ extern "C" PROTOTYPE_RENDER(render)
 			i32  view_pitch_;
 			SDL_LockTexture(state->game.texture.view, 0, reinterpret_cast<void**>(&view_pixels), &view_pitch_);
 
-			DEBUG_profiling_start(FRAME);
-
-			FOR_ELEMS(it, state->game.render_thread_datas)
+			if (USE_RENDER_THREADS)
 			{
-				it->view_pixels = view_pixels;
-				it->state       = state;
-				SDL_SemPost(it->clock_in);
+				FOR_ELEMS(it, state->game.render_thread_datas)
+				{
+					it->view_pixels = view_pixels;
+					it->state       = state;
+					SDL_SemPost(it->clock_in);
+				}
 			}
-
-			FOR_RANGE(RENDER_THREADS)
+			else
 			{
-				SDL_SemWait(state->game.render_thread_clock_out);
+				FOR_RANGE(x, VIEW_RES.x)
+				{
+					render_scan_line(view_pixels, x, state, state->transient_arena);
+				}
 			}
-
-			DEBUG_profiling_end_averaged_printf(FRAME, 256, "Frame : %f / %f (%fx of goal)\n", DEBUG_get_profiling(FRAME), 1.0f / 60.0f, DEBUG_get_profiling(FRAME) * 60.0f);
-
-			SDL_UnlockTexture(state->game.texture.view);
-			render_texture(platform->renderer, state->game.texture.view, { 0.0f, 0.0f }, { static_cast<f32>(VIEW_RES.x) / SCREEN_RES.x * WIN_DIM.x, static_cast<f32>(VIEW_RES.y) / SCREEN_RES.y * WIN_DIM.y });
 
 			SDL_SetRenderTarget(platform->renderer, state->game.texture.screen);
 			set_color(platform->renderer, { 0.0f, 0.0f, 0.0f, 0.0f });
@@ -3462,6 +3465,17 @@ extern "C" PROTOTYPE_RENDER(render)
 			blackout = 1.0f - state->game.entering_keytime;
 
 			SDL_SetRenderTarget(platform->renderer, 0);
+
+			if (USE_RENDER_THREADS)
+			{
+				FOR_RANGE(RENDER_THREADS)
+				{
+					SDL_SemWait(state->game.render_thread_clock_out);
+				}
+			}
+
+			SDL_UnlockTexture(state->game.texture.view);
+			render_texture(platform->renderer, state->game.texture.view, { 0.0f, 0.0f }, { static_cast<f32>(VIEW_RES.x) / SCREEN_RES.x * WIN_DIM.x, static_cast<f32>(VIEW_RES.y) / SCREEN_RES.y * WIN_DIM.y });
 			render_texture(platform->renderer, state->game.texture.screen, { 0.0f, 0.0f }, vxx(WIN_DIM));
 
 			if (state->game.notification_keytime)
