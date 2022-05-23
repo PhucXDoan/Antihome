@@ -45,7 +45,7 @@ global constexpr vf2 CIRCUIT_BREAKER_SWITCH_DIMENSIONS           = { 30.0f, CIRC
 global constexpr vf2 CIRCUIT_BREAKER_SWITCH_PADDINGS             = { (CIRCUIT_BREAKER_VOLTAGE_DISPLAY_COORDINATES.x - (VIEW_RES.x - CIRCUIT_BREAKER_HUD_DIMENSIONS.x) / 2.0f - CIRCUIT_BREAKER_SWITCH_DIMENSIONS.x * CIRCUIT_BREAKER_SWITCH_GRID.x) / (1.0f + CIRCUIT_BREAKER_SWITCH_GRID.x), 20.0f };
 global constexpr vf2 CIRCUIT_BREAKER_HUD_POSITION                = (VIEW_RES - CIRCUIT_BREAKER_HUD_DIMENSIONS) / 2.0f;
 
-global constexpr bool32 USE_RENDER_THREADS = true;
+global constexpr bool32 USE_RENDER_THREADS = false;
 global constexpr i32    RENDER_THREADS     = 4;
 
 enum_loose (AudioChannel, i8)
@@ -122,7 +122,7 @@ enum_loose (ItemType, u8)
 		cowbell,
 		eyedrops,
 		first_aid_kit,
-		nightvision_goggles,
+		night_vision_goggles,
 		pills,
 		military_grade_batteries,
 		radio,
@@ -137,7 +137,7 @@ global constexpr struct { strlit img_file_path; f32 spawn_weight; } ITEM_DATA[It
 		{ DATA_DIR "items/cowbell.png"                  ,  0.0f },
 		{ DATA_DIR "items/eyedrops.png"                 ,  3.0f },
 		{ DATA_DIR "items/first_aid_kit.png"            ,  4.0f },
-		{ DATA_DIR "items/nightvision_goggles.png"      ,  2.0f },
+		{ DATA_DIR "items/night_vision_goggles_off.png" ,  2.0f },
 		{ DATA_DIR "items/pills.png"                    ,  6.0f },
 		{ DATA_DIR "items/military_grade_batteries.png" ,  4.0f },
 		{ DATA_DIR "items/radio.png"                    ,  4.0f }
@@ -162,6 +162,11 @@ struct Item
 		{
 			i32 index;
 		} paper;
+
+		struct
+		{
+			f32 power;
+		} night_vision_goggles;
 	};
 };
 
@@ -329,6 +334,7 @@ struct State
 			{
 				TextureSprite hand;
 				TextureSprite flashlight_on;
+				TextureSprite night_vision_goggles_on;
 				TextureSprite default_items[ItemType::ITEM_COUNT];
 				TextureSprite papers[ARRAY_CAPACITY(PAPER_DATA)];
 			} texture_sprite;
@@ -504,6 +510,7 @@ struct State
 			struct
 			{
 				Item* flashlight;
+				Item* night_vision_goggles;
 			} holding;
 
 			Item* holdings[sizeof(holding) / sizeof(Item*)];
@@ -512,6 +519,8 @@ struct State
 		f32 flashlight_activation;
 		vf3 flashlight_ray;
 		f32 flashlight_keytime;
+		f32 night_vision_goggles_activation;
+		f32 night_vision_goggles_scan_line_keytime;
 	} game;
 
 	struct
@@ -550,7 +559,7 @@ internal const WallVoxelData* get_wall_voxel_data(WallVoxel voxel)
 internal vf2 get_position_of_wall_side(WallSide wall_side, f32 normal_length = 1.0f)
 {
 	const WallVoxelData* data = get_wall_voxel_data(wall_side.voxel);
-	return (wall_side.coordinates + (data->start + data->end) / 2.0f) * WALL_SPACING + data->normal * normal_length;
+	return (wall_side.coordinates + (data->start + data->end) / 2.0f) * WALL_SPACING + wall_side.normal * normal_length;
 }
 
 internal bool32 equal_wall_sides(WallSide a, WallSide b)
@@ -572,6 +581,14 @@ internal TextureSprite* get_corresponding_texture_sprite_of_item(State* state, I
 			if (state->game.holding.flashlight == item)
 			{
 				return &state->game.texture_sprite.flashlight_on;
+			}
+		} break;
+
+		case ItemType::night_vision_goggles:
+		{
+			if (state->game.holding.night_vision_goggles == item)
+			{
+				return &state->game.texture_sprite.night_vision_goggles_on;
 			}
 		} break;
 	}
@@ -923,6 +940,73 @@ internal bool32 exists_clear_way(State* state, vf2 position, vf2 goal)
 
 // #define exists_clear_way(...) (exists_clear_way(__VA_ARGS__) || true)
 
+enum struct Material : u8
+{
+	null,
+	wall,
+	floor,
+	ceiling,
+	item,
+	monster,
+	hand,
+	fire
+};
+
+internal vf3 shader(State* state, vf3 color, Material material, bool32 in_light, vf3 ray, vf3 normal, f32 distance, vi2 pixel_coordinates)
+{
+	constexpr f32 FLASHLIGHT_INNER_CUTOFF = 0.95f;
+	constexpr f32 FLASHLIGHT_OUTER_CUTOFF = 0.93f;
+
+	constexpr vf3 AMBIENT_COLOR = { 1.0f, 1.0f, 1.0f };
+	f32 ambient_light =
+		0.5f / (square(distance) / 4.0f / (square(state->game.night_vision_goggles_activation) * 16.0f + 1.0f) + 1.0f)
+			+ lerp(0.6f, 1.3f, (state->game.lucia_position.z + ray.z * distance) / WALL_HEIGHT) * (0.5f - 4.0f * cube(0.5f - state->game.ceiling_lights_keytime));
+
+	constexpr vf3 FLASHLIGHT_COLOR = { 1.0f, 1.0f, 0.8f };
+	f32 flashlight_light =
+		(1.0f + powf(square(dot(ray, normal)), 64) * square(dot(ray, state->game.flashlight_ray)) * 0.8f)
+			* clamp((dot(ray, state->game.flashlight_ray) - FLASHLIGHT_OUTER_CUTOFF) / (FLASHLIGHT_INNER_CUTOFF - FLASHLIGHT_OUTER_CUTOFF), 0.0f, 1.0f)
+			/ (square(distance) * 0.1f + 7.0f)
+			* 6.0f
+			* state->game.flashlight_activation;
+
+	constexpr vf3 FIRE_COLOR = { 0.8863f, 0.3451f, 0.1333f };
+	f32 fire_light;
+	if (in_light)
+	{
+		if (material == Material::monster)
+		{
+			fire_light = 0.7f;
+		}
+		else
+		{
+			vf3 frag_position = state->game.lucia_position + ray * distance;
+			vf3 frag_ray      = vx3(ray_to_closest(frag_position.xy, state->game.monster_position.xy), state->game.monster_position.z - frag_position.z);
+
+			fire_light =
+				32.0f
+				* square(clamp(1.0f / (norm(frag_ray) + 0.1f), 0.0f, 1.0f))
+				* fabsf(dot(normalize(frag_ray), normal));
+		}
+	}
+	else
+	{
+		fire_light = 0.0f;
+	}
+
+	constexpr vf3 NIGHT_VISION_COLOR = { 0.0f, 1.0f, 0.0f };
+	f32 night_vision_light =
+		(1.0f - square(pixel_coordinates.y % 3 / 3.0f - 0.5f))
+			* square(clamp(fabsf(square(state->game.night_vision_goggles_scan_line_keytime) * VIEW_RES.x - pixel_coordinates.x) / 32.0f, 0.9f, 1.0f));
+
+	return vf3
+		{
+			clamp((color.x * (AMBIENT_COLOR.x * ambient_light + FLASHLIGHT_COLOR.x * flashlight_light + FIRE_COLOR.x * fire_light)) * lerp(1.0f, NIGHT_VISION_COLOR.x * night_vision_light, state->game.night_vision_goggles_activation), 0.0f, 1.0f),
+			clamp((color.y * (AMBIENT_COLOR.y * ambient_light + FLASHLIGHT_COLOR.y * flashlight_light + FIRE_COLOR.y * fire_light)) * lerp(1.0f, NIGHT_VISION_COLOR.y * night_vision_light, state->game.night_vision_goggles_activation), 0.0f, 1.0f),
+			clamp((color.z * (AMBIENT_COLOR.z * ambient_light + FLASHLIGHT_COLOR.z * flashlight_light + FIRE_COLOR.z * fire_light)) * lerp(1.0f, NIGHT_VISION_COLOR.z * night_vision_light, state->game.night_vision_goggles_activation), 0.0f, 1.0f)
+		};
+}
+
 internal void render_scan_line(u32* view_pixels, i32 x, State* state, MemoryArena arena)
 {
 	vf2 ray_horizontal = polar(state->game.lucia_angle + (0.5f - static_cast<f32>(x) / VIEW_RES.x) * state->game.lucia_fov);
@@ -1028,7 +1112,7 @@ internal void render_scan_line(u32* view_pixels, i32 x, State* state, MemoryAren
 					}
 
 					constexpr f32 THRESHOLD = 0.7f;
-					if (rng(static_cast<i32>((ray_casted_wall_side.coordinates.x + ray_casted_wall_side.coordinates.y) * 317 + ray_casted_wall_side.coordinates.y * 171)) < 0.2f)
+					if (rng(static_cast<i32>((ray_casted_wall_side.coordinates.x + ray_casted_wall_side.coordinates.y) * 317 + ray_casted_wall_side.coordinates.y * 171)) < 0.15f)
 					{
 						if (direction < -THRESHOLD)
 						{
@@ -1068,18 +1152,6 @@ internal void render_scan_line(u32* view_pixels, i32 x, State* state, MemoryAren
 			}
 		}
 	}
-
-	enum struct Material : u8
-	{
-		null,
-		wall,
-		floor,
-		ceiling,
-		item,
-		monster,
-		hand,
-		fire
-	};
 
 	struct RenderScanNode
 	{
@@ -1186,56 +1258,6 @@ internal void render_scan_line(u32* view_pixels, i32 x, State* state, MemoryAren
 		scan(Material::item, state->game.texture_sprite.default_items[+it->type - +ItemType::ITEM_START].image, it->position, it->normal, { 0.5f, 0.5f });
 	}
 
-	lambda shader =
-		[&](vf3 color, Material material, bool32 in_light, vf3 ray, vf3 normal, f32 distance)
-		{
-			constexpr f32 FLASHLIGHT_INNER_CUTOFF = 0.95f;
-			constexpr f32 FLASHLIGHT_OUTER_CUTOFF = 0.93f;
-
-			f32 ceiling_lights_t = 0.5f - 4.0f * cube(0.5f - state->game.ceiling_lights_keytime);
-
-			f32 white_light =
-				0.5f / (square(distance) / 4.0f + 1.0f)
-				+ lerp(0.6f, 1.3f, (state->game.lucia_position.z + ray.z * distance) / WALL_HEIGHT) * ceiling_lights_t
-				+ (1.0f + powf(square(dot(ray, normal)), 64) * square(dot(ray, state->game.flashlight_ray)) * 0.8f)
-					* clamp((dot(ray, state->game.flashlight_ray) - FLASHLIGHT_OUTER_CUTOFF) / (FLASHLIGHT_INNER_CUTOFF - FLASHLIGHT_OUTER_CUTOFF), 0.0f, 1.0f)
-					/ (square(distance) * 0.1f + 7.0f)
-					* 6.0f
-					* state->game.flashlight_activation;
-
-			vf3 fire_light;
-			if (in_light)
-			{
-				constexpr vf3 FIRE_COLOR = { 0.8863f, 0.3451f, 0.1333f };
-				if (material == Material::monster)
-				{
-					fire_light = FIRE_COLOR * 0.7f;
-				}
-				else
-				{
-					vf3 frag_position = state->game.lucia_position + ray * distance;
-					vf3 frag_ray      = vx3(ray_to_closest(frag_position.xy, state->game.monster_position.xy), state->game.monster_position.z - frag_position.z);
-
-					fire_light =
-						FIRE_COLOR
-							* 32.0f
-							* square(clamp(1.0f / (norm(frag_ray) + 0.1f), 0.0f, 1.0f))
-							* fabsf(dot(normalize(frag_ray), normal));
-				}
-			}
-			else
-			{
-				fire_light = { 0.0f, 0.0f, 0.0f };
-			}
-
-			return vf3
-				{
-					clamp(color.x * (white_light + fire_light.x), 0.0f, 1.0f),
-					clamp(color.y * (white_light + fire_light.y), 0.0f, 1.0f),
-					clamp(color.z * (white_light + fire_light.z), 0.0f, 1.0f)
-				};
-		};
-
 	FOR_RANGE(y, VIEW_RES.y)
 	{
 		#if 1
@@ -1249,7 +1271,7 @@ internal void render_scan_line(u32* view_pixels, i32 x, State* state, MemoryAren
 				scan_pixel = sample_at(&node->image, { node->portion, (static_cast<f32>(y) - node->starting_y) / (node->ending_y - node->starting_y) });
 				if (scan_pixel.w)
 				{
-					view_pixels[(VIEW_RES.y - 1 - y) * VIEW_RES.x + x] = pack_color(shader(scan_pixel.xyz, node->material, node->in_light, ray, vx3(node->normal, 0.0f), node->distance));
+					view_pixels[(VIEW_RES.y - 1 - y) * VIEW_RES.x + x] = pack_color(shader(state, scan_pixel.xyz, node->material, node->in_light, ray, vx3(node->normal, 0.0f), node->distance, { x, y}));
 					goto NEXT_Y;
 				}
 			}
@@ -1278,6 +1300,7 @@ internal void render_scan_line(u32* view_pixels, i32 x, State* state, MemoryAren
 				(
 					shader
 					(
+						state,
 						wall_overlay_color.w == 0.0f
 							? wall_color
 							: wall_overlay_color.w == 1.0f
@@ -1287,7 +1310,8 @@ internal void render_scan_line(u32* view_pixels, i32 x, State* state, MemoryAren
 						wall_in_light,
 						ray,
 						vx3(ray_casted_wall_side.normal, 0.0f),
-						distance
+						distance,
+						{ x, y }
 					)
 				);
 		}
@@ -1329,12 +1353,14 @@ internal void render_scan_line(u32* view_pixels, i32 x, State* state, MemoryAren
 				(
 					shader
 					(
+						state,
 						floor_ceiling_color,
 						material,
 						exists_clear_way(state, state->game.lucia_position.xy + ray.xy * distance * SHADER_INV_EPSILON, state->game.monster_position.xy),
 						ray,
 						normal,
-						distance
+						distance,
+						{ x, y }
 					)
 				);
 		}
@@ -1411,8 +1437,9 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 			state->game.image.wall_left_arrow  = init_image(DATA_DIR "overlays/streak_left_0.png");
 			state->game.image.wall_right_arrow = init_image(DATA_DIR "overlays/streak_right_0.png");
 
-			state->game.texture_sprite.hand          = init_texture_sprite(renderer, DATA_DIR "hand.png");
-			state->game.texture_sprite.flashlight_on = init_texture_sprite(renderer, DATA_DIR "items/flashlight_on.png");
+			state->game.texture_sprite.hand                    = init_texture_sprite(renderer, DATA_DIR "hand.png");
+			state->game.texture_sprite.flashlight_on           = init_texture_sprite(renderer, DATA_DIR "items/flashlight_on.png");
+			state->game.texture_sprite.night_vision_goggles_on = init_texture_sprite(renderer, DATA_DIR "items/night_vision_goggles_on.png");
 			FOR_ELEMS(it, ITEM_DATA)
 			{
 				state->game.texture_sprite.default_items[it_index] = init_texture_sprite(renderer, it->img_file_path);
@@ -2020,11 +2047,11 @@ extern "C" PROTOTYPE_UPDATE(update)
 			DEBUG_once // @TEMP@
 			{
 				//state->game.lucia_position.xy = get_position_of_wall_side(state->game.door_wall_side, 1.0f);
-				//state->game.lucia_position.xy = get_position_of_wall_side(state->game.circuit_breaker_wall_side, 1.0f);
-				state->game.lucia_position = { 64.637268f, 26.6f, 1.3239026f };
-				state->game.lucia_angle    = 5.3498487f;
-				state->game.monster_position = { 66.295441f, 25.49999f, 1.2878139f };
-				state->game.monster_normal   = { -0.83331096f, 0.55280459f };
+				state->game.lucia_position.xy = get_position_of_wall_side(state->game.circuit_breaker_wall_side, 1.0f);
+				//state->game.lucia_position = { 64.637268f, 26.6f, 1.3239026f };
+				//state->game.lucia_angle    = 5.3498487f;
+				//state->game.monster_position = { 66.295441f, 25.49999f, 1.2878139f };
+				//state->game.monster_normal   = { -0.83331096f, 0.55280459f };
 			}
 
 			Mix_VolumeChunk(state->game.audio.drone    , static_cast<i32>(MIX_MAX_VOLUME *         state->game.ceiling_lights_keytime  * (1.0f - state->game.exiting_keytime)));
@@ -2167,6 +2194,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 														bool32 combined        = false;
 														Item   combined_result = {};
 
+														if (!combined)
 														{
 															Item* cheap_batteries;
 															Item* flashlight;
@@ -2184,6 +2212,33 @@ extern "C" PROTOTYPE_UPDATE(update)
 																if (state->game.holding.flashlight == state->game.hud.inventory.selected_item)
 																{
 																	state->game.holding.flashlight = &state->game.hud.inventory.array[y][x];
+																}
+															}
+															else
+															{
+																state->game.notification_message = "\"I'm not sure how these fit.\"";
+																state->game.notification_keytime = 1.0f;
+															}
+														}
+
+														if (!combined)
+														{
+															Item* military_grade_batteries;
+															Item* night_vision_goggles;
+															if (check_combine(&military_grade_batteries, ItemType::military_grade_batteries, &night_vision_goggles, ItemType::night_vision_goggles, &state->game.hud.inventory.array[y][x], state->game.hud.inventory.selected_item))
+															{
+																combined = true;
+
+																Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.eletronical, 0);
+																state->game.notification_message = "(You replaced the batteries in the night vision goggles.)";
+																state->game.notification_keytime = 1.0f;
+
+																combined_result = *night_vision_goggles;
+																combined_result.night_vision_goggles.power = 1.0f;
+
+																if (state->game.holding.night_vision_goggles == state->game.hud.inventory.selected_item)
+																{
+																	state->game.holding.night_vision_goggles = &state->game.hud.inventory.array[y][x];
 																}
 															}
 															else
@@ -2241,6 +2296,12 @@ extern "C" PROTOTYPE_UPDATE(update)
 										state->game.notification_keytime = 1.0f;
 									} break;
 
+									case ItemType::military_grade_batteries:
+									{
+										state->game.notification_message = "\"I can feel the volts in this thing!\"";
+										state->game.notification_keytime = 1.0f;
+									} break;
+
 									case ItemType::paper:
 									{
 										Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.pick_up_paper, 0);
@@ -2259,14 +2320,34 @@ extern "C" PROTOTYPE_UPDATE(update)
 										}
 										else if (state->game.hud.inventory.selected_item->flashlight.power)
 										{
-											state->game.holding.flashlight = state->game.hud.inventory.selected_item;
+											state->game.holding.flashlight           = state->game.hud.inventory.selected_item;
+											state->game.holding.night_vision_goggles = 0;
 										}
 										else
 										{
 											state->game.notification_message = "\"The flashlight is dead.\"";
 											state->game.notification_keytime = 1.0f;
 										}
-									};
+									} break;
+
+									case ItemType::night_vision_goggles:
+									{
+										// Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.switch_toggle, 0); // @TODO@ Audio
+										if (state->game.hud.inventory.selected_item == state->game.holding.night_vision_goggles)
+										{
+											state->game.holding.night_vision_goggles = 0;
+										}
+										else if (state->game.hud.inventory.selected_item->night_vision_goggles.power)
+										{
+											state->game.holding.night_vision_goggles = state->game.hud.inventory.selected_item;
+											state->game.holding.flashlight           = 0;
+										}
+										else
+										{
+											state->game.notification_message = "\"The night vision goggles are dead.\"";
+											state->game.notification_keytime = 1.0f;
+										}
+									} break;
 								}
 
 								if (state->game.hud.type == HudType::inventory)
@@ -2966,6 +3047,30 @@ extern "C" PROTOTYPE_UPDATE(update)
 				state->game.flashlight_activation = dampen(state->game.flashlight_activation, 0.0f, 25.0f, SECONDS_PER_UPDATE);
 			}
 
+			if (state->game.holding.night_vision_goggles)
+			{
+				state->game.holding.night_vision_goggles->night_vision_goggles.power = clamp(state->game.holding.night_vision_goggles->night_vision_goggles.power - SECONDS_PER_UPDATE / 90.0f, 0.0f, 1.0f);
+				state->game.night_vision_goggles_activation                          = dampen(state->game.night_vision_goggles_activation, 1.0f, 4.0f, SECONDS_PER_UPDATE);
+
+				if (state->game.holding.night_vision_goggles->night_vision_goggles.power == 0.0f)
+				{
+					state->game.holding.night_vision_goggles = 0;
+
+					if (state->game.holding.night_vision_goggles == state->game.holding.night_vision_goggles)
+					{
+						Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.switch_toggle, 0);
+						state->game.notification_message = "\"The night vision goggles died.\"";
+						state->game.notification_keytime = 1.0f;
+					}
+				}
+			}
+			else
+			{
+				state->game.night_vision_goggles_activation = dampen(state->game.night_vision_goggles_activation, 0.0f, 25.0f, SECONDS_PER_UPDATE);
+			}
+
+			state->game.night_vision_goggles_scan_line_keytime = mod(state->game.night_vision_goggles_scan_line_keytime + SECONDS_PER_UPDATE / 0.15f, 1.0f);
+
 			state->game.flashlight_keytime += 0.00005f + 0.005f * norm(state->game.lucia_velocity) * SECONDS_PER_UPDATE;
 			if (state->game.flashlight_keytime > 1.0f)
 			{
@@ -3007,10 +3112,21 @@ extern "C" PROTOTYPE_UPDATE(update)
 				state->game.heart_rate_index                                 = (state->game.heart_rate_index + 1) % ARRAY_CAPACITY(state->game.heart_rate_values);
 			}
 
+			f32 battery_display_level = 0.0f;
+
 			if (state->game.holding.flashlight)
 			{
+				battery_display_level = state->game.holding.flashlight->flashlight.power;
+			}
+			else if (state->game.holding.night_vision_goggles)
+			{
+				battery_display_level = state->game.holding.night_vision_goggles->night_vision_goggles.power;
+			}
+
+			if (battery_display_level)
+			{
 				state->game.hud.status.battery_display_keytime = min(1.0f, state->game.hud.status.battery_display_keytime + SECONDS_PER_UPDATE / 0.25f);
-				state->game.hud.status.battery_level_keytime   = dampen(state->game.hud.status.battery_level_keytime, state->game.holding.flashlight->flashlight.power, 8.0f, SECONDS_PER_UPDATE);
+				state->game.hud.status.battery_level_keytime   = dampen(state->game.hud.status.battery_level_keytime, battery_display_level, 8.0f, SECONDS_PER_UPDATE);
 			}
 			else
 			{
