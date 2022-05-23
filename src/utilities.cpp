@@ -6,6 +6,15 @@ global constexpr f32 TAU           = 6.28318530717f;
 global constexpr f32 SQRT2         = 1.41421356237f;
 global constexpr f32 INVSQRT2      = 0.70710678118f;
 
+global const __m128  m_zero       = _mm_set_ps1(0.0f);
+global const __m128  m_one        = _mm_set_ps1(1.0f);
+global const __m128  m_three      = _mm_set_ps1(3.0f);
+global const __m128  m_four       = _mm_set_ps1(4.0f);
+global const __m128  m_inf        = _mm_set_ps1(INFINITY);
+global const __m128  m_max_rgb    = _mm_set_ps1(255.0f);
+global const __m128i mi_byte_mask = _mm_set_epi32(0xFF, 0xFF, 0xFF, 0xFF);
+
+
 struct RGBA
 {
 	union
@@ -68,6 +77,8 @@ internal constexpr vf4 lerp(vf4 a, vf4 b, f32 t) { return a * (1.0f - t) + b * t
 internal constexpr vf3 lerp(vf3 a, vf3 b, f32 t) { return a * (1.0f - t) + b * t; }
 internal constexpr vf2 lerp(vf2 a, vf2 b, f32 t) { return a * (1.0f - t) + b * t; }
 internal constexpr f32 lerp(f32 a, f32 b, f32 t) { return a * (1.0f - t) + b * t; }
+
+internal __m128 lerp(__m128 a, __m128 b, __m128 t) { return _mm_add_ps(_mm_mul_ps(a, _mm_sub_ps(m_one, t)), _mm_mul_ps(b, t)); }
 
 internal constexpr f32 dampen(f32 a, f32 b, f32 k, f32 dt) { return lerp(a, b, 1.0f - expf(-k * dt)); }
 internal constexpr vf2 dampen(vf2 a, vf2 b, f32 k, f32 dt) { return lerp(a, b, 1.0f - expf(-k * dt)); }

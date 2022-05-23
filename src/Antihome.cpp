@@ -400,6 +400,7 @@ struct State
 
 		f32                  entering_keytime;
 		f32                  exiting_keytime;
+		f32                  blur_activation;
 
 		PathCoordinatesNode* available_path_coordinates_node;
 		strlit               notification_message;
@@ -936,7 +937,7 @@ enum struct Material : u8
 	fire
 };
 
-internal vf3 shader(State* state, vf3 color, Material material, bool32 in_light, vf3 ray, vf3 normal, f32 distance, vi2 pixel_coordinates)
+internal vf3 shader(State* state, vf3 color, Material material, bool32 in_light, vf3 ray, vf3 normal, f32 distance)
 {
 	constexpr f32 FLASHLIGHT_INNER_CUTOFF = 0.95f;
 	constexpr f32 FLASHLIGHT_OUTER_CUTOFF = 0.93f;
@@ -978,16 +979,11 @@ internal vf3 shader(State* state, vf3 color, Material material, bool32 in_light,
 		fire_light = 0.0f;
 	}
 
-	constexpr vf3 NIGHT_VISION_COLOR = { 0.0f, 1.0f, 0.0f };
-	f32 night_vision_light =
-		(1.0f - square(pixel_coordinates.y % 3 / 3.0f - 0.5f))
-			* square(clamp(fabsf(square(state->game.night_vision_goggles_scan_line_keytime) * VIEW_RES.x - pixel_coordinates.x) / 32.0f, 0.9f, 1.0f));
-
 	return vf3
 		{
-			clamp((color.x * (AMBIENT_COLOR.x * ambient_light + FLASHLIGHT_COLOR.x * flashlight_light + FIRE_COLOR.x * fire_light)) * lerp(1.0f, NIGHT_VISION_COLOR.x * night_vision_light, state->game.night_vision_goggles_activation) * (1.0f + state->game.interpolated_eye_drops_activation / 4.0f), 0.0f, 1.0f),
-			clamp((color.y * (AMBIENT_COLOR.y * ambient_light + FLASHLIGHT_COLOR.y * flashlight_light + FIRE_COLOR.y * fire_light)) * lerp(1.0f, NIGHT_VISION_COLOR.y * night_vision_light, state->game.night_vision_goggles_activation) * (1.0f + state->game.interpolated_eye_drops_activation / 4.0f), 0.0f, 1.0f),
-			clamp((color.z * (AMBIENT_COLOR.z * ambient_light + FLASHLIGHT_COLOR.z * flashlight_light + FIRE_COLOR.z * fire_light)) * lerp(1.0f, NIGHT_VISION_COLOR.z * night_vision_light, state->game.night_vision_goggles_activation) * (1.0f + state->game.interpolated_eye_drops_activation / 4.0f), 0.0f, 1.0f)
+			clamp((color.x * (AMBIENT_COLOR.x * ambient_light + FLASHLIGHT_COLOR.x * flashlight_light + FIRE_COLOR.x * fire_light)), 0.0f, 1.0f),
+			clamp((color.y * (AMBIENT_COLOR.y * ambient_light + FLASHLIGHT_COLOR.y * flashlight_light + FIRE_COLOR.y * fire_light)), 0.0f, 1.0f),
+			clamp((color.z * (AMBIENT_COLOR.z * ambient_light + FLASHLIGHT_COLOR.z * flashlight_light + FIRE_COLOR.z * fire_light)), 0.0f, 1.0f)
 		};
 }
 
@@ -1605,12 +1601,13 @@ extern "C" PROTOTYPE_UPDATE(update)
 			DEBUG_once // @TEMP@
 			{
 				//state->game.lucia_position.xy = get_position_of_wall_side(state->game.door_wall_side, 1.0f);
-				state->game.lucia_position.xy = get_position_of_wall_side(state->game.circuit_breaker_wall_side, 1.0f);
-				//state->game.lucia_position = { 64.637268f, 26.6f, 1.3239026f };
-				//state->game.lucia_angle    = 5.3498487f;
-				//state->game.monster_position = { 66.295441f, 25.49999f, 1.2878139f };
-				//state->game.monster_normal   = { -0.83331096f, 0.55280459f };
-				state->game.hud.inventory.array[0][0].type = ItemType::eye_drops;
+				//state->game.lucia_position.xy = get_position_of_wall_side(state->game.circuit_breaker_wall_side, 1.0f);
+				state->game.lucia_position = { 64.637268f, 26.6f, 1.3239026f };
+				state->game.lucia_angle    = 5.3498487f;
+				state->game.monster_position = { 66.295441f, 25.49999f, 1.2878139f };
+				state->game.monster_normal   = { -0.83331096f, 0.55280459f };
+				state->game.hud.inventory.array[0][0].type = ItemType::night_vision_goggles;
+				state->game.hud.inventory.array[0][0].night_vision_goggles.power = 1.0f;
 				state->game.hud.inventory.array[0][1].type = ItemType::eye_drops;
 				state->game.hud.inventory.array[0][2].type = ItemType::eye_drops;
 			}
@@ -1916,6 +1913,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 										state->game.notification_message  = "(You dumped the whole eye drop container into your eyes.)";
 										state->game.notification_keytime  = 1.0f;
 										state->game.eye_drops_activation += 1.0f;
+										state->game.blur_activation      += 0.5f;
 
 										state->game.hud.inventory.selected_item->type = ItemType::null;
 									} break;
@@ -2146,6 +2144,8 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 			state->game.eye_drops_activation              = max(state->game.eye_drops_activation - SECONDS_PER_UPDATE / 30.0f, 0.0f);
 			state->game.interpolated_eye_drops_activation = dampen(state->game.interpolated_eye_drops_activation, state->game.eye_drops_activation, 4.0f, SECONDS_PER_UPDATE);
+
+			state->game.blur_activation = max(state->game.blur_activation - SECONDS_PER_UPDATE / 8.0f, 0.0f);
 
 			state->game.lucia_angle_velocity *= 0.4f;
 			state->game.lucia_angle           = mod(state->game.lucia_angle + state->game.lucia_angle_velocity * SECONDS_PER_UPDATE, TAU);
@@ -2640,7 +2640,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 			}
 			else
 			{
-				state->game.night_vision_goggles_activation = dampen(state->game.night_vision_goggles_activation, 0.0f, 25.0f, SECONDS_PER_UPDATE);
+				state->game.night_vision_goggles_activation = dampen(state->game.night_vision_goggles_activation, 0.0f, 8.0f, SECONDS_PER_UPDATE);
 			}
 
 			state->game.night_vision_goggles_scan_line_keytime = mod(state->game.night_vision_goggles_scan_line_keytime + SECONDS_PER_UPDATE / 0.15f, 1.0f);
@@ -2692,9 +2692,11 @@ extern "C" PROTOTYPE_UPDATE(update)
 			{
 				battery_display_level = state->game.holding.flashlight->flashlight.power;
 			}
-			else if (state->game.holding.night_vision_goggles)
+
+			if (state->game.holding.night_vision_goggles)
 			{
-				battery_display_level = state->game.holding.night_vision_goggles->night_vision_goggles.power;
+				battery_display_level       = state->game.holding.night_vision_goggles->night_vision_goggles.power;
+				state->game.blur_activation = max(state->game.blur_activation, 0.3f);
 			}
 
 			if (battery_display_level)
@@ -2928,9 +2930,8 @@ extern "C" PROTOTYPE_RENDER(render)
 			set_color(platform->renderer, monochrome(0.0f));
 			SDL_RenderClear(platform->renderer);
 
-			u32* view_pixels;
-			i32  view_pitch_;
-			SDL_LockTexture(state->game.texture.view, 0, reinterpret_cast<void**>(&view_pixels), &view_pitch_);
+			u32* new_view_pixels    = memory_arena_allocate<u32>(&state->transient_arena, VIEW_RES.x * VIEW_RES.y);
+			u32* current_view_pixel = new_view_pixels;
 
 			FOR_RANGE(x, VIEW_RES.x)
 			{
@@ -3110,9 +3111,6 @@ extern "C" PROTOTYPE_RENDER(render)
 
 				constexpr f32 SHADER_INV_EPSILON = 0.9f;
 
-				__m128 m_zero       = _mm_set_ps1(0.0f);
-				__m128 m_one        = _mm_set_ps1(1.0f);
-				__m128 m_inf        = _mm_set_ps1(INFINITY);
 				__m128 m_lucia_x    = _mm_set_ps1(state->game.lucia_position.x);
 				__m128 m_lucia_y    = _mm_set_ps1(state->game.lucia_position.y);
 				__m128 m_ray_x      = _mm_set_ps1(ray_horizontal.x);
@@ -3187,7 +3185,6 @@ extern "C" PROTOTYPE_RENDER(render)
 
 				FOR_RANGE(y, VIEW_RES.y)
 				{
-					#if 1
 					vf3 ray        = normalize({ ray_horizontal.x, ray_horizontal.y, (y - VIEW_RES.y / 2.0f) * state->game.lucia_fov / HORT_TO_VERT_K });
 					vf4 scan_pixel = { NAN, NAN, NAN, NAN };
 
@@ -3198,7 +3195,7 @@ extern "C" PROTOTYPE_RENDER(render)
 							scan_pixel = sample_at(&node->image, { node->portion, (static_cast<f32>(y) - node->starting_y) / (node->ending_y - node->starting_y) });
 							if (scan_pixel.w)
 							{
-								view_pixels[(VIEW_RES.y - 1 - y) * VIEW_RES.x + x] = pack_color(shader(state, scan_pixel.xyz, node->material, node->in_light, ray, vx3(node->normal, 0.0f), node->distance, { x, y }));
+								*current_view_pixel = pack_color(shader(state, scan_pixel.xyz, node->material, node->in_light, ray, vx3(node->normal, 0.0f), node->distance));
 								goto NEXT_Y;
 							}
 						}
@@ -3228,7 +3225,7 @@ extern "C" PROTOTYPE_RENDER(render)
 						}
 
 						// @TODO@ Lerp is slow!
-						view_pixels[(VIEW_RES.y - 1 - y) * VIEW_RES.x + x] =
+						*current_view_pixel =
 							pack_color
 							(
 								shader
@@ -3243,8 +3240,7 @@ extern "C" PROTOTYPE_RENDER(render)
 									wall_in_light,
 									ray,
 									vx3(ray_casted_wall_side.normal, 0.0f),
-									distance,
-									{ x, y }
+									distance
 								)
 							);
 					}
@@ -3287,7 +3283,7 @@ extern "C" PROTOTYPE_RENDER(render)
 							);
 
 						// @TODO@ Lerp is slow!
-						view_pixels[(VIEW_RES.y - 1 - y) * VIEW_RES.x + x] =
+						*current_view_pixel =
 							pack_color
 							(
 								shader
@@ -3298,16 +3294,88 @@ extern "C" PROTOTYPE_RENDER(render)
 									exists_clear_way(state, state->game.lucia_position.xy + ray.xy * distance * SHADER_INV_EPSILON, state->game.monster_position.xy),
 									ray,
 									normal,
-									distance,
-									{ x, y }
+									distance
 								)
 							);
 					}
 
 					NEXT_Y:;
-					#else
-					view_pixels[(VIEW_RES.y - 1 - y) * VIEW_RES.x + x] = 0xFFAABBFF;
-					#endif
+					current_view_pixel += 1;
+				}
+			}
+
+			u32* view_texture_pixels;
+			i32  view_pitch_;
+			SDL_LockTexture(state->game.texture.view, 0, reinterpret_cast<void**>(&view_texture_pixels), &view_pitch_);
+
+			__m128 m_blur =
+				state->game.blur_activation > 0.001f
+					? _mm_set_ps1(1.0f - expf(-SECONDS_PER_UPDATE / state->game.blur_activation))
+					: m_one;
+
+			__m128 m_max_x = _mm_set_ps1(static_cast<f32>(VIEW_RES.x));
+
+			__m128 m_night_vision_goggles_activation        = _mm_set_ps1(state->game.night_vision_goggles_activation);
+			__m128 m_night_vision_goggles_scan_line_keytime = _mm_set_ps1(state->game.night_vision_goggles_scan_line_keytime);
+			__m128 m_night_vision_goggles_low_scan          = _mm_set_ps1(0.5f);
+			__m128 m_night_vision_goggles_r                 = _mm_set_ps1(0.0f);
+			__m128 m_night_vision_goggles_g                 = _mm_set_ps1(3.0f);
+			__m128 m_night_vision_goggles_b                 = _mm_set_ps1(0.0f);
+
+			FOR_RANGE(y, VIEW_RES.y)
+			{
+				__m128 m_night_vision_goggles_scan_line = _mm_set_ps1(fabsf(0.5f - y % 3 / 3.0f));
+				__m128 m_x                              = _mm_set_ps(3.0f, 2.0f, 1.0f, 0.0f);
+				for (i32 x = 0; x < VIEW_RES.x; x += 4)
+				{
+					u32 old_view_colors[4];
+					u32 new_view_colors[4];
+					FOR_RANGE(xi, x, min(x + 4, VIEW_RES.x))
+					{
+						old_view_colors[xi - x] = view_texture_pixels[y * VIEW_RES.x + xi];
+						new_view_colors[xi - x] = new_view_pixels[xi * VIEW_RES.y + (VIEW_RES.y - 1 - y)];
+					}
+
+					__m128i mi_rgba = _mm_loadu_si128(reinterpret_cast<__m128i*>(old_view_colors));
+					__m128 m_old_r = _mm_div_ps(_mm_cvtepi32_ps(_mm_and_epi32(_mm_bsrli_si128(mi_rgba, 3), mi_byte_mask)), m_max_rgb);
+					__m128 m_old_g = _mm_div_ps(_mm_cvtepi32_ps(_mm_and_epi32(_mm_bsrli_si128(mi_rgba, 2), mi_byte_mask)), m_max_rgb);
+					__m128 m_old_b = _mm_div_ps(_mm_cvtepi32_ps(_mm_and_epi32(_mm_bsrli_si128(mi_rgba, 1), mi_byte_mask)), m_max_rgb);
+
+					mi_rgba = _mm_loadu_si128(reinterpret_cast<__m128i*>(new_view_colors));
+					__m128 m_new_r = _mm_div_ps(_mm_cvtepi32_ps(_mm_and_epi32(_mm_bsrli_si128(mi_rgba, 3), mi_byte_mask)), m_max_rgb);
+					__m128 m_new_g = _mm_div_ps(_mm_cvtepi32_ps(_mm_and_epi32(_mm_bsrli_si128(mi_rgba, 2), mi_byte_mask)), m_max_rgb);
+					__m128 m_new_b = _mm_div_ps(_mm_cvtepi32_ps(_mm_and_epi32(_mm_bsrli_si128(mi_rgba, 1), mi_byte_mask)), m_max_rgb);
+
+					__m128 m_r = _mm_add_ps(_mm_mul_ps(m_old_r, _mm_sub_ps(m_one, m_blur)), _mm_mul_ps(m_new_r, m_blur));
+					__m128 m_g = _mm_add_ps(_mm_mul_ps(m_old_g, _mm_sub_ps(m_one, m_blur)), _mm_mul_ps(m_new_g, m_blur));
+					__m128 m_b = _mm_add_ps(_mm_mul_ps(m_old_b, _mm_sub_ps(m_one, m_blur)), _mm_mul_ps(m_new_b, m_blur));
+
+					__m128 m_night_vision_non_green_channel = _mm_sub_ps(m_one, m_night_vision_goggles_activation);
+					__m128 m_scan_line_delta                = _mm_mul_ps(_mm_sub_ps(_mm_div_ps(m_x, m_max_x), m_night_vision_goggles_scan_line_keytime), m_four);
+					m_scan_line_delta = _mm_min_ps(_mm_max_ps(_mm_mul_ps(m_scan_line_delta, m_scan_line_delta), m_zero), m_one);
+
+					__m128 m_avg_rgb = _mm_div_ps(_mm_add_ps(_mm_add_ps(m_r, m_g), m_b), m_three);
+
+					__m128 m_t = _mm_add_ps(m_night_vision_goggles_low_scan, _mm_mul_ps(_mm_mul_ps(_mm_sub_ps(m_one, m_scan_line_delta), m_night_vision_goggles_scan_line), m_night_vision_goggles_activation));
+
+					m_r = lerp(m_r, _mm_mul_ps(m_avg_rgb, _mm_mul_ps(m_night_vision_goggles_r, m_t)), m_night_vision_goggles_activation);
+					m_g = lerp(m_g, _mm_mul_ps(m_avg_rgb, _mm_mul_ps(m_night_vision_goggles_g, m_t)), m_night_vision_goggles_activation);
+					m_b = lerp(m_b, _mm_mul_ps(m_avg_rgb, _mm_mul_ps(m_night_vision_goggles_b, m_t)), m_night_vision_goggles_activation);
+
+					mi_rgba =
+						_mm_or_epi32
+						(
+							_mm_or_epi32
+							(
+								_mm_bslli_si128(_mm_cvtps_epi32(_mm_mul_ps(_mm_min_ps(_mm_max_ps(m_r, m_zero), m_one), m_max_rgb)), 3),
+								_mm_bslli_si128(_mm_cvtps_epi32(_mm_mul_ps(_mm_min_ps(_mm_max_ps(m_g, m_zero), m_one), m_max_rgb)), 2)
+							),
+							_mm_bslli_si128(_mm_cvtps_epi32(_mm_mul_ps(_mm_min_ps(_mm_max_ps(m_b, m_zero), m_one), m_max_rgb)), 1)
+						);
+
+					_mm_maskmoveu_si128(mi_rgba, _mm_castps_si128(_mm_cmplt_ps(m_x, m_max_x)), reinterpret_cast<char*>(view_texture_pixels + y * VIEW_RES.x + x));
+
+					m_x = _mm_add_ps(m_x, m_four);
 				}
 			}
 
