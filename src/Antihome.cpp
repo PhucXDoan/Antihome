@@ -120,7 +120,7 @@ enum_loose (ItemType, u8)
 		paper,
 		flashlight,
 		cowbell,
-		eyedrops,
+		eye_drops,
 		first_aid_kit,
 		night_vision_goggles,
 		pills,
@@ -135,7 +135,7 @@ global constexpr struct { strlit img_file_path; f32 spawn_weight; } ITEM_DATA[It
 		{ DATA_DIR "items/paper.png"                    ,  5.0f },
 		{ DATA_DIR "items/flashlight_off.png"           ,  4.0f },
 		{ DATA_DIR "items/cowbell.png"                  ,  0.0f },
-		{ DATA_DIR "items/eyedrops.png"                 ,  3.0f },
+		{ DATA_DIR "items/eye_drops.png"                ,  3.0f },
 		{ DATA_DIR "items/first_aid_kit.png"            ,  4.0f },
 		{ DATA_DIR "items/night_vision_goggles_off.png" ,  2.0f },
 		{ DATA_DIR "items/pills.png"                    ,  6.0f },
@@ -521,6 +521,8 @@ struct State
 		f32 flashlight_keytime;
 		f32 night_vision_goggles_activation;
 		f32 night_vision_goggles_scan_line_keytime;
+		f32 interpolated_eye_drops_activation;
+		f32 eye_drops_activation;
 	} game;
 
 	struct
@@ -1001,9 +1003,9 @@ internal vf3 shader(State* state, vf3 color, Material material, bool32 in_light,
 
 	return vf3
 		{
-			clamp((color.x * (AMBIENT_COLOR.x * ambient_light + FLASHLIGHT_COLOR.x * flashlight_light + FIRE_COLOR.x * fire_light)) * lerp(1.0f, NIGHT_VISION_COLOR.x * night_vision_light, state->game.night_vision_goggles_activation), 0.0f, 1.0f),
-			clamp((color.y * (AMBIENT_COLOR.y * ambient_light + FLASHLIGHT_COLOR.y * flashlight_light + FIRE_COLOR.y * fire_light)) * lerp(1.0f, NIGHT_VISION_COLOR.y * night_vision_light, state->game.night_vision_goggles_activation), 0.0f, 1.0f),
-			clamp((color.z * (AMBIENT_COLOR.z * ambient_light + FLASHLIGHT_COLOR.z * flashlight_light + FIRE_COLOR.z * fire_light)) * lerp(1.0f, NIGHT_VISION_COLOR.z * night_vision_light, state->game.night_vision_goggles_activation), 0.0f, 1.0f)
+			clamp((color.x * (AMBIENT_COLOR.x * ambient_light + FLASHLIGHT_COLOR.x * flashlight_light + FIRE_COLOR.x * fire_light)) * lerp(1.0f, NIGHT_VISION_COLOR.x * night_vision_light, state->game.night_vision_goggles_activation) * (1.0f + state->game.interpolated_eye_drops_activation / 4.0f), 0.0f, 1.0f),
+			clamp((color.y * (AMBIENT_COLOR.y * ambient_light + FLASHLIGHT_COLOR.y * flashlight_light + FIRE_COLOR.y * fire_light)) * lerp(1.0f, NIGHT_VISION_COLOR.y * night_vision_light, state->game.night_vision_goggles_activation) * (1.0f + state->game.interpolated_eye_drops_activation / 4.0f), 0.0f, 1.0f),
+			clamp((color.z * (AMBIENT_COLOR.z * ambient_light + FLASHLIGHT_COLOR.z * flashlight_light + FIRE_COLOR.z * fire_light)) * lerp(1.0f, NIGHT_VISION_COLOR.z * night_vision_light, state->game.night_vision_goggles_activation) * (1.0f + state->game.interpolated_eye_drops_activation / 4.0f), 0.0f, 1.0f)
 		};
 }
 
@@ -1271,7 +1273,7 @@ internal void render_scan_line(u32* view_pixels, i32 x, State* state, MemoryAren
 				scan_pixel = sample_at(&node->image, { node->portion, (static_cast<f32>(y) - node->starting_y) / (node->ending_y - node->starting_y) });
 				if (scan_pixel.w)
 				{
-					view_pixels[(VIEW_RES.y - 1 - y) * VIEW_RES.x + x] = pack_color(shader(state, scan_pixel.xyz, node->material, node->in_light, ray, vx3(node->normal, 0.0f), node->distance, { x, y}));
+					view_pixels[(VIEW_RES.y - 1 - y) * VIEW_RES.x + x] = pack_color(shader(state, scan_pixel.xyz, node->material, node->in_light, ray, vx3(node->normal, 0.0f), node->distance, { x, y }));
 					goto NEXT_Y;
 				}
 			}
@@ -1291,7 +1293,13 @@ internal void render_scan_line(u32* view_pixels, i32 x, State* state, MemoryAren
 			vf3 wall_color = { NAN, NAN, NAN };
 			if (wall_overlay_color.w < 1.0f)
 			{
-				wall_color = sample_at(&state->game.mipmap.wall, distance / 4.0f + state->game.mipmap.wall.level_count * square(1.0f - fabsf(dot(ray, vx3(ray_casted_wall_side.normal, 0.0f)))), { wall_portion, y_portion });
+				wall_color =
+					sample_at
+					(
+						&state->game.mipmap.wall,
+						(distance / 4.0f + state->game.mipmap.wall.level_count * square(1.0f - fabsf(dot(ray, vx3(ray_casted_wall_side.normal, 0.0f))))) * (1.0f - state->game.interpolated_eye_drops_activation),
+						{ wall_portion, y_portion }
+					);
 			}
 
 			// @TODO@ Lerp is slow!
@@ -1345,7 +1353,13 @@ internal void render_scan_line(u32* view_pixels, i32 x, State* state, MemoryAren
 			uv.x = mod(uv.x / 4.0f, 1.0f);
 			uv.y = mod(uv.y / 4.0f, 1.0f);
 
-			vf3 floor_ceiling_color = sample_at(mipmap, distance / 16.0f + mipmap->level_count * square(1.0f - fabsf(dot(ray, normal))), uv);
+			vf3 floor_ceiling_color =
+				sample_at
+				(
+					mipmap,
+					(distance / 16.0f + mipmap->level_count * square(1.0f - fabsf(dot(ray, normal)))) * (1.0f - state->game.interpolated_eye_drops_activation),
+					uv
+				);
 
 			// @TODO@ Lerp is slow!
 			view_pixels[(VIEW_RES.y - 1 - y) * VIEW_RES.x + x] =
@@ -2052,6 +2066,9 @@ extern "C" PROTOTYPE_UPDATE(update)
 				//state->game.lucia_angle    = 5.3498487f;
 				//state->game.monster_position = { 66.295441f, 25.49999f, 1.2878139f };
 				//state->game.monster_normal   = { -0.83331096f, 0.55280459f };
+				state->game.hud.inventory.array[0][0].type = ItemType::eye_drops;
+				state->game.hud.inventory.array[0][1].type = ItemType::eye_drops;
+				state->game.hud.inventory.array[0][2].type = ItemType::eye_drops;
 			}
 
 			Mix_VolumeChunk(state->game.audio.drone    , static_cast<i32>(MIX_MAX_VOLUME *         state->game.ceiling_lights_keytime  * (1.0f - state->game.exiting_keytime)));
@@ -2348,6 +2365,16 @@ extern "C" PROTOTYPE_UPDATE(update)
 											state->game.notification_keytime = 1.0f;
 										}
 									} break;
+
+									case ItemType::eye_drops:
+									{
+										// Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.switch_toggle, 0); // @TODO@ Audio
+										state->game.notification_message  = "(You dumped the whole eye drop container into your eyes.)";
+										state->game.notification_keytime  = 1.0f;
+										state->game.eye_drops_activation += 1.0f;
+
+										state->game.hud.inventory.selected_item->type = ItemType::null;
+									} break;
 								}
 
 								if (state->game.hud.type == HudType::inventory)
@@ -2572,6 +2599,9 @@ extern "C" PROTOTYPE_UPDATE(update)
 					}
 				} break;
 			}
+
+			state->game.eye_drops_activation              = max(state->game.eye_drops_activation - SECONDS_PER_UPDATE / 30.0f, 0.0f);
+			state->game.interpolated_eye_drops_activation = dampen(state->game.interpolated_eye_drops_activation, state->game.eye_drops_activation, 4.0f, SECONDS_PER_UPDATE);
 
 			state->game.lucia_angle_velocity *= 0.4f;
 			state->game.lucia_angle           = mod(state->game.lucia_angle + state->game.lucia_angle_velocity * SECONDS_PER_UPDATE, TAU);
