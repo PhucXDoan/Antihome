@@ -79,6 +79,7 @@ internal constexpr f32 dot(vf2 u, vf2 v) { return u.x * v.x + u.y * v.y;        
 
 internal constexpr vf3 cross(vf3 u, vf3 v) { return { u.y * v.z - u.z * v.y, u.z * v.x - u.x * v.z, u.x * v.y - u.y * v.x }; }
 
+internal constexpr vf3 hadamard_multiply(vf3 u, vf3 v) { return { u.x * v.x, u.y * v.y, u.z * v.z            }; }
 internal constexpr vf4 hadamard_multiply(vf4 u, vf4 v) { return { u.x * v.x, u.y * v.y, u.z * v.z, u.w * v.w }; }
 
 internal constexpr vf2 hadamard_divide(vf2 u, vf2 v) { return { u.x / v.x, u.y / v.y }; }

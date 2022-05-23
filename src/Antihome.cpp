@@ -1212,73 +1212,46 @@ internal void execute_on_render_thread_data(RenderThreadData* thread_data)
 		}
 
 		lambda shader =
-			[&](Material material, bool32 in_light, vf3 color, vf3 ray, vf3 normal, f32 distance)
+			[&](vf3 color, Material material, bool32 in_light, vf3 ray, vf3 normal, f32 distance)
 			{
-				if (material == Material::hand)
+				constexpr f32 FLASHLIGHT_INNER_CUTOFF = 0.95f;
+				constexpr f32 FLASHLIGHT_OUTER_CUTOFF = 0.93f;
+
+				f32 ceiling_lights_t = 0.5f - 4.0f * cube(0.5f - thread_data->state->game.ceiling_lights_keytime);
+
+				vf3 lighting =
+					vf3 { 1.0f, 1.0f, 1.0f } * 0.5f / (square(distance) / 4.0f + 1.0f)
+					+ vf3 { 1.0f, 1.0f, 1.0f } * lerp(0.6f, 1.3f, (thread_data->state->game.lucia_position.z + ray.z * distance) / WALL_HEIGHT) * ceiling_lights_t
+					+ vf3 { 1.0f, 1.0f, 1.0f }
+						* (1.0f + powf(square(dot(ray, normal)), 64) * square(dot(ray, thread_data->state->game.flashlight_ray)) * 0.8f)
+						* clamp((dot(ray, thread_data->state->game.flashlight_ray) - FLASHLIGHT_OUTER_CUTOFF) / (FLASHLIGHT_INNER_CUTOFF - FLASHLIGHT_OUTER_CUTOFF), 0.0f, 1.0f)
+						/ (square(distance) * 0.1f + 7.0f)
+						* 6.0f
+						* thread_data->state->game.flashlight_activation;
+
+				if (in_light)
 				{
-					return color;
-				}
-				else
-				{
-					f32 ceiling_lights_t = 0.5f - 4.0f * cube(0.5f - thread_data->state->game.ceiling_lights_keytime);
-
-					vf3 new_color =
-						color
-							* clamp
-								(
-									(
-										material == Material::item ? 0.8f : 0.3f
-											- fabsf(dot(ray, normal)) * 0.01f
-											+ ((thread_data->state->game.lucia_position.z + ray.z * distance) / WALL_HEIGHT + 0.95f) * 0.7f * ceiling_lights_t
-									) * clamp(1.0f - distance / lerp(8.0f, 48.0f, ceiling_lights_t), 0.0f, 1.0f),
-									0.0f,
-									1.0f
-								);
-
-					if (thread_data->state->game.flashlight_activation)
+					constexpr vf3 FIRE_COLOR = { 0.8863f, 0.3451f, 0.1333f };
+					if (material == Material::monster)
 					{
-						constexpr f32 FLASHLIGHT_INNER_CUTOFF = 1.00f;
-						constexpr f32 FLASHLIGHT_OUTER_CUTOFF = 0.91f;
-
-						new_color +=
-							color
-								* (1.0f + powf(square(dot(ray, normal)), 64) * square(dot(ray, thread_data->state->game.flashlight_ray)) * 0.8f)
-								* clamp
-									(
-										clamp((dot(ray, thread_data->state->game.flashlight_ray) - FLASHLIGHT_OUTER_CUTOFF) / (FLASHLIGHT_INNER_CUTOFF - FLASHLIGHT_OUTER_CUTOFF), 0.0f, 1.0f)
-											/ (square(distance) + 0.1f)
-											* 32.0f
-											* thread_data->state->game.flashlight_activation,
-										0.0f,
-										1.0f
-									);
+						lighting += FIRE_COLOR * 0.7f;
 					}
-
-					if (in_light)
+					else
 					{
-						switch (material)
-						{
-							case Material::monster:
-							{
-								new_color += color;
-							} break;
+						vf3 frag_position = thread_data->state->game.lucia_position + ray * distance;
+						vf3 frag_ray      = vx3(ray_to_closest(frag_position.xy, thread_data->state->game.monster_position.xy), thread_data->state->game.monster_position.z - frag_position.z);
 
-							default:
-							{
-								vf3 frag_position = thread_data->state->game.lucia_position + ray * distance;
-								vf3 frag_ray      = vx3(ray_to_closest(frag_position.xy, thread_data->state->game.monster_position.xy), thread_data->state->game.monster_position.z - frag_position.z);
-
-								new_color +=
-									(color * 3.0f + vf3 { 0.8863f, 0.3451f, 0.1333f } * 4.0f)
-										* 2.0f
-										* square(clamp(1.0f / (norm(frag_ray) + 0.1f), 0.0f, 1.0f))
-										* fabsf(dot(normalize(frag_ray), normal));
-							};
-						}
+						lighting +=
+							FIRE_COLOR
+								* 32.0f
+								* square(clamp(1.0f / (norm(frag_ray) + 0.1f), 0.0f, 1.0f))
+								* fabsf(dot(normalize(frag_ray), normal));
 					}
-
-					return vf3 { clamp(new_color.x, 0.0f, 1.0f), clamp(new_color.y, 0.0f, 1.0f), clamp(new_color.z, 0.0f, 1.0f) };
 				}
+
+				vf3 new_color = hadamard_multiply(color, lighting);
+
+				return vf3 { clamp(new_color.x, 0.0f, 1.0f), clamp(new_color.y, 0.0f, 1.0f), clamp(new_color.z, 0.0f, 1.0f) };
 			};
 
 		FOR_RANGE(y, VIEW_RES.y)
@@ -1293,7 +1266,7 @@ internal void execute_on_render_thread_data(RenderThreadData* thread_data)
 					scan_pixel = sample_at(&node->image, { node->portion, (static_cast<f32>(y) - node->starting_y) / (node->ending_y - node->starting_y) });
 					if (scan_pixel.w)
 					{
-						thread_data->view_pixels[(VIEW_RES.y - 1 - y) * VIEW_RES.x + x] = pack_color(shader(node->material, node->in_light, scan_pixel.xyz, ray, vx3(node->normal, 0.0f), node->distance));
+						thread_data->view_pixels[(VIEW_RES.y - 1 - y) * VIEW_RES.x + x] = pack_color(shader(scan_pixel.xyz, node->material, node->in_light, ray, vx3(node->normal, 0.0f), node->distance));
 						goto NEXT_Y;
 					}
 				}
@@ -1322,13 +1295,13 @@ internal void execute_on_render_thread_data(RenderThreadData* thread_data)
 					(
 						shader
 						(
-							Material::wall,
-							wall_in_light,
 							wall_overlay_color.w == 0.0f
 								? wall_color
 								: wall_overlay_color.w == 1.0f
 									? wall_overlay_color.xyz
 									: lerp(wall_color, wall_overlay_color.xyz, wall_overlay_color.w),
+							Material::wall,
+							wall_in_light,
 							ray,
 							vx3(ray_casted_wall_side.normal, 0.0f),
 							distance
@@ -1373,9 +1346,9 @@ internal void execute_on_render_thread_data(RenderThreadData* thread_data)
 					(
 						shader
 						(
+							floor_ceiling_color,
 							material,
 							exists_clear_way(thread_data->state, thread_data->state->game.lucia_position.xy + ray.xy * distance * SHADER_INV_EPSILON, thread_data->state->game.monster_position.xy),
-							floor_ceiling_color,
 							ray,
 							normal,
 							distance
@@ -1556,6 +1529,8 @@ internal void boot_down_state(State* state)
 			}
 
 			SDL_DestroySemaphore(state->game.render_thread_clock_out);
+			state->game.should_fire_render_threads = false;
+
 			FOR_ELEMS(it, state->game.images          ) { deinit_image(it);           }
 			FOR_ELEMS(it, state->game.texture_sprites ) { deinit_texture_sprite(it);  }
 			FOR_ELEMS(it, state->game.animated_sprites) { deinit_animated_sprite(it); }
@@ -2878,7 +2853,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 				}
 			}
 
-			#if 1
+			#if 0
 			if (HOLDING(Input::space))
 			{
 				state->game.monster_position.xy = move(state, state->game.monster_position.xy, state->game.monster_velocity * SECONDS_PER_UPDATE);
