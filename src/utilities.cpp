@@ -113,6 +113,8 @@ internal i32 mod(i32 x, i32 m) { return (x % m + m) % m; }
 internal f32 mod(f32 x, f32 m) { f32 y = fmodf(x, m); return y < 0.0f ? y + m : y; }
 
 internal vf2 polar(f32 angle) { return { cosf(angle), sinf(angle) }; }
+internal f32 argument(vf2 v) { f32 a = atanf(v.y / v.x); return v.x < 0.0f ? a + TAU / 2.0f : v.y < 0.0f ? a + TAU : a; }
+internal f32 sign_angle(f32 a) { return a > TAU / 2.0f ? a - TAU : a; }
 
 internal bool32 in_rect(vf2 position, vf2 bottom_left, vf2 dimensions)
 {

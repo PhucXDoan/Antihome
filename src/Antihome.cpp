@@ -400,7 +400,8 @@ struct State
 
 		f32                  entering_keytime;
 		f32                  exiting_keytime;
-		f32                  blur_activation;
+		f32                  interpolated_blur;
+		f32                  blur_value;
 
 		PathCoordinatesNode* available_path_coordinates_node;
 		strlit               notification_message;
@@ -504,6 +505,8 @@ struct State
 		f32 flashlight_keytime;
 		f32 night_vision_goggles_activation;
 		f32 night_vision_goggles_scan_line_keytime;
+		vf2 night_vision_goggles_interpolated_ray_to_circuit_breaker;
+		vf2 night_vision_goggles_interpolated_ray_to_door;
 		f32 interpolated_eye_drops_activation;
 		f32 eye_drops_activation;
 	} game;
@@ -939,6 +942,7 @@ enum struct Material : u8
 
 internal vf3 shader(State* state, vf3 color, Material material, bool32 in_light, vf3 ray, vf3 normal, f32 distance)
 {
+	in_light = false;
 	constexpr f32 FLASHLIGHT_INNER_CUTOFF = 0.95f;
 	constexpr f32 FLASHLIGHT_OUTER_CUTOFF = 0.93f;
 
@@ -1601,11 +1605,11 @@ extern "C" PROTOTYPE_UPDATE(update)
 			DEBUG_once // @TEMP@
 			{
 				//state->game.lucia_position.xy = get_position_of_wall_side(state->game.door_wall_side, 1.0f);
-				//state->game.lucia_position.xy = get_position_of_wall_side(state->game.circuit_breaker_wall_side, 1.0f);
-				state->game.lucia_position = { 64.637268f, 26.6f, 1.3239026f };
-				state->game.lucia_angle    = 5.3498487f;
-				state->game.monster_position = { 66.295441f, 25.49999f, 1.2878139f };
-				state->game.monster_normal   = { -0.83331096f, 0.55280459f };
+				state->game.lucia_position.xy = get_position_of_wall_side(state->game.circuit_breaker_wall_side, 1.0f);
+				//state->game.lucia_position = { 64.637268f, 26.6f, 1.3239026f };
+				//state->game.lucia_angle    = 5.3498487f;
+				//state->game.monster_position = { 66.295441f, 25.49999f, 1.2878139f };
+				//state->game.monster_normal   = { -0.83331096f, 0.55280459f };
 				state->game.hud.inventory.array[0][0].type = ItemType::night_vision_goggles;
 				state->game.hud.inventory.array[0][0].night_vision_goggles.power = 1.0f;
 				state->game.hud.inventory.array[0][1].type = ItemType::eye_drops;
@@ -1913,7 +1917,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 										state->game.notification_message  = "(You dumped the whole eye drop container into your eyes.)";
 										state->game.notification_keytime  = 1.0f;
 										state->game.eye_drops_activation += 1.0f;
-										state->game.blur_activation      += 0.5f;
+										state->game.blur_value           += 0.5f;
 
 										state->game.hud.inventory.selected_item->type = ItemType::null;
 									} break;
@@ -2145,7 +2149,8 @@ extern "C" PROTOTYPE_UPDATE(update)
 			state->game.eye_drops_activation              = max(state->game.eye_drops_activation - SECONDS_PER_UPDATE / 30.0f, 0.0f);
 			state->game.interpolated_eye_drops_activation = dampen(state->game.interpolated_eye_drops_activation, state->game.eye_drops_activation, 4.0f, SECONDS_PER_UPDATE);
 
-			state->game.blur_activation = max(state->game.blur_activation - SECONDS_PER_UPDATE / 8.0f, 0.0f);
+			state->game.blur_value        = max(state->game.blur_value - SECONDS_PER_UPDATE / 8.0f, 0.0f);
+			state->game.interpolated_blur = dampen(state->game.interpolated_blur, state->game.blur_value, 4.0f, SECONDS_PER_UPDATE);
 
 			state->game.lucia_angle_velocity *= 0.4f;
 			state->game.lucia_angle           = mod(state->game.lucia_angle + state->game.lucia_angle_velocity * SECONDS_PER_UPDATE, TAU);
@@ -2695,8 +2700,26 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 			if (state->game.holding.night_vision_goggles)
 			{
-				battery_display_level       = state->game.holding.night_vision_goggles->night_vision_goggles.power;
-				state->game.blur_activation = max(state->game.blur_activation, 0.3f);
+				battery_display_level  = state->game.holding.night_vision_goggles->night_vision_goggles.power;
+				state->game.blur_value = max(state->game.blur_value, 0.15f);
+
+				state->game.night_vision_goggles_interpolated_ray_to_circuit_breaker =
+					dampen
+					(
+						state->game.night_vision_goggles_interpolated_ray_to_circuit_breaker,
+						ray_to_closest(state->game.lucia_position.xy, get_position_of_wall_side(state->game.circuit_breaker_wall_side, 1.0f)),
+						8.0f,
+						SECONDS_PER_UPDATE
+					);
+
+				state->game.night_vision_goggles_interpolated_ray_to_door =
+					dampen
+					(
+						state->game.night_vision_goggles_interpolated_ray_to_door,
+						ray_to_closest(state->game.lucia_position.xy, get_position_of_wall_side(state->game.door_wall_side, 1.0f)),
+						8.0f,
+						SECONDS_PER_UPDATE
+					);
 			}
 
 			if (battery_display_level)
@@ -3309,15 +3332,15 @@ extern "C" PROTOTYPE_RENDER(render)
 			SDL_LockTexture(state->game.texture.view, 0, reinterpret_cast<void**>(&view_texture_pixels), &view_pitch_);
 
 			__m128 m_blur =
-				state->game.blur_activation > 0.001f
-					? _mm_set_ps1(1.0f - expf(-SECONDS_PER_UPDATE / state->game.blur_activation))
+				state->game.interpolated_blur > 0.001f
+					? _mm_set_ps1(1.0f - expf(-SECONDS_PER_UPDATE / state->game.interpolated_blur))
 					: m_one;
 
 			__m128 m_max_x = _mm_set_ps1(static_cast<f32>(VIEW_RES.x));
 
 			__m128 m_night_vision_goggles_activation        = _mm_set_ps1(state->game.night_vision_goggles_activation);
 			__m128 m_night_vision_goggles_scan_line_keytime = _mm_set_ps1(state->game.night_vision_goggles_scan_line_keytime);
-			__m128 m_night_vision_goggles_low_scan          = _mm_set_ps1(0.5f);
+			__m128 m_night_vision_goggles_low_scan          = _mm_set_ps1(0.9f);
 			__m128 m_night_vision_goggles_r                 = _mm_set_ps1(0.0f);
 			__m128 m_night_vision_goggles_g                 = _mm_set_ps1(3.0f);
 			__m128 m_night_vision_goggles_b                 = _mm_set_ps1(0.0f);
@@ -3564,7 +3587,6 @@ extern "C" PROTOTYPE_RENDER(render)
 				}
 			}
 
-
 			constexpr vf2 HEART_RATE_MONITOR_DIMENSIONS  = { 50.0f, STATUS_HUD_HEIGHT * 0.6f };
 			constexpr vf2 HEART_RATE_MONITOR_COORDINATES = vf2 { SCREEN_RES.x - 15.0f - HEART_RATE_MONITOR_DIMENSIONS.x, SCREEN_RES.y - (STATUS_HUD_HEIGHT + HEART_RATE_MONITOR_DIMENSIONS.y) / 2.0f };
 
@@ -3588,7 +3610,27 @@ extern "C" PROTOTYPE_RENDER(render)
 			blackout = 1.0f - state->game.entering_keytime;
 
 			SDL_SetRenderTarget(platform->renderer, 0);
-			render_texture(platform->renderer, state->game.texture.screen, { 0.0f, 0.0f }, vxx(WIN_DIM));
+
+			lambda draw_night_vision_goggles_text =
+				[&](strlit name, vf2 ray)
+				{
+					f32 distance = norm(ray);
+					render_text
+					(
+						platform->renderer,
+						state->font.minor,
+						{ VIEW_RES.x / SCREEN_RES.x * WIN_DIM.x * (0.5f - sign_angle(mod(argument(ray) - state->game.lucia_angle, TAU)) / state->game.lucia_fov), VIEW_RES.y * WIN_DIM.y * 0.5f / SCREEN_RES.y },
+						0.5f,
+						FC_ALIGN_CENTER,
+						8.0f / (distance + 1.0f),
+						{ 0.0f, 0.8f, 0.0f, clamp(8.0f / (distance + 1.0f), 0.0f, state->game.night_vision_goggles_activation) },
+						"%s\n%.2fm",
+						name, distance
+					);
+				};
+
+			draw_night_vision_goggles_text("CIRCUIT_BREAKER", state->game.night_vision_goggles_interpolated_ray_to_circuit_breaker);
+			draw_night_vision_goggles_text("\"EXIT_9341\"", state->game.night_vision_goggles_interpolated_ray_to_door);
 
 			if (state->game.notification_keytime)
 			{
@@ -3606,6 +3648,8 @@ extern "C" PROTOTYPE_RENDER(render)
 				);
 			}
 
+			render_texture(platform->renderer, state->game.texture.screen, { 0.0f, 0.0f }, vxx(WIN_DIM));
+
 			// @TEMP@
 			render_text
 			(
@@ -3615,12 +3659,11 @@ extern "C" PROTOTYPE_RENDER(render)
 				0.0f,
 				FC_ALIGN_LEFT,
 				1.0f,
-				{ 1.0f, 1.0f, 1.0f, 1.0f },
-				"%.2f %.2f\n%.2f %.2f\n%.2f %.2f\n%.2f %.2f",
+				{ 0.5f, 0.5f, 0.5f, 0.5f },
+				"%.2f %.2f\n%.2f %.2f\n%.2f %.2f",
 				state->game.lucia_position.x, state->game.lucia_position.y,
 				state->game.door_wall_side.coordinates.x * WALL_SPACING, state->game.door_wall_side.coordinates.y * WALL_SPACING,
-				state->game.monster_position.x, state->game.monster_position.y,
-				polar(state->game.lucia_angle).x, polar(state->game.lucia_angle).y
+				state->game.monster_position.x, state->game.monster_position.y
 			);
 		} break;
 
