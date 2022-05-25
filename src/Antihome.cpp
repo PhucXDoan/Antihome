@@ -2664,9 +2664,12 @@ extern "C" PROTOTYPE_UPDATE(update)
 						}
 						else
 						{
-							state->game.monster_timeout = 32.0f;
-							state->game.blur_value      = 1.0f;
-							state->game.lucia_health    = max(state->game.lucia_health - 0.25f, 0.0f);
+							// @NOTE@ Lucia hit.
+
+							state->game.monster_timeout   = 32.0f;
+							state->game.blur_value        = 1.0f;
+							state->game.lucia_health      = max(state->game.lucia_health - 0.25f, 0.0f);
+							state->game.lucia_position.xy = rng_open_position(state);
 						}
 					}
 
