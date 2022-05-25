@@ -67,6 +67,7 @@ i32 sign(TYPE x)
 }
 
 internal constexpr vf2 conjugate(vf2 v) { return {  v.x, -v.y }; }
+internal constexpr vi2 conjugate(vi2 v) { return {  v.x, -v.y }; }
 internal constexpr vf2 rotate90(vf2 v)  { return { -v.y,  v.x }; }
 internal vf2 rotate(vf2 v, f32 angle)  { return { v.x * cosf(angle) - v.y * sinf(angle), v.x * sinf(angle) + v.y * cosf(angle) }; }
 
@@ -119,8 +120,15 @@ internal f32 sign_angle(f32 a) { return a > TAU / 2.0f ? a - TAU : a; }
 internal bool32 in_rect(vf2 position, vf2 bottom_left, vf2 dimensions)
 {
 	return
-		bottom_left.x <= position.x && position.x <= bottom_left.x + dimensions.x &&
-		bottom_left.y <= position.y && position.y <= bottom_left.y + dimensions.y;
+		IN_RANGE(position.x, bottom_left.x, bottom_left.x + dimensions.x) &&
+		IN_RANGE(position.y, bottom_left.y, bottom_left.y + dimensions.y);
+}
+
+internal bool32 in_rect_centered(vf2 position, vf2 center, vf2 dimensions)
+{
+	return
+		IN_RANGE(position.x, center.x - dimensions.x / 2.0f, center.x + dimensions.x / 2.0f) &&
+		IN_RANGE(position.y, center.y - dimensions.y / 2.0f, center.y + dimensions.y / 2.0f);
 }
 
 internal constexpr u32 pack_color(vf3 color)

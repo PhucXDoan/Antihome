@@ -1557,6 +1557,8 @@ extern "C" PROTOTYPE_UPDATE(update)
 									spawn_item(state);
 								}
 
+								state->game.hud.cursor = VIEW_RES / 2.0f;
+
 								FOR_ELEMS(it, state->game.hud.circuit_breaker.flat_switches)
 								{
 									it->voltage                                  = 1 + rng(&state->seed, 0, 6);
@@ -1677,7 +1679,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 			}
 
 			// @TEMP@
-			state->game.lucia_health = max(state->game.lucia_health - 0.1f * SECONDS_PER_UPDATE, 0.0f);
+			//state->game.lucia_health = max(state->game.lucia_health - 0.1f * SECONDS_PER_UPDATE, 0.0f);
 
 			Mix_VolumeChunk(state->game.audio.drone    , static_cast<i32>(MIX_MAX_VOLUME *         state->game.ceiling_lights_keytime  * (1.0f - state->game.exiting_keytime)));
 			Mix_VolumeChunk(state->game.audio.drone_low, static_cast<i32>(MIX_MAX_VOLUME * (1.0f - state->game.ceiling_lights_keytime) * (1.0f - state->game.exiting_keytime)));
@@ -1693,6 +1695,88 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 			if (state->game.lucia_health > 0.0f)
 			{
+				vf2 wasd = { 0.0f, 0.0f };
+
+				if (state->game.hud.type != HudType::circuit_breaker)
+				{
+					if (HOLDING(Input::s)) { wasd.x -= 1.0f; }
+					if (HOLDING(Input::w)) { wasd.x += 1.0f; }
+					if (HOLDING(Input::d)) { wasd.y -= 1.0f; }
+					if (HOLDING(Input::a)) { wasd.y += 1.0f; }
+					if (+wasd)
+					{
+						constexpr f32 MIN_PORTION = 0.7f;
+						state->game.lucia_velocity += rotate(normalize(wasd), state->game.lucia_angle) * 2.0f * ((1.0f - powf(1.0f - state->game.lucia_stamina, 8) + MIN_PORTION) / (1.0f + MIN_PORTION));
+					}
+				}
+
+				if (+wasd && HOLDING(Input::shift) && !state->game.lucia_out_of_breath)
+				{
+					state->game.lucia_velocity       *= 0.75f;
+					state->game.lucia_stamina         = clamp(state->game.lucia_stamina - SECONDS_PER_UPDATE / 60.0f * (1.0f + (1.0f - square(1.0f - 2.0f * state->game.lucia_sprint_keytime)) * 4.0f), 0.0f, 1.0f);
+					state->game.lucia_sprint_keytime  = clamp(state->game.lucia_sprint_keytime + SECONDS_PER_UPDATE / 1.5f, 0.0f, 1.0f);
+					if (state->game.lucia_stamina == 0.0f)
+					{
+						state->game.lucia_out_of_breath = true;
+					}
+					else
+					{
+						state->game.lucia_fov = dampen(state->game.lucia_fov, TAU * 0.35f, 2.0f, SECONDS_PER_UPDATE);
+					}
+				}
+				else
+				{
+					state->game.lucia_velocity       *= 0.675f;
+					state->game.lucia_stamina         = clamp(state->game.lucia_stamina + SECONDS_PER_UPDATE / 10.0f * square(1.0f - state->game.lucia_sprint_keytime) * (state->game.lucia_out_of_breath ? 0.5f : 1.0f), 0.0f, 1.0f);
+					state->game.lucia_sprint_keytime  = clamp(state->game.lucia_sprint_keytime - SECONDS_PER_UPDATE / 1.0f, 0.0f, 1.0f);
+
+					if (state->game.lucia_out_of_breath)
+					{
+						if (state->game.lucia_stamina > 0.5f)
+						{
+							state->game.lucia_out_of_breath = false;
+						}
+						else
+						{
+							state->game.lucia_fov = dampen(state->game.lucia_fov, TAU * 0.2f, 1.0f, SECONDS_PER_UPDATE);
+						}
+					}
+					else
+					{
+						state->game.lucia_fov = dampen(state->game.lucia_fov, TAU * 0.25f, 4.0f, SECONDS_PER_UPDATE);
+					}
+				}
+
+				state->game.lucia_position.xy = move(state, state->game.lucia_position.xy, state->game.lucia_velocity * SECONDS_PER_UPDATE);
+
+				f32 old_z = state->game.lucia_position.z;
+				state->game.lucia_position.z = LUCIA_HEIGHT + 0.1f * (cosf(state->game.lucia_head_bob_keytime * TAU) - 1.0f);
+
+				if (+wasd && old_z > LUCIA_HEIGHT - 0.175f && state->game.lucia_position.z < LUCIA_HEIGHT - 0.175f)
+				{
+					Mix_PlayChannel
+					(
+						+AudioChannel::unreserved,
+						+wasd && HOLDING(Input::shift) && !state->game.lucia_out_of_breath
+							? state->game.audio.run_steps [rng(&state->seed, 0, ARRAY_CAPACITY(state->game.audio.run_steps ))]
+							: state->game.audio.walk_steps[rng(&state->seed, 0, ARRAY_CAPACITY(state->game.audio.walk_steps))],
+						0
+					);
+				}
+
+				state->game.lucia_head_bob_keytime = mod(state->game.lucia_head_bob_keytime + 0.001f + 0.35f * norm(state->game.lucia_velocity) * SECONDS_PER_UPDATE, 1.0f);
+
+				FOR_ELEMS(it, state->game.item_buffer, state->game.item_count)
+				{
+					it->velocity *= 0.9f;
+					if (+it->velocity)
+					{
+						it->position.xy = move(state, it->position.xy, it->velocity * SECONDS_PER_UPDATE);
+					}
+					it->position.z = lerp(0.15f, state->game.lucia_position.z, clamp(1.0f - norm_sq(ray_to_closest(state->game.lucia_position.xy, it->position.xy)) / 36.0f, 0.0f, 1.0f)) + sinf(state->time * 3.0f) * 0.025f;
+					it->normal     = dampen(it->normal, normalize(ray_to_closest(it->position.xy, state->game.lucia_position.xy)), 2.0f, SECONDS_PER_UPDATE);
+				}
+
 				if (PRESSED(Input::tab))
 				{
 					if (state->game.hud.type == HudType::inventory)
@@ -1733,6 +1817,8 @@ extern "C" PROTOTYPE_UPDATE(update)
 				{
 					case HudType::inventory:
 					{
+						constexpr vf2 INVENTORY_HUD_DIM = vi2 { ARRAY_CAPACITY(state->game.hud.inventory.array[0]), ARRAY_CAPACITY(state->game.hud.inventory.array) } * static_cast<f32>(INVENTORY_DIM + INVENTORY_PADDING);
+
 						if (PRESSED(Input::left_mouse))
 						{
 							constexpr vf2 INVENTORY_HUD_DIMENSIONS = vf2 { static_cast<f32>(ARRAY_CAPACITY(state->game.hud.inventory.array[0])), static_cast<f32>(ARRAY_CAPACITY(state->game.hud.inventory.array)) } * (INVENTORY_DIM + INVENTORY_PADDING);
@@ -1740,28 +1826,21 @@ extern "C" PROTOTYPE_UPDATE(update)
 							{
 								state->game.hud.inventory.click_position = state->game.hud.cursor;
 
-								FOR_RANGE(y, ARRAY_CAPACITY(state->game.hud.inventory.array)) // @TODO@ Optimize this
-								{
-									FOR_RANGE(x, ARRAY_CAPACITY(state->game.hud.inventory.array[y]))
+								vi2 inventory_box_coordinates =
 									{
-										if
-										(
-											in_rect
-											(
-												state->game.hud.cursor,
-												VIEW_RES / 2.0f + vf2 { x - ARRAY_CAPACITY(state->game.hud.inventory.array[y]) / 2.0f, ARRAY_CAPACITY(state->game.hud.inventory.array) / 2.0f - y - 1.0f } * (INVENTORY_DIM + INVENTORY_PADDING),
-												{ INVENTORY_DIM, INVENTORY_DIM }
-											)
-										)
-										{
-											if (state->game.hud.inventory.array[y][x].type != ItemType::null)
-											{
-												state->game.hud.inventory.selected_item = &state->game.hud.inventory.array[y][x];
-											}
+										static_cast<i32>(roundf(( state->game.hud.cursor.x + (INVENTORY_HUD_DIM.x - INVENTORY_DIM - VIEW_RES.x) / 2.0f) / (INVENTORY_DIM + INVENTORY_PADDING))),
+										static_cast<i32>(roundf((-state->game.hud.cursor.y + (INVENTORY_HUD_DIM.y - INVENTORY_DIM + VIEW_RES.y) / 2.0f) / (INVENTORY_DIM + INVENTORY_PADDING)))
+									};
 
-											break;
-										}
-									}
+								if
+								(
+									IN_RANGE(inventory_box_coordinates.x, 0, ARRAY_CAPACITY(state->game.hud.inventory.array[0])) &&
+									IN_RANGE(inventory_box_coordinates.y, 0, ARRAY_CAPACITY(state->game.hud.inventory.array   )) &&
+									in_rect_centered(state->game.hud.cursor, (VIEW_RES + conjugate(vx2(INVENTORY_DIM) - INVENTORY_HUD_DIM)) / 2.0f + conjugate(inventory_box_coordinates) * (INVENTORY_DIM + INVENTORY_PADDING), vxx(vx2(INVENTORY_DIM))) &&
+									state->game.hud.inventory.array[inventory_box_coordinates.y][inventory_box_coordinates.x].type != ItemType::null
+								)
+								{
+									state->game.hud.inventory.selected_item = &state->game.hud.inventory.array[inventory_box_coordinates.y][inventory_box_coordinates.x];
 								}
 							}
 							else
@@ -1783,129 +1862,122 @@ extern "C" PROTOTYPE_UPDATE(update)
 							{
 								if (state->game.hud.inventory.grabbing)
 								{
-									if
-									(
-										fabs(state->game.hud.cursor.x * 2.0f - VIEW_RES.x) < ARRAY_CAPACITY(state->game.hud.inventory.array[0]) * (INVENTORY_DIM + INVENTORY_PADDING) &&
-										fabs(state->game.hud.cursor.y * 2.0f - VIEW_RES.y) < ARRAY_CAPACITY(state->game.hud.inventory.array   ) * (INVENTORY_DIM + INVENTORY_PADDING)
-									)
+									if (in_rect_centered(state->game.hud.cursor, VIEW_RES / 2.0f, INVENTORY_HUD_DIM))
 									{
-										FOR_RANGE(y, ARRAY_CAPACITY(state->game.hud.inventory.array))
-										{
-											FOR_RANGE(x, ARRAY_CAPACITY(state->game.hud.inventory.array[y]))
+										vi2 inventory_box_coordinates =
 											{
-												// @TODO@ Simplify
-												if
-												(
-													fabsf(VIEW_RES.x / 2.0f + (x + (1.0f - ARRAY_CAPACITY(state->game.hud.inventory.array[y])) / 2.0f) * (INVENTORY_DIM + INVENTORY_PADDING) - state->game.hud.cursor.x) < INVENTORY_DIM / 2.0f &&
-													fabsf(VIEW_RES.y / 2.0f - (y + (1.0f - ARRAY_CAPACITY(state->game.hud.inventory.array   )) / 2.0f) * (INVENTORY_DIM + INVENTORY_PADDING) - state->game.hud.cursor.y) < INVENTORY_DIM / 2.0f
-												)
+												static_cast<i32>(roundf(( state->game.hud.cursor.x + (INVENTORY_HUD_DIM.x - INVENTORY_DIM - VIEW_RES.x) / 2.0f) / (INVENTORY_DIM + INVENTORY_PADDING))),
+												static_cast<i32>(roundf((-state->game.hud.cursor.y + (INVENTORY_HUD_DIM.y - INVENTORY_DIM + VIEW_RES.y) / 2.0f) / (INVENTORY_DIM + INVENTORY_PADDING)))
+											};
+
+										if
+										(
+											IN_RANGE(inventory_box_coordinates.x, 0, ARRAY_CAPACITY(state->game.hud.inventory.array[0])) &&
+											IN_RANGE(inventory_box_coordinates.y, 0, ARRAY_CAPACITY(state->game.hud.inventory.array   )) &&
+											in_rect_centered(state->game.hud.cursor, (VIEW_RES + conjugate(vx2(INVENTORY_DIM) - INVENTORY_HUD_DIM)) / 2.0f + conjugate(inventory_box_coordinates) * (INVENTORY_DIM + INVENTORY_PADDING), vxx(vx2(INVENTORY_DIM)))
+										)
+										{
+											aliasing dropped_on = state->game.hud.inventory.array[inventory_box_coordinates.y][inventory_box_coordinates.x];
+											if (&dropped_on != state->game.hud.inventory.selected_item)
+											{
+												if (dropped_on.type == ItemType::null)
 												{
-													if (&state->game.hud.inventory.array[y][x] != state->game.hud.inventory.selected_item)
+													// @NOTE@ Item move.
+
+													dropped_on                                    = *state->game.hud.inventory.selected_item;
+													state->game.hud.inventory.selected_item->type = ItemType::null;
+
+													FOR_ELEMS(it, state->game.holdings)
 													{
-														if (state->game.hud.inventory.array[y][x].type == ItemType::null)
+														if (*it == state->game.hud.inventory.selected_item)
 														{
-															// @NOTE@ Item move.
+															*it = &dropped_on;
+															break;
+														}
+													}
+												}
+												else
+												{
+													// @NOTE@ Item combine.
 
-															state->game.hud.inventory.array[y][x]        = *state->game.hud.inventory.selected_item;
-															state->game.hud.inventory.selected_item->type = ItemType::null;
+													bool32 combined        = false;
+													Item   combined_result = {};
 
-															FOR_ELEMS(it, state->game.holdings)
+													if (!combined)
+													{
+														Item* cheap_batteries;
+														Item* flashlight;
+														if (check_combine(&cheap_batteries, ItemType::cheap_batteries, &flashlight, ItemType::flashlight, &dropped_on, state->game.hud.inventory.selected_item))
+														{
+															combined = true;
+
+															Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.eletronical, 0);
+															state->game.notification_message = "(You replaced the batteries in the flashlight.)";
+															state->game.notification_keytime = 1.0f;
+
+															combined_result = *flashlight;
+															combined_result.flashlight.power = 1.0f;
+
+															if (state->game.holding.flashlight == state->game.hud.inventory.selected_item)
 															{
-																if (*it == state->game.hud.inventory.selected_item)
-																{
-																	*it = &state->game.hud.inventory.array[y][x];
-																	break;
-																}
+																state->game.holding.flashlight = &dropped_on;
 															}
 														}
 														else
 														{
-															// @NOTE@ Item combine.
-
-															bool32 combined        = false;
-															Item   combined_result = {};
-
-															if (!combined)
-															{
-																Item* cheap_batteries;
-																Item* flashlight;
-																if (check_combine(&cheap_batteries, ItemType::cheap_batteries, &flashlight, ItemType::flashlight, &state->game.hud.inventory.array[y][x], state->game.hud.inventory.selected_item))
-																{
-																	combined = true;
-
-																	Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.eletronical, 0);
-																	state->game.notification_message = "(You replaced the batteries in the flashlight.)";
-																	state->game.notification_keytime = 1.0f;
-
-																	combined_result = *flashlight;
-																	combined_result.flashlight.power = 1.0f;
-
-																	if (state->game.holding.flashlight == state->game.hud.inventory.selected_item)
-																	{
-																		state->game.holding.flashlight = &state->game.hud.inventory.array[y][x];
-																	}
-																}
-																else
-																{
-																	state->game.notification_message = "\"I'm not sure how these fit.\"";
-																	state->game.notification_keytime = 1.0f;
-																}
-															}
-
-															if (!combined)
-															{
-																Item* military_grade_batteries;
-																Item* night_vision_goggles;
-																if (check_combine(&military_grade_batteries, ItemType::military_grade_batteries, &night_vision_goggles, ItemType::night_vision_goggles, &state->game.hud.inventory.array[y][x], state->game.hud.inventory.selected_item))
-																{
-																	combined = true;
-
-																	Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.eletronical, 0);
-																	state->game.notification_message = "(You replaced the batteries in the night vision goggles.)";
-																	state->game.notification_keytime = 1.0f;
-
-																	combined_result = *night_vision_goggles;
-																	combined_result.night_vision_goggles.power = 1.0f;
-
-																	if (state->game.holding.night_vision_goggles == state->game.hud.inventory.selected_item)
-																	{
-																		state->game.holding.night_vision_goggles = &state->game.hud.inventory.array[y][x];
-																	}
-																}
-																else
-																{
-																	state->game.notification_message = "\"I'm not sure how these fit.\"";
-																	state->game.notification_keytime = 1.0f;
-																}
-															}
-
-															if (combined)
-															{
-																state->game.hud.inventory.selected_item->type = ItemType::null;
-																state->game.hud.inventory.array[y][x]          = combined_result;
-
-																Item* item = spawn_item(state);
-																FOR_RANGE(16)
-																{
-																	if (exists_clear_way(state, item->position.xy, state->game.lucia_position.xy))
-																	{
-																		item->position.xy = rng_open_position(state);
-																	}
-																	else
-																	{
-																		break;
-																	}
-																}
-															}
+															state->game.notification_message = "\"I'm not sure how these fit.\"";
+															state->game.notification_keytime = 1.0f;
 														}
 													}
 
-													goto DONE_SEARCH;
+													if (!combined)
+													{
+														Item* military_grade_batteries;
+														Item* night_vision_goggles;
+														if (check_combine(&military_grade_batteries, ItemType::military_grade_batteries, &night_vision_goggles, ItemType::night_vision_goggles, &dropped_on, state->game.hud.inventory.selected_item))
+														{
+															combined = true;
+
+															Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.eletronical, 0);
+															state->game.notification_message = "(You replaced the batteries in the night vision goggles.)";
+															state->game.notification_keytime = 1.0f;
+
+															combined_result = *night_vision_goggles;
+															combined_result.night_vision_goggles.power = 1.0f;
+
+															if (state->game.holding.night_vision_goggles == state->game.hud.inventory.selected_item)
+															{
+																state->game.holding.night_vision_goggles = &dropped_on;
+															}
+														}
+														else
+														{
+															state->game.notification_message = "\"I'm not sure how these fit.\"";
+															state->game.notification_keytime = 1.0f;
+														}
+													}
+
+													if (combined)
+													{
+														state->game.hud.inventory.selected_item->type = ItemType::null;
+														dropped_on                                    = combined_result;
+
+														Item* item = spawn_item(state);
+														FOR_RANGE(16)
+														{
+															if (exists_clear_way(state, item->position.xy, state->game.lucia_position.xy))
+															{
+																item->position.xy = rng_open_position(state);
+															}
+															else
+															{
+																break;
+															}
+														}
+													}
 												}
 											}
 										}
-
-										DONE_SEARCH:;
 									}
 									else
 									{
@@ -2157,7 +2229,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 								vf2 ray      = ray_to_closest(state->game.lucia_position.xy, position);
 								f32 distance = norm(ray);
 
-								if (distance > 1.25f)
+								if (distance > 1.5f)
 								{
 									return 0.0f;
 								}
@@ -2304,88 +2376,6 @@ extern "C" PROTOTYPE_UPDATE(update)
 				{
 					state->game.hud.circuit_breaker.interpolated_voltage          = 0.0f;
 					state->game.hud.circuit_breaker.interpolated_voltage_velocity = 0.0f;
-				}
-
-				vf2 wasd = { 0.0f, 0.0f };
-
-				if (state->game.hud.type != HudType::circuit_breaker)
-				{
-					if (HOLDING(Input::s)) { wasd.x -= 1.0f; }
-					if (HOLDING(Input::w)) { wasd.x += 1.0f; }
-					if (HOLDING(Input::d)) { wasd.y -= 1.0f; }
-					if (HOLDING(Input::a)) { wasd.y += 1.0f; }
-					if (+wasd)
-					{
-						constexpr f32 MIN_PORTION = 0.7f;
-						state->game.lucia_velocity += rotate(normalize(wasd), state->game.lucia_angle) * 2.0f * ((1.0f - powf(1.0f - state->game.lucia_stamina, 8) + MIN_PORTION) / (1.0f + MIN_PORTION));
-					}
-				}
-
-				if (+wasd && HOLDING(Input::shift) && !state->game.lucia_out_of_breath)
-				{
-					state->game.lucia_velocity       *= 0.75f;
-					state->game.lucia_stamina         = clamp(state->game.lucia_stamina - SECONDS_PER_UPDATE / 60.0f * (1.0f + (1.0f - square(1.0f - 2.0f * state->game.lucia_sprint_keytime)) * 4.0f), 0.0f, 1.0f);
-					state->game.lucia_sprint_keytime  = clamp(state->game.lucia_sprint_keytime + SECONDS_PER_UPDATE / 1.5f, 0.0f, 1.0f);
-					if (state->game.lucia_stamina == 0.0f)
-					{
-						state->game.lucia_out_of_breath = true;
-					}
-					else
-					{
-						state->game.lucia_fov = dampen(state->game.lucia_fov, TAU * 0.35f, 2.0f, SECONDS_PER_UPDATE);
-					}
-				}
-				else
-				{
-					state->game.lucia_velocity       *= 0.675f;
-					state->game.lucia_stamina         = clamp(state->game.lucia_stamina + SECONDS_PER_UPDATE / 10.0f * square(1.0f - state->game.lucia_sprint_keytime) * (state->game.lucia_out_of_breath ? 0.5f : 1.0f), 0.0f, 1.0f);
-					state->game.lucia_sprint_keytime  = clamp(state->game.lucia_sprint_keytime - SECONDS_PER_UPDATE / 1.0f, 0.0f, 1.0f);
-
-					if (state->game.lucia_out_of_breath)
-					{
-						if (state->game.lucia_stamina > 0.5f)
-						{
-							state->game.lucia_out_of_breath = false;
-						}
-						else
-						{
-							state->game.lucia_fov = dampen(state->game.lucia_fov, TAU * 0.2f, 1.0f, SECONDS_PER_UPDATE);
-						}
-					}
-					else
-					{
-						state->game.lucia_fov = dampen(state->game.lucia_fov, TAU * 0.25f, 4.0f, SECONDS_PER_UPDATE);
-					}
-				}
-
-				state->game.lucia_position.xy = move(state, state->game.lucia_position.xy, state->game.lucia_velocity * SECONDS_PER_UPDATE);
-
-				f32 old_z = state->game.lucia_position.z;
-				state->game.lucia_position.z = LUCIA_HEIGHT + 0.1f * (cosf(state->game.lucia_head_bob_keytime * TAU) - 1.0f);
-
-				if (+wasd && old_z > LUCIA_HEIGHT - 0.175f && state->game.lucia_position.z < LUCIA_HEIGHT - 0.175f)
-				{
-					Mix_PlayChannel
-					(
-						+AudioChannel::unreserved,
-						+wasd && HOLDING(Input::shift) && !state->game.lucia_out_of_breath
-							? state->game.audio.run_steps [rng(&state->seed, 0, ARRAY_CAPACITY(state->game.audio.run_steps ))]
-							: state->game.audio.walk_steps[rng(&state->seed, 0, ARRAY_CAPACITY(state->game.audio.walk_steps))],
-						0
-					);
-				}
-
-				state->game.lucia_head_bob_keytime = mod(state->game.lucia_head_bob_keytime + 0.001f + 0.35f * norm(state->game.lucia_velocity) * SECONDS_PER_UPDATE, 1.0f);
-
-				FOR_ELEMS(it, state->game.item_buffer, state->game.item_count)
-				{
-					it->velocity *= 0.9f;
-					if (+it->velocity)
-					{
-						it->position.xy = move(state, it->position.xy, it->velocity * SECONDS_PER_UPDATE);
-					}
-					it->position.z = lerp(0.15f, state->game.lucia_position.z, clamp(1.0f - norm_sq(ray_to_closest(state->game.lucia_position.xy, it->position.xy)) / 36.0f, 0.0f, 1.0f)) + sinf(state->time * 3.0f) * 0.025f;
-					it->normal     = dampen(it->normal, normalize(ray_to_closest(it->position.xy, state->game.lucia_position.xy)), 2.0f, SECONDS_PER_UPDATE);
 				}
 
 				switch (state->game.goal)
@@ -3327,7 +3317,7 @@ extern "C" PROTOTYPE_RENDER(render)
 
 				if (state->game.hand_on_state != HandOnState::null)
 				{
-					scan(Material::hand, state->game.texture_sprite.hand.image, state->game.hand_position, normalize(ray_to_closest(state->game.hand_position.xy, state->game.lucia_position.xy)), { 0.05f, 0.05f });
+					scan(Material::hand, state->game.texture_sprite.hand.image, state->game.hand_position, normalize(ray_to_closest(state->game.hand_position.xy, state->game.lucia_position.xy)), { 0.1f, 0.1f });
 				}
 
 				FOR_ELEMS(it, state->game.item_buffer, state->game.item_count)
