@@ -46,6 +46,7 @@ global constexpr vf2 CIRCUIT_BREAKER_SWITCH_PADDINGS             = { (CIRCUIT_BR
 global constexpr vf2 CIRCUIT_BREAKER_HUD_POSITION                = (VIEW_RES - CIRCUIT_BREAKER_HUD_DIMENSIONS) / 2.0f;
 
 global constexpr f32 DEATH_DURATION = 8.0f;
+global constexpr f32 FRICTION       = 8.0f;
 
 enum_loose (AudioChannel, i8)
 {
@@ -407,13 +408,13 @@ struct State
 		PathCoordinatesNode* available_path_coordinates_node;
 		strlit               notification_message;
 		f32                  notification_keytime;
-		f32                  heart_rate_values[32];
-		i32                  heart_rate_index;
-		f32                  heart_rate_update_keytime;
-		f32                  heart_rate_velocity;
-		f32                  heart_rate_current_value;
-		f32                  heart_rate_beat_keytime;
-		f32                  heart_rate_bpm;
+		f32                  heart_rate_display_values[32];
+		i32                  heart_rate_display_index;
+		f32                  heart_rate_display_update_keytime;
+		f32                  heart_pulse_current_value_velocity;
+		f32                  heart_pulse_current_value;
+		f32                  heart_pulse_keytime;
+		f32                  heart_bpm;
 		i32                  heartbeat_sfx_index;
 
 		WallVoxel            wall_voxels[MAP_DIM][MAP_DIM];
@@ -1306,8 +1307,8 @@ extern "C" PROTOTYPE_UPDATE(update)
 			aliasing tm = state->title_menu;
 
 			// @TODO@ Make window and cursor stop together.
-			tm.cursor_velocity += platform->cursor_delta * 50.0f;
-			tm.cursor_velocity *= 0.25f;
+			tm.cursor_velocity += 32.0f * platform->cursor_delta;
+			tm.cursor_velocity  = dampen(tm.cursor_velocity, { 0.0f, 0.0f }, 32.0f, SECONDS_PER_UPDATE);
 			tm.cursor          += tm.cursor_velocity * SECONDS_PER_UPDATE;
 
 			constexpr f32 CURSOR_PADDING = 2.0f;
@@ -1402,10 +1403,10 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 											if
 											(
-												!(!+*get_wall_voxel(state, walk + vi2 { -1, 0 }) && !+(*get_wall_voxel(state, walk + vi2 { -1, -1 }) & WallVoxel::left) && !+(*get_wall_voxel(state, walk + vi2 { -2, 0 }) & WallVoxel::bottom)) &&
-												!(!+*get_wall_voxel(state, walk + vi2 { 1, 0 }) && !+(*get_wall_voxel(state, walk) & WallVoxel::bottom) && !+(*get_wall_voxel(state, walk + vi2 { 1, -1 }) & WallVoxel::left)) &&
-												!(!+*get_wall_voxel(state, walk + vi2 { 0, -1 }) && !+(*get_wall_voxel(state, walk + vi2 { -1, -1 }) & WallVoxel::bottom) && !+(*get_wall_voxel(state, walk + vi2 { 0, -2 }) & WallVoxel::left)) &&
-												!(!+*get_wall_voxel(state, walk + vi2 { 0, 1 }) && !+(*get_wall_voxel(state, walk) & WallVoxel::left) && !+(*get_wall_voxel(state, walk + vi2 { -1, 1 }) & WallVoxel::bottom))
+												!(!+*get_wall_voxel(state, walk + vi2 { -1,  0 }) && !+(*get_wall_voxel(state, walk + vi2 { -1, -1 }) & WallVoxel::left) && !+(*get_wall_voxel(state, walk + vi2 { -2, 0 }) & WallVoxel::bottom)) &&
+												!(!+*get_wall_voxel(state, walk + vi2 {  1,  0 }) && !+(*get_wall_voxel(state, walk) & WallVoxel::bottom) && !+(*get_wall_voxel(state, walk + vi2 { 1, -1 }) & WallVoxel::left)) &&
+												!(!+*get_wall_voxel(state, walk + vi2 {  0, -1 }) && !+(*get_wall_voxel(state, walk + vi2 { -1, -1 }) & WallVoxel::bottom) && !+(*get_wall_voxel(state, walk + vi2 { 0, -2 }) & WallVoxel::left)) &&
+												!(!+*get_wall_voxel(state, walk + vi2 {  0,  1 }) && !+(*get_wall_voxel(state, walk) & WallVoxel::left) && !+(*get_wall_voxel(state, walk + vi2 { -1, 1 }) & WallVoxel::bottom))
 											)
 											{
 												break;
@@ -1643,7 +1644,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 				}
 				else
 				{
-					tm.window_velocity *= 0.25f;
+					tm.window_velocity = dampen(tm.window_velocity, { 0.0f, 0.0f }, 32.0f, SECONDS_PER_UPDATE);
 				}
 
 				tm.window_position += tm.window_velocity * SECONDS_PER_UPDATE;
@@ -1686,15 +1687,15 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 			f32 circuit_breaker_volume = 2.0f / (norm(ray_to_closest(state->game.lucia_position.xy, get_position_of_wall_side(state->game.circuit_breaker_wall_side, 0.25f))) + 0.25f);
 			Mix_VolumeChunk(state->game.audio.generator, static_cast<i32>(MIX_MAX_VOLUME * clamp(circuit_breaker_volume, 0.0f, 1.0f)));
-			Mix_VolumeChunk(state->game.audio.heartbeats[state->game.heartbeat_sfx_index], static_cast<i32>(MIX_MAX_VOLUME * clamp((state->game.heart_rate_bpm - 50.0f) / 80.0f, 0.0f, 1.0f)));
-
-			state->game.entering_keytime = clamp(state->game.entering_keytime + SECONDS_PER_UPDATE / 1.0f, 0.0f, 1.0f);
+			Mix_VolumeChunk(state->game.audio.heartbeats[state->game.heartbeat_sfx_index], static_cast<i32>(MIX_MAX_VOLUME * clamp((state->game.heart_bpm - 50.0f) / 80.0f, 0.0f, 1.0f)));
 
 			state->game.hand_on_state     = HandOnState::null;
 			state->game.hand_hovered_item = 0;
 
 			if (state->game.lucia_health > 0.0f)
 			{
+				state->game.entering_keytime = clamp(state->game.entering_keytime + SECONDS_PER_UPDATE / 1.0f, 0.0f, 1.0f);
+
 				vf2 wasd = { 0.0f, 0.0f };
 
 				if (state->game.hud.type != HudType::circuit_breaker)
@@ -1703,16 +1704,17 @@ extern "C" PROTOTYPE_UPDATE(update)
 					if (HOLDING(Input::w)) { wasd.x += 1.0f; }
 					if (HOLDING(Input::d)) { wasd.y -= 1.0f; }
 					if (HOLDING(Input::a)) { wasd.y += 1.0f; }
+
 					if (+wasd)
 					{
-						constexpr f32 MIN_PORTION = 0.7f;
-						state->game.lucia_velocity += rotate(normalize(wasd), state->game.lucia_angle) * 2.0f * ((1.0f - powf(1.0f - state->game.lucia_stamina, 8) + MIN_PORTION) / (1.0f + MIN_PORTION));
+						constexpr f32 MIN_PORTION = 0.1f;
+						state->game.lucia_velocity += 38.0f * rotate(normalize(wasd), state->game.lucia_angle) * (1.0f + MIN_PORTION - powf(1.0f - state->game.lucia_stamina, 8)) / (1.0f + MIN_PORTION) * SECONDS_PER_UPDATE;
 					}
 				}
 
 				if (+wasd && HOLDING(Input::shift) && !state->game.lucia_out_of_breath)
 				{
-					state->game.lucia_velocity       *= 0.75f;
+					state->game.lucia_velocity        = dampen(state->game.lucia_velocity, { 0.0f, 0.0f }, FRICTION * 0.7f, SECONDS_PER_UPDATE);
 					state->game.lucia_stamina         = clamp(state->game.lucia_stamina - SECONDS_PER_UPDATE / 60.0f * (1.0f + (1.0f - square(1.0f - 2.0f * state->game.lucia_sprint_keytime)) * 4.0f), 0.0f, 1.0f);
 					state->game.lucia_sprint_keytime  = clamp(state->game.lucia_sprint_keytime + SECONDS_PER_UPDATE / 1.5f, 0.0f, 1.0f);
 					if (state->game.lucia_stamina == 0.0f)
@@ -1721,12 +1723,11 @@ extern "C" PROTOTYPE_UPDATE(update)
 					}
 					else
 					{
-						state->game.lucia_fov = dampen(state->game.lucia_fov, TAU * 0.35f, 2.0f, SECONDS_PER_UPDATE);
+						state->game.lucia_fov = dampen(state->game.lucia_fov, TAU * 0.35f, 1.5f, SECONDS_PER_UPDATE);
 					}
 				}
 				else
 				{
-					state->game.lucia_velocity       *= 0.675f;
 					state->game.lucia_stamina         = clamp(state->game.lucia_stamina + SECONDS_PER_UPDATE / 10.0f * square(1.0f - state->game.lucia_sprint_keytime) * (state->game.lucia_out_of_breath ? 0.5f : 1.0f), 0.0f, 1.0f);
 					state->game.lucia_sprint_keytime  = clamp(state->game.lucia_sprint_keytime - SECONDS_PER_UPDATE / 1.0f, 0.0f, 1.0f);
 
@@ -1738,16 +1739,19 @@ extern "C" PROTOTYPE_UPDATE(update)
 						}
 						else
 						{
-							state->game.lucia_fov = dampen(state->game.lucia_fov, TAU * 0.2f, 1.0f, SECONDS_PER_UPDATE);
+							state->game.lucia_fov      = dampen(state->game.lucia_fov, TAU * 0.2f, 1.0f, SECONDS_PER_UPDATE);
+							state->game.lucia_velocity = dampen(state->game.lucia_velocity, { 0.0f, 0.0f }, FRICTION * 1.5f, SECONDS_PER_UPDATE);
 						}
 					}
 					else
 					{
-						state->game.lucia_fov = dampen(state->game.lucia_fov, TAU * 0.25f, 4.0f, SECONDS_PER_UPDATE);
+						state->game.lucia_fov      = dampen(state->game.lucia_fov, TAU * 0.25f, 4.0f, SECONDS_PER_UPDATE);
+						state->game.lucia_velocity = dampen(state->game.lucia_velocity, { 0.0f, 0.0f }, FRICTION, SECONDS_PER_UPDATE);
 					}
 				}
 
-				state->game.lucia_position.xy = move(state, state->game.lucia_position.xy, state->game.lucia_velocity * SECONDS_PER_UPDATE);
+				state->game.lucia_head_bob_keytime = mod(state->game.lucia_head_bob_keytime + (0.05f + 0.3f * norm(state->game.lucia_velocity)) * SECONDS_PER_UPDATE, 1.0f);
+				state->game.lucia_position.xy      = move(state, state->game.lucia_position.xy, state->game.lucia_velocity * SECONDS_PER_UPDATE);
 
 				f32 old_z = state->game.lucia_position.z;
 				state->game.lucia_position.z = LUCIA_HEIGHT + 0.1f * (cosf(state->game.lucia_head_bob_keytime * TAU) - 1.0f);
@@ -1764,17 +1768,21 @@ extern "C" PROTOTYPE_UPDATE(update)
 					);
 				}
 
-				state->game.lucia_head_bob_keytime = mod(state->game.lucia_head_bob_keytime + 0.001f + 0.35f * norm(state->game.lucia_velocity) * SECONDS_PER_UPDATE, 1.0f);
-
 				FOR_ELEMS(it, state->game.item_buffer, state->game.item_count)
 				{
-					it->velocity *= 0.9f;
+					it->velocity = dampen(it->velocity, { 0.0f, 0.0f }, FRICTION, SECONDS_PER_UPDATE);
 					if (+it->velocity)
 					{
 						it->position.xy = move(state, it->position.xy, it->velocity * SECONDS_PER_UPDATE);
 					}
 					it->position.z = lerp(0.15f, state->game.lucia_position.z, clamp(1.0f - norm_sq(ray_to_closest(state->game.lucia_position.xy, it->position.xy)) / 36.0f, 0.0f, 1.0f)) + sinf(state->time * 3.0f) * 0.025f;
-					it->normal     = dampen(it->normal, normalize(ray_to_closest(it->position.xy, state->game.lucia_position.xy)), 2.0f, SECONDS_PER_UPDATE);
+
+					vf2 ray      = ray_to_closest(it->position.xy, state->game.lucia_position.xy);
+					f32 distance = norm(ray);
+					if (distance > 0.001f)
+					{
+						it->normal = dampen(it->normal, ray / distance, 2.0f, SECONDS_PER_UPDATE);
+					}
 				}
 
 				if (PRESSED(Input::tab))
@@ -1798,8 +1806,8 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 				if (state->game.hud.type != HudType::null)
 				{
-					state->game.hud.cursor_velocity += platform->cursor_delta * 16.0f;
-					state->game.hud.cursor_velocity *= 0.3f;
+					state->game.hud.cursor_velocity += 13.0f * platform->cursor_delta;
+					state->game.hud.cursor_velocity  = dampen(state->game.hud.cursor_velocity, { 0.0f, 0.0f }, 25.0f, SECONDS_PER_UPDATE);
 					state->game.hud.cursor          += state->game.hud.cursor_velocity * SECONDS_PER_UPDATE;
 					if (state->game.hud.cursor.x < 0.0f || state->game.hud.cursor.x > VIEW_RES.x)
 					{
@@ -1985,8 +1993,10 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 										Item* dropped = allocate_item(state);
 										*dropped = *state->game.hud.inventory.selected_item;
-										dropped->position = state->game.lucia_position;
-										dropped->velocity = polar(state->game.lucia_angle + rng(&state->seed, -0.5f, 0.5f) * 1.0f) * rng(&state->seed, 2.5f, 6.0f);
+										dropped->velocity    = polar(state->game.lucia_angle + (0.5f - state->game.hud.cursor.x / VIEW_RES.x) * state->game.lucia_fov) * rng(&state->seed, 12.0f, 16.0f);
+										dropped->position.xy = move(state, state->game.lucia_position.xy, dropped->velocity * SECONDS_PER_UPDATE);
+										dropped->position.z  = state->game.lucia_position.z;
+										dropped->normal      = polar(-state->game.lucia_angle);
 
 										state->game.hud.inventory.selected_item->type = ItemType::null;
 
@@ -2091,7 +2101,6 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 					case HudType::paper:
 					{
-						// @TODO@ Clean up
 						if
 						(
 							PRESSED(Input::left_mouse) &&
@@ -2107,25 +2116,23 @@ extern "C" PROTOTYPE_UPDATE(update)
 						}
 						else
 						{
-							state->game.hud.paper.scalar_velocity += platform->scroll * 2.0f;
-							state->game.hud.paper.scalar_velocity *= 0.5f;
-
 							if (HOLDING(Input::left_mouse))
 							{
-								state->game.hud.paper.velocity        = state->game.hud.cursor_velocity;
-								state->game.hud.paper.scalar_velocity = 0.0f;
+								state->game.hud.paper.velocity = state->game.hud.cursor_velocity;
 							}
 							else
 							{
-								state->game.hud.paper.velocity *= 0.5f;
+								state->game.hud.paper.velocity         = dampen(state->game.hud.paper.velocity, { 0.0f, 0.0f }, 8.0f, SECONDS_PER_UPDATE);
+								state->game.hud.paper.scalar_velocity += 3.0f * platform->scroll;
 							}
 
-							state->game.hud.paper.scalar = state->game.hud.paper.scalar + state->game.hud.paper.scalar_velocity * state->game.hud.paper.scalar * SECONDS_PER_UPDATE;
+							state->game.hud.paper.scalar_velocity = dampen(state->game.hud.paper.scalar_velocity, 0.0f, 16.0f, SECONDS_PER_UPDATE);
+							state->game.hud.paper.scalar         += state->game.hud.paper.scalar_velocity * state->game.hud.paper.scalar * SECONDS_PER_UPDATE;
 
 							if (PAPER_DATA[state->game.hud.paper.index].min_scalar > state->game.hud.paper.scalar || state->game.hud.paper.scalar > PAPER_DATA[state->game.hud.paper.index].max_scalar)
 							{
-								state->game.hud.paper.scalar          = clamp(state->game.hud.paper.scalar, PAPER_DATA[state->game.hud.paper.index].min_scalar, PAPER_DATA[state->game.hud.paper.index].max_scalar);
 								state->game.hud.paper.scalar_velocity = 0.0f;
+								state->game.hud.paper.scalar          = clamp(state->game.hud.paper.scalar, PAPER_DATA[state->game.hud.paper.index].min_scalar, PAPER_DATA[state->game.hud.paper.index].max_scalar);
 							}
 
 							state->game.hud.paper.delta_position += state->game.hud.paper.velocity / state->game.hud.paper.scalar * SECONDS_PER_UPDATE;
@@ -2216,7 +2223,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 						state->game.hud.cursor_velocity = { 0.0f, 0.0f };
 						state->game.hud.cursor          = VIEW_RES / 2.0f;
 
-						state->game.lucia_angle_velocity -= platform->cursor_delta.x * 0.01f / SECONDS_PER_UPDATE;
+						state->game.lucia_angle_velocity -= 0.1f * platform->cursor_delta.x;
 
 						lambda hand_on_heuristic =
 							[&](vf2 position)
@@ -2368,8 +2375,8 @@ extern "C" PROTOTYPE_UPDATE(update)
 					} break;
 				}
 
-				state->game.hud.circuit_breaker.interpolated_voltage_velocity += (state->game.hud.circuit_breaker.active_voltage - state->game.hud.circuit_breaker.interpolated_voltage) * 16.0f;
-				state->game.hud.circuit_breaker.interpolated_voltage_velocity *= 0.5f;
+				state->game.hud.circuit_breaker.interpolated_voltage_velocity += 32.0f * (state->game.hud.circuit_breaker.active_voltage - state->game.hud.circuit_breaker.interpolated_voltage) * SECONDS_PER_UPDATE;
+				state->game.hud.circuit_breaker.interpolated_voltage_velocity  = dampen(state->game.hud.circuit_breaker.interpolated_voltage_velocity, 0.0f, 16.0f, SECONDS_PER_UPDATE);
 				state->game.hud.circuit_breaker.interpolated_voltage          += state->game.hud.circuit_breaker.interpolated_voltage_velocity * SECONDS_PER_UPDATE;
 
 				if (state->game.hud.circuit_breaker.interpolated_voltage < 0.0f)
@@ -2683,7 +2690,13 @@ extern "C" PROTOTYPE_UPDATE(update)
 					#endif
 
 					state->game.monster_position.z = cosf(state->time * 3.0f) * 0.15f + WALL_HEIGHT / 2.0f;
-					state->game.monster_normal     = normalize(dampen(state->game.monster_normal, normalize(ray_to_closest(state->game.monster_position.xy, state->game.lucia_position.xy)), 8.0f, SECONDS_PER_UPDATE));
+
+					vf2 ray      = ray_to_closest(state->game.monster_position.xy, state->game.lucia_position.xy);
+					f32 distance = norm(ray);
+					if (distance >= 0.001f)
+					{
+						state->game.monster_normal = normalize(dampen(state->game.monster_normal, ray / distance, 8.0f, SECONDS_PER_UPDATE));
+					}
 				}
 
 				if (state->game.holding.flashlight)
@@ -2727,16 +2740,16 @@ extern "C" PROTOTYPE_UPDATE(update)
 					}
 				}
 
-				state->game.heart_rate_bpm           = 63.5f + 80.0f * (1.0f - state->game.lucia_stamina);
-				state->game.heart_rate_beat_keytime += SECONDS_PER_UPDATE * state->game.heart_rate_bpm / 60.0f;
+				state->game.heart_bpm            = 63.5f + 80.0f * (1.0f - state->game.lucia_stamina);
+				state->game.heart_pulse_keytime += state->game.heart_bpm / 60.0f * SECONDS_PER_UPDATE;
 
-				if (state->game.heart_rate_beat_keytime >= 1.0f)
+				while (state->game.heart_pulse_keytime >= 1.0f)
 				{
 					Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.heartbeats[state->game.heartbeat_sfx_index], 0);
 
-					state->game.heart_rate_beat_keytime  = 0.0f;
-					state->game.heart_rate_velocity      = 64.0f;
-					state->game.heartbeat_sfx_index      = (state->game.heartbeat_sfx_index + 1) % ARRAY_CAPACITY(state->game.audio.heartbeats);
+					state->game.heart_pulse_keytime                -= 1.0f;
+					state->game.heart_pulse_current_value_velocity += 64.0f;
+					state->game.heartbeat_sfx_index                 = (state->game.heartbeat_sfx_index + 1) % ARRAY_CAPACITY(state->game.audio.heartbeats);
 				}
 
 				state->game.notification_keytime = clamp(state->game.notification_keytime - SECONDS_PER_UPDATE / 8.0f, 0.0f, 1.0f);
@@ -2748,7 +2761,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 				state->game.lucia_dying_keytime += SECONDS_PER_UPDATE / DEATH_DURATION;
 
 				state->game.blur_value          = 2.0f;
-				state->game.heart_rate_bpm      = 0.0f;
+				state->game.heart_bpm           = 0.0f;
 				state->game.lucia_out_of_breath = false;
 				state->game.hand_on_state       = HandOnState::null;
 				state->game.hud.type            = HudType::null;
@@ -2765,25 +2778,26 @@ extern "C" PROTOTYPE_UPDATE(update)
 				}
 			}
 
-			state->game.lucia_angle_velocity *= 0.4f;
-			state->game.lucia_angle           = mod(state->game.lucia_angle + state->game.lucia_angle_velocity * SECONDS_PER_UPDATE, TAU);
+			state->game.lucia_angle_velocity = dampen(state->game.lucia_angle_velocity, 0.0f, 16.0f, SECONDS_PER_UPDATE);
+			state->game.lucia_angle          = mod(state->game.lucia_angle + state->game.lucia_angle_velocity * SECONDS_PER_UPDATE, TAU);
 
-			state->game.eye_drops_activation              = max(state->game.eye_drops_activation - SECONDS_PER_UPDATE / 30.0f, 0.0f);
+			state->game.eye_drops_activation              = max(state->game.eye_drops_activation - SECONDS_PER_UPDATE / 45.0f, 0.0f);
 			state->game.interpolated_eye_drops_activation = dampen(state->game.interpolated_eye_drops_activation, state->game.eye_drops_activation, 4.0f, SECONDS_PER_UPDATE);
 
 			state->game.blur_value        = max(state->game.blur_value - SECONDS_PER_UPDATE / 8.0f, lerp(0.0f, 0.2f, square(1.0f - state->game.lucia_health)));
 			state->game.interpolated_blur = dampen(state->game.interpolated_blur, state->game.blur_value, 4.0f, SECONDS_PER_UPDATE);
 
-			state->game.heart_rate_velocity      -= state->game.heart_rate_current_value * 640.0f * SECONDS_PER_UPDATE;
-			state->game.heart_rate_velocity      *= 0.5f;
-			state->game.heart_rate_current_value += state->game.heart_rate_velocity * SECONDS_PER_UPDATE;
+			// @TODO@ Frame-independent.
+			state->game.heart_pulse_current_value_velocity -= 4096.0f * state->game.heart_pulse_current_value * SECONDS_PER_UPDATE;
+			state->game.heart_pulse_current_value_velocity  = dampen(state->game.heart_pulse_current_value_velocity, 0.0f, 32.0f, SECONDS_PER_UPDATE);
+			state->game.heart_pulse_current_value          += state->game.heart_pulse_current_value_velocity * SECONDS_PER_UPDATE;
 
-			state->game.heart_rate_update_keytime += SECONDS_PER_UPDATE / 0.05f;
-			if (state->game.heart_rate_update_keytime >= 1.0f)
+			state->game.heart_rate_display_update_keytime += SECONDS_PER_UPDATE / 0.05f;
+			while (state->game.heart_rate_display_update_keytime >= 1.0f)
 			{
-				state->game.heart_rate_update_keytime                        = 0.0f;
-				state->game.heart_rate_values[state->game.heart_rate_index]  = state->game.heart_rate_current_value;
-				state->game.heart_rate_index                                 = (state->game.heart_rate_index + 1) % ARRAY_CAPACITY(state->game.heart_rate_values);
+				state->game.heart_rate_display_update_keytime                               -= 1.0f;
+				state->game.heart_rate_display_values[state->game.heart_rate_display_index]  = state->game.heart_pulse_current_value;
+				state->game.heart_rate_display_index                                         = (state->game.heart_rate_display_index + 1) % ARRAY_CAPACITY(state->game.heart_rate_display_values);
 			}
 
 			f32 battery_display_level = 0.0f;
@@ -3462,9 +3476,9 @@ extern "C" PROTOTYPE_RENDER(render)
 
 			__m128 m_night_vision_goggles_activation        = _mm_set_ps1(state->game.night_vision_goggles_activation);
 			__m128 m_night_vision_goggles_scan_line_keytime = _mm_set_ps1(state->game.night_vision_goggles_scan_line_keytime);
-			__m128 m_night_vision_goggles_low_scan          = _mm_set_ps1(0.9f);
+			__m128 m_night_vision_goggles_low_scan          = _mm_set_ps1(0.95f);
 			__m128 m_night_vision_goggles_r                 = _mm_set_ps1(0.0f);
-			__m128 m_night_vision_goggles_g                 = _mm_set_ps1(2.75f);
+			__m128 m_night_vision_goggles_g                 = _mm_set_ps1(2.5f);
 			__m128 m_night_vision_goggles_b                 = _mm_set_ps1(0.0f);
 
 			FOR_RANGE(y, VIEW_RES.y)
@@ -3715,16 +3729,16 @@ extern "C" PROTOTYPE_RENDER(render)
 			set_color(platform->renderer, monochrome(0.15f));
 			render_filled_rect(platform->renderer, HEART_RATE_MONITOR_COORDINATES, HEART_RATE_MONITOR_DIMENSIONS);
 
-			FOR_ELEMS(it, state->game.heart_rate_values, ARRAY_CAPACITY(state->game.heart_rate_values) - 1)
+			FOR_ELEMS(it, state->game.heart_rate_display_values, ARRAY_CAPACITY(state->game.heart_rate_display_values) - 1)
 			{
-				if (it_index + 1 != state->game.heart_rate_index)
+				if (it_index + 1 != state->game.heart_rate_display_index)
 				{
-					set_color(platform->renderer, { mod(it_index - state->game.heart_rate_index, ARRAY_CAPACITY(state->game.heart_rate_values)) / static_cast<f32>(ARRAY_CAPACITY(state->game.heart_rate_values)), 0.0f, 0.0f, 1.0f });
+					set_color(platform->renderer, { mod(it_index - state->game.heart_rate_display_index, ARRAY_CAPACITY(state->game.heart_rate_display_values)) / static_cast<f32>(ARRAY_CAPACITY(state->game.heart_rate_display_values)), 0.0f, 0.0f, 1.0f });
 					render_line
 					(
 						platform->renderer,
-						HEART_RATE_MONITOR_COORDINATES + vxx(vf2 {  it_index         / static_cast<f32>(ARRAY_CAPACITY(state->game.heart_rate_values)) * HEART_RATE_MONITOR_DIMENSIONS.x, clamp(0.75f - * it      / 2.0f, 0.0f, 1.0f) * HEART_RATE_MONITOR_DIMENSIONS.y }),
-						HEART_RATE_MONITOR_COORDINATES + vxx(vf2 { (it_index + 1.0f) / static_cast<f32>(ARRAY_CAPACITY(state->game.heart_rate_values)) * HEART_RATE_MONITOR_DIMENSIONS.x, clamp(0.75f - *(it + 1) / 2.0f, 0.0f, 1.0f) * HEART_RATE_MONITOR_DIMENSIONS.y })
+						HEART_RATE_MONITOR_COORDINATES + vxx(vf2 {  it_index         / static_cast<f32>(ARRAY_CAPACITY(state->game.heart_rate_display_values)) * HEART_RATE_MONITOR_DIMENSIONS.x, clamp(0.75f - * it      / 2.0f, 0.0f, 1.0f) * HEART_RATE_MONITOR_DIMENSIONS.y }),
+						HEART_RATE_MONITOR_COORDINATES + vxx(vf2 { (it_index + 1.0f) / static_cast<f32>(ARRAY_CAPACITY(state->game.heart_rate_display_values)) * HEART_RATE_MONITOR_DIMENSIONS.x, clamp(0.75f - *(it + 1) / 2.0f, 0.0f, 1.0f) * HEART_RATE_MONITOR_DIMENSIONS.y })
 					);
 				}
 			}
