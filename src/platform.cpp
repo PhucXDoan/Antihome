@@ -75,33 +75,38 @@ int main(int, char**)
 	}
 	DEFER { Mix_CloseAudio(); };
 
-	SDL_Window* window = SDL_CreateWindow("Antihome", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, WIN_DIM.x, WIN_DIM.y, 0);
-	DEFER { SDL_DestroyWindow(window); };
-	if (!window)
+	constexpr vi2 INITIAL_WINDOW_DIM = { 1200, 800 };
+
+	Platform platform = {};
+
+	platform.window = SDL_CreateWindow("Antihome", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, INITIAL_WINDOW_DIM.x, INITIAL_WINDOW_DIM.y, 0);
+	DEFER { SDL_DestroyWindow(platform.window); };
+	if (!platform.window)
 	{
 		DEBUG_printf("SDL_Error: '%s'\n", SDL_GetError());
 		ASSERT(false);
 		exit(-1);
 	}
 
-	SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
-	DEFER { SDL_DestroyRenderer(renderer); };
-	if (!renderer)
+	platform.renderer = SDL_CreateRenderer(platform.window, -1, SDL_RENDERER_ACCELERATED);
+	DEFER { SDL_DestroyRenderer(platform.renderer); };
+	if (!platform.renderer)
 	{
 		DEBUG_printf("SDL_Error: '%s'\n", SDL_GetError());
 		ASSERT(false);
 		exit(-1);
 	}
 
-	if (SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND))
+	if (SDL_SetRenderDrawBlendMode(platform.renderer, SDL_BLENDMODE_BLEND))
 	{
 		DEBUG_printf("SDL_Error: '%s'\n", SDL_GetError());
 		ASSERT(false);
 		exit(-1);
 	}
 
-	Platform platform        = {};
-	platform.renderer        = renderer;
+	platform.window_state = WindowState::windowed;
+	SDL_GetWindowSize(platform.window, &platform.window_dimensions.x, &platform.window_dimensions.y);
+
 	platform.memory_capacity = MEBIBYTES_OF(1);
 	platform.memory          = reinterpret_cast<byte*>(malloc(platform.memory_capacity));
 	DEFER { free(platform.memory); };
@@ -110,14 +115,14 @@ int main(int, char**)
 		i32 cursor_x;
 		i32 cursor_y;
 		SDL_GetMouseState(&cursor_x, &cursor_y);
-		platform.cursor = { cursor_x - platform.cursor.x, WIN_DIM.y - 1.0f - cursor_y - platform.cursor.y };
+		platform.cursor = { cursor_x - platform.cursor.x, platform.window_dimensions.y - 1.0f - cursor_y - platform.cursor.y };
 	}
 
 	reload_dll();
 	DEFER { SDL_UnloadObject(dll); };
 
 	initialize(&platform);
-	boot_up(&platform, window);
+	boot_up(&platform);
 	DEFER { boot_down(&platform); };
 
 	// @NOTE@ Prevents one frame of cursor delta at start up.
@@ -130,7 +135,7 @@ int main(int, char**)
 		i32 cursor_x;
 		i32 cursor_y;
 		SDL_GetMouseState(&cursor_x, &cursor_y);
-		platform.cursor = { static_cast<f32>(cursor_x), WIN_DIM.y - 1.0f - cursor_y };
+		platform.cursor = { static_cast<f32>(cursor_x), platform.window_dimensions.y - 1.0f - cursor_y };
 	}
 
 	u64 performance_count = SDL_GetPerformanceCounter();
@@ -180,6 +185,8 @@ int main(int, char**)
 							case SDLK_ESCAPE    : ++platform.inputs[+Input::escape   ].curr; break;
 							case SDLK_RETURN    : ++platform.inputs[+Input::enter    ].curr; break;
 							case SDLK_TAB       : ++platform.inputs[+Input::tab      ].curr; break;
+							case SDLK_LALT      :
+							case SDLK_RALT      : ++platform.inputs[+Input::alt      ].curr; break;
 						}
 					}
 				} break;
@@ -201,9 +208,17 @@ int main(int, char**)
 
 				case SDL_WINDOWEVENT:
 				{
-					if (event.window.event == SDL_WINDOWEVENT_CLOSE)
+					switch (event.window.event)
 					{
-						goto TERMINATE;
+						case SDL_WINDOWEVENT_CLOSE:
+						{
+							goto TERMINATE;
+						} break;
+
+						case SDL_WINDOWEVENT_RESIZED:
+						{
+							platform.window_dimensions = { event.window.data1, event.window.data2 };
+						} break;
 					}
 				} break;
 			}
@@ -215,12 +230,14 @@ int main(int, char**)
 
 			boot_down(&platform);
 			reload_dll();
-			boot_up(&platform, window);
+			boot_up(&platform);
 			frame_time = 0.0f;
 		}
 
 		if (frame_time >= SECONDS_PER_UPDATE)
 		{
+			WindowState prev_window_state = platform.window_state;
+
 			do
 			{
 				FOR_ELEMS(it, platform.inputs)
@@ -243,7 +260,7 @@ int main(int, char**)
 				i32 cursor_x;
 				i32 cursor_y;
 				SDL_GetMouseState(&cursor_x, &cursor_y);
-				platform.cursor = { static_cast<f32>(cursor_x), WIN_DIM.y - 1.0f - cursor_y };
+				platform.cursor = { static_cast<f32>(cursor_x), platform.window_dimensions.y - 1.0f - cursor_y };
 
 				if (update(&platform) == UpdateCode::terminate)
 				{
@@ -272,7 +289,29 @@ int main(int, char**)
 				}
 			}
 
+			if (prev_window_state != platform.window_state)
+			{
+				switch (platform.window_state)
+				{
+					case WindowState::windowed:
+					{
+						SDL_SetWindowFullscreen(platform.window, 0);
+					} break;
+
+					case WindowState::fullscreen:
+					{
+						SDL_SetWindowFullscreen(platform.window, SDL_WINDOW_FULLSCREEN_DESKTOP);
+					} break;
+				}
+
+				SDL_GetWindowSize(platform.window, &platform.window_dimensions.x, &platform.window_dimensions.y);
+
+				boot_down(&platform); // @TODO@ SDL_FontCache bugs out and does not display text when using accelerated rendering.
+				boot_up(&platform);
+			}
+
 			render(&platform);
+			SDL_RenderPresent(platform.renderer);
 
 			FOR_ELEMS(it, platform.inputs)
 			{

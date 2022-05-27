@@ -22,8 +22,8 @@ if DEFINED DEBUG (
 	echo "Debug build"
 	del *.pdb > NUL 2> NUL
 	echo "LOCK" > LOCK.tmp
-	cl -nologo -DDATA_DIR="\"W:/data/\"" -DEXE_DIR="\"W:/build/\"" -DDEBUG=1 -O2 -Oi -Z7 -std:c++17 -MTd -GR- -EHsc -EHa- %WARNINGS% %INCLUDES% -LD             W:\src\Antihome.cpp /link -DEBUG:FULL -opt:ref -incremental:no -subsystem:windows %LIBRARIES% -PDB:Antihome_%RANDOM%.pdb -EXPORT:initialize -EXPORT:boot_down -EXPORT:boot_up -EXPORT:update -EXPORT:render
-	cl -nologo -DDATA_DIR="\"W:/data/\"" -DEXE_DIR="\"W:/build/\"" -DDEBUG=1 -O2 -Oi -Z7 -std:c++17 -MTd -GR- -EHsc -EHa- %WARNINGS% %INCLUDES% -FeAntihome.exe W:\src\platform.cpp               /link -DEBUG:FULL -opt:ref -incremental:no -subsystem:windows %LIBRARIES%
+	cl -nologo -DDATA_DIR="\"W:/data/\"" -DEXE_DIR="\"W:/build/\"" -DDEBUG=1 -Od -Oi -Z7 -std:c++17 -MTd -GR- -EHsc -EHa- %WARNINGS% %INCLUDES% -LD             W:\src\Antihome.cpp /link -DEBUG:FULL -opt:ref -incremental:no -subsystem:windows %LIBRARIES% -PDB:Antihome_%RANDOM%.pdb -EXPORT:initialize -EXPORT:boot_down -EXPORT:boot_up -EXPORT:update -EXPORT:render
+	cl -nologo -DDATA_DIR="\"W:/data/\"" -DEXE_DIR="\"W:/build/\"" -DDEBUG=1 -Od -Oi -Z7 -std:c++17 -MTd -GR- -EHsc -EHa- %WARNINGS% %INCLUDES% -FeAntihome.exe W:\src\platform.cpp               /link -DEBUG:FULL -opt:ref -incremental:no -subsystem:windows %LIBRARIES%
 	sleep 0.1
 	del LOCK.tmp
 )

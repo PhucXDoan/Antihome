@@ -15,14 +15,18 @@
 #include "rng.cpp"
 #include "utilities.cpp"
 
+global constexpr vi2 $$DISPLAY_DIM$$ = { 800, 600 };
+
+global constexpr vi2 DISPLAY_RES = { 800, 600 };
+
 global constexpr i32 COMPUTER_TASKBAR_HEIGHT            = 50;
 global constexpr i32 COMPUTER_ICON_DIM                  = 50;
-global constexpr vi2 COMPUTER_CREDITS_POSITION          = { 55, static_cast<i32>(WIN_DIM.y - (COMPUTER_ICON_DIM + 50) * 0.75f) };
-global constexpr vi2 COMPUTER_ANTIHOME_PROGRAM_POSITION = { 55, static_cast<i32>(WIN_DIM.y - (COMPUTER_ICON_DIM + 50) * 1.75f) };
+global constexpr vi2 COMPUTER_CREDITS_POSITION          = { 55, static_cast<i32>(DISPLAY_RES.y - (COMPUTER_ICON_DIM + 50) * 0.75f) };
+global constexpr vi2 COMPUTER_ANTIHOME_PROGRAM_POSITION = { 55, static_cast<i32>(DISPLAY_RES.y - (COMPUTER_ICON_DIM + 50) * 1.75f) };
 global constexpr i32 COMPUTER_TITLE_BAR_HEIGHT          = 25;
 global constexpr vi2 COMPUTER_BUTTON_DIMENSIONS         = { 45, 27 };
 
-global constexpr vi2 SCREEN_RES        = WIN_DIM / 3;
+global constexpr vi2 SCREEN_RES        = DISPLAY_RES / 3;
 global constexpr i32 STATUS_HUD_HEIGHT = SCREEN_RES.y / 4;
 global constexpr vi2 VIEW_RES          = { SCREEN_RES.x, SCREEN_RES.y - STATUS_HUD_HEIGHT };
 
@@ -249,6 +253,16 @@ struct State
 {
 	MemoryArena  context_arena;
 	MemoryArena  transient_arena;
+
+	union
+	{
+		struct
+		{
+			SDL_Texture* display;
+		} texture;
+
+		SDL_Texture* textures[sizeof(texture) / sizeof(SDL_Texture*)];
+	};
 
 	union
 	{
@@ -1251,7 +1265,7 @@ extern "C" PROTOTYPE_INITIALIZE(initialize)
 	state->transient_arena.base = platform->memory          + sizeof(State) + state->context_arena.size;
 	state->transient_arena.used = 0;
 
-	state->title_menu.cursor = WIN_DIM / 2.0f;
+	state->title_menu.cursor = $$DISPLAY_DIM$$ / 2.0f;
 
 	SDL_SetRelativeMouseMode(SDL_TRUE);
 
@@ -1264,6 +1278,8 @@ extern "C" PROTOTYPE_BOOT_UP(boot_up)
 	ASSERT(sizeof(State) <= platform->memory_capacity);
 	State* state = reinterpret_cast<State*>(platform->memory);
 
+	state->texture.display = SDL_CreateTexture(platform->renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET, DISPLAY_RES.x, DISPLAY_RES.y);
+
 	state->font.major = FC_CreateFont();
 	FC_LoadFont(state->font.major, platform->renderer, DATA_DIR "Consolas.ttf", 32, FC_MakeColor(255, 255, 255, 255), TTF_STYLE_NORMAL);
 
@@ -1274,7 +1290,7 @@ extern "C" PROTOTYPE_BOOT_UP(boot_up)
 
 	{
 		SDL_Surface* icon = SDL_LoadBMP(DATA_DIR "antihome_icon.bmp");
-		SDL_SetWindowIcon(window, icon);
+		SDL_SetWindowIcon(platform->window, icon);
 		SDL_FreeSurface(icon);
 	}
 }
@@ -1284,10 +1300,8 @@ extern "C" PROTOTYPE_BOOT_DOWN(boot_down)
 	ASSERT(sizeof(State) <= platform->memory_capacity);
 	State* state = reinterpret_cast<State*>(platform->memory);
 
-	FOR_ELEMS(it, state->fonts)
-	{
-		FC_FreeFont(*it);
-	}
+	FOR_ELEMS(it, state->textures) { SDL_DestroyTexture(*it); }
+	FOR_ELEMS(it, state->fonts   ) { FC_FreeFont(*it);        }
 
 	boot_down_state(state);
 }
@@ -1298,6 +1312,18 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 	state->time                 += SECONDS_PER_UPDATE;
 	state->transient_arena.used  = 0;
+
+	if (HOLDING(Input::alt) && PRESSED(Input::enter))
+	{
+		if (platform->window_state == WindowState::windowed)
+		{
+			platform->window_state = WindowState::fullscreen;
+		}
+		else
+		{
+			platform->window_state = WindowState::windowed;
+		}
+	}
 
 	switch (state->context)
 	{
@@ -1310,16 +1336,16 @@ extern "C" PROTOTYPE_UPDATE(update)
 			tm.cursor          += tm.cursor_velocity * SECONDS_PER_UPDATE;
 
 			constexpr f32 CURSOR_PADDING = 2.0f;
-			if (tm.cursor.x < CURSOR_PADDING || tm.cursor.x > WIN_DIM.x - CURSOR_PADDING)
+			if (tm.cursor.x < CURSOR_PADDING || tm.cursor.x > $$DISPLAY_DIM$$.x - CURSOR_PADDING)
 			{
 				tm.cursor_velocity.x = 0.0f;
-				tm.cursor.x          = clamp(tm.cursor.x, CURSOR_PADDING, static_cast<f32>(WIN_DIM.x - CURSOR_PADDING));
+				tm.cursor.x          = clamp(tm.cursor.x, CURSOR_PADDING, static_cast<f32>($$DISPLAY_DIM$$.x - CURSOR_PADDING));
 			}
 
-			if (tm.cursor.y < CURSOR_PADDING || tm.cursor.y > WIN_DIM.y - CURSOR_PADDING)
+			if (tm.cursor.y < CURSOR_PADDING || tm.cursor.y > $$DISPLAY_DIM$$.y - CURSOR_PADDING)
 			{
 				tm.cursor_velocity.y = 0.0f;
-				tm.cursor.y          = clamp(tm.cursor.y, CURSOR_PADDING, static_cast<f32>(WIN_DIM.y - CURSOR_PADDING));
+				tm.cursor.y          = clamp(tm.cursor.y, CURSOR_PADDING, static_cast<f32>($$DISPLAY_DIM$$.y - CURSOR_PADDING));
 			}
 
 			if (PRESSED(Input::left_mouse))
@@ -1624,7 +1650,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 						{
 							tm.window_type       = clicked_window_type;
 							tm.window_velocity   = { 0.0f, 0.0f };
-							tm.window_position   = (WIN_DIM - tm.window_dimensions) / 2.0f;
+							tm.window_position   = ($$DISPLAY_DIM$$ - tm.window_dimensions) / 2.0f;
 						}
 					}
 				}
@@ -1647,15 +1673,15 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 				tm.window_position += tm.window_velocity * SECONDS_PER_UPDATE;
 
-				if (tm.window_position.x < 2.0f * COMPUTER_TITLE_BAR_HEIGHT - tm.window_dimensions.x || tm.window_position.x > WIN_DIM.x - COMPUTER_TITLE_BAR_HEIGHT)
+				if (tm.window_position.x < 2.0f * COMPUTER_TITLE_BAR_HEIGHT - tm.window_dimensions.x || tm.window_position.x > $$DISPLAY_DIM$$.x - COMPUTER_TITLE_BAR_HEIGHT)
 				{
-					tm.window_position.x = clamp(tm.window_position.x, 2.0f * COMPUTER_TITLE_BAR_HEIGHT - tm.window_dimensions.x, static_cast<f32>(WIN_DIM.x - COMPUTER_TITLE_BAR_HEIGHT));
+					tm.window_position.x = clamp(tm.window_position.x, 2.0f * COMPUTER_TITLE_BAR_HEIGHT - tm.window_dimensions.x, static_cast<f32>($$DISPLAY_DIM$$.x - COMPUTER_TITLE_BAR_HEIGHT));
 					tm.window_velocity.x = 0.0f;
 				}
 
-				if (tm.window_position.y < COMPUTER_TASKBAR_HEIGHT - tm.window_dimensions.y || tm.window_position.y > WIN_DIM.y - COMPUTER_TITLE_BAR_HEIGHT - tm.window_dimensions.y)
+				if (tm.window_position.y < COMPUTER_TASKBAR_HEIGHT - tm.window_dimensions.y || tm.window_position.y > $$DISPLAY_DIM$$.y - COMPUTER_TITLE_BAR_HEIGHT - tm.window_dimensions.y)
 				{
-					tm.window_position.y = clamp(tm.window_position.y, COMPUTER_TASKBAR_HEIGHT - tm.window_dimensions.y, WIN_DIM.y - COMPUTER_TITLE_BAR_HEIGHT - tm.window_dimensions.y);
+					tm.window_position.y = clamp(tm.window_position.y, COMPUTER_TASKBAR_HEIGHT - tm.window_dimensions.y, $$DISPLAY_DIM$$.y - COMPUTER_TITLE_BAR_HEIGHT - tm.window_dimensions.y);
 					tm.window_velocity.y = 0.0f;
 				}
 			}
@@ -1666,7 +1692,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 			DEBUG_once // @TEMP@
 			{
 				//state->game.lucia_position.xy = get_position_of_wall_side(state->game.door_wall_side, 1.0f);
-				//state->game.lucia_position.xy = get_position_of_wall_side(state->game.circuit_breaker_wall_side, 1.0f);
+				state->game.lucia_position.xy = get_position_of_wall_side(state->game.circuit_breaker_wall_side, 1.0f);
 				//state->game.lucia_position = { 64.637268f, 26.6f, 1.3239026f };
 				//state->game.lucia_angle    = 5.3498487f;
 				//state->game.monster_position = { 66.295441f, 25.49999f, 1.2878139f };
@@ -2373,8 +2399,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 					} break;
 				}
 
-				state->game.hud.circuit_breaker.interpolated_voltage_velocity += 32.0f * (state->game.hud.circuit_breaker.active_voltage - state->game.hud.circuit_breaker.interpolated_voltage) * SECONDS_PER_UPDATE;
-				state->game.hud.circuit_breaker.interpolated_voltage_velocity  = dampen(state->game.hud.circuit_breaker.interpolated_voltage_velocity, 0.0f, 16.0f, SECONDS_PER_UPDATE);
+				state->game.hud.circuit_breaker.interpolated_voltage_velocity  = dampen(state->game.hud.circuit_breaker.interpolated_voltage_velocity, 32.0f * (state->game.hud.circuit_breaker.active_voltage - state->game.hud.circuit_breaker.interpolated_voltage), 16.0f, SECONDS_PER_UPDATE);
 				state->game.hud.circuit_breaker.interpolated_voltage          += state->game.hud.circuit_breaker.interpolated_voltage_velocity * SECONDS_PER_UPDATE;
 
 				if (state->game.hud.circuit_breaker.interpolated_voltage < 0.0f)
@@ -2896,6 +2921,13 @@ extern "C" PROTOTYPE_RENDER(render)
 
 	state->transient_arena.used = 0;
 
+	set_color(platform->renderer, vf3 { 0.0f, 0.0f, 0.0f });
+	SDL_RenderClear(platform->renderer);
+
+	SDL_SetRenderTarget(platform->renderer, state->texture.display);
+	set_color(platform->renderer, vf3 { 0.0f, 0.0f, 0.0f });
+	SDL_RenderClear(platform->renderer);
+
 	f32 blackout = 0.0f;
 
 	switch (state->context)
@@ -2904,19 +2936,17 @@ extern "C" PROTOTYPE_RENDER(render)
 		{
 			aliasing tm = state->title_menu;
 
-			SDL_RenderClear(platform->renderer);
-
-			render_texture(platform->renderer, tm.texture.desktop, { 0.0f, 0.0f }, vxx(WIN_DIM));
+			render_texture(platform->renderer, tm.texture.desktop, { 0.0f, 0.0f }, DISPLAY_RES + vf2 { 0.0f, -COMPUTER_TASKBAR_HEIGHT });
 
 			lambda draw_icon =
 				[&](SDL_Texture* texture, vf2 position, strlit name)
 				{
-					render_texture(platform->renderer, texture, { position.x, WIN_DIM.y - COMPUTER_ICON_DIM - position.y }, { COMPUTER_ICON_DIM, COMPUTER_ICON_DIM });
+					render_texture(platform->renderer, texture, { position.x, DISPLAY_RES.y - COMPUTER_ICON_DIM - position.y }, { COMPUTER_ICON_DIM, COMPUTER_ICON_DIM });
 					render_text
 					(
 						platform->renderer,
 						state->font.major,
-						{ position.x + COMPUTER_ICON_DIM / 2.0f, WIN_DIM.y - position.y },
+						{ position.x + COMPUTER_ICON_DIM / 2.0f, DISPLAY_RES.y - position.y },
 						-0.75f,
 						FC_ALIGN_CENTER,
 						0.5f,
@@ -2932,7 +2962,7 @@ extern "C" PROTOTYPE_RENDER(render)
 			if (+tm.window_type)
 			{
 				set_color(platform->renderer, monochrome(0.5f));
-				render_filled_rect(platform->renderer, vf2 { tm.window_position.x, WIN_DIM.y - COMPUTER_TITLE_BAR_HEIGHT - tm.window_position.y - tm.window_dimensions.y }, { tm.window_dimensions.x, COMPUTER_TITLE_BAR_HEIGHT });
+				render_filled_rect(platform->renderer, vf2 { tm.window_position.x, DISPLAY_RES.y - COMPUTER_TITLE_BAR_HEIGHT - tm.window_position.y - tm.window_dimensions.y }, { tm.window_dimensions.x, COMPUTER_TITLE_BAR_HEIGHT });
 
 				render_texture
 				(
@@ -2940,7 +2970,7 @@ extern "C" PROTOTYPE_RENDER(render)
 					tm.texture.window_close,
 					{
 						tm.window_position.x + tm.window_dimensions.x - COMPUTER_TITLE_BAR_HEIGHT,
-						WIN_DIM.y - COMPUTER_TITLE_BAR_HEIGHT - tm.window_position.y - tm.window_dimensions.y,
+						DISPLAY_RES.y - COMPUTER_TITLE_BAR_HEIGHT - tm.window_position.y - tm.window_dimensions.y,
 					},
 					{ COMPUTER_TITLE_BAR_HEIGHT, COMPUTER_TITLE_BAR_HEIGHT }
 				);
@@ -2950,13 +2980,13 @@ extern "C" PROTOTYPE_RENDER(render)
 					case ComputerWindowType::credits:
 					{
 						set_color(platform->renderer, { 0.75f, 0.65f, 0.2f, 1.0f });
-						render_filled_rect(platform->renderer, { tm.window_position.x, WIN_DIM.y - tm.window_dimensions.y - tm.window_position.y }, tm.window_dimensions);
+						render_filled_rect(platform->renderer, { tm.window_position.x, DISPLAY_RES.y - tm.window_dimensions.y - tm.window_position.y }, tm.window_dimensions);
 
 						render_boxed_text
 						(
 							platform->renderer,
 							state->font.minor,
-							{ tm.window_position.x + 5.0f, WIN_DIM.y - tm.window_dimensions.y - tm.window_position.y + 5.0f },
+							{ tm.window_position.x + 5.0f, DISPLAY_RES.y - tm.window_dimensions.y - tm.window_position.y + 5.0f },
 							tm.window_dimensions - vf2 { 5.0f, 5.0f } * 2.0f,
 							FC_ALIGN_LEFT,
 							1.0f,
@@ -2971,13 +3001,13 @@ extern "C" PROTOTYPE_RENDER(render)
 					case ComputerWindowType::antihome_program:
 					{
 						set_color(platform->renderer, monochrome(0.25f));
-						render_filled_rect(platform->renderer, { tm.window_position.x, WIN_DIM.y - tm.window_dimensions.y - tm.window_position.y }, tm.window_dimensions);
+						render_filled_rect(platform->renderer, { tm.window_position.x, DISPLAY_RES.y - tm.window_dimensions.y - tm.window_position.y }, tm.window_dimensions);
 
 						render_text
 						(
 							platform->renderer,
 							state->font.major,
-							{ tm.window_position.x + tm.window_dimensions.x * 0.5f, WIN_DIM.y - tm.window_position.y - tm.window_dimensions.y * 0.7f },
+							{ tm.window_position.x + tm.window_dimensions.x * 0.5f, DISPLAY_RES.y - tm.window_position.y - tm.window_dimensions.y * 0.7f },
 							0.5f,
 							FC_ALIGN_CENTER,
 							1.25f,
@@ -2986,12 +3016,12 @@ extern "C" PROTOTYPE_RENDER(render)
 						);
 
 						set_color(platform->renderer, { 1.0f, 0.0f, 0.0f, 1.0f });
-						render_filled_rect(platform->renderer, vf2 { tm.window_position.x + tm.window_dimensions.x * 0.5f, WIN_DIM.y - tm.window_position.y - tm.window_dimensions.y * 0.33f } - COMPUTER_BUTTON_DIMENSIONS / 2.0f, vxx(COMPUTER_BUTTON_DIMENSIONS));
+						render_filled_rect(platform->renderer, vf2 { tm.window_position.x + tm.window_dimensions.x * 0.5f, DISPLAY_RES.y - tm.window_position.y - tm.window_dimensions.y * 0.33f } - COMPUTER_BUTTON_DIMENSIONS / 2.0f, vxx(COMPUTER_BUTTON_DIMENSIONS));
 						render_text
 						(
 							platform->renderer,
 							state->font.major,
-							{ tm.window_position.x + tm.window_dimensions.x * 0.5f, WIN_DIM.y - tm.window_position.y - tm.window_dimensions.y * 0.33f },
+							{ tm.window_position.x + tm.window_dimensions.x * 0.5f, DISPLAY_RES.y - tm.window_position.y - tm.window_dimensions.y * 0.33f },
 							0.5f,
 							FC_ALIGN_CENTER,
 							0.55f,
@@ -3003,13 +3033,13 @@ extern "C" PROTOTYPE_RENDER(render)
 					case ComputerWindowType::power:
 					{
 						set_color(platform->renderer, monochrome(0.8f));
-						render_filled_rect(platform->renderer, { tm.window_position.x, WIN_DIM.y - tm.window_dimensions.y - tm.window_position.y }, tm.window_dimensions);
+						render_filled_rect(platform->renderer, { tm.window_position.x, DISPLAY_RES.y - tm.window_dimensions.y - tm.window_position.y }, tm.window_dimensions);
 
 						render_text
 						(
 							platform->renderer,
 							state->font.major,
-							{ tm.window_position.x + tm.window_dimensions.x * 0.5f, WIN_DIM.y - tm.window_position.y - tm.window_dimensions.y * 0.75f },
+							{ tm.window_position.x + tm.window_dimensions.x * 0.5f, DISPLAY_RES.y - tm.window_position.y - tm.window_dimensions.y * 0.75f },
 							0.5f,
 							FC_ALIGN_CENTER,
 							0.8f,
@@ -3018,13 +3048,13 @@ extern "C" PROTOTYPE_RENDER(render)
 						);
 
 						set_color(platform->renderer, monochrome(0.6f));
-						render_filled_rect(platform->renderer, vf2 { tm.window_position.x + tm.window_dimensions.x * 0.25f, WIN_DIM.y - tm.window_position.y - tm.window_dimensions.y * 0.3f } - COMPUTER_BUTTON_DIMENSIONS / 2.0f, vxx(COMPUTER_BUTTON_DIMENSIONS));
+						render_filled_rect(platform->renderer, vf2 { tm.window_position.x + tm.window_dimensions.x * 0.25f, DISPLAY_RES.y - tm.window_position.y - tm.window_dimensions.y * 0.3f } - COMPUTER_BUTTON_DIMENSIONS / 2.0f, vxx(COMPUTER_BUTTON_DIMENSIONS));
 
 						render_text
 						(
 							platform->renderer,
 							state->font.major,
-							{ tm.window_position.x + tm.window_dimensions.x * 0.25f, WIN_DIM.y - tm.window_position.y - tm.window_dimensions.y * 0.3f },
+							{ tm.window_position.x + tm.window_dimensions.x * 0.25f, DISPLAY_RES.y - tm.window_position.y - tm.window_dimensions.y * 0.3f },
 							0.5f,
 							FC_ALIGN_CENTER,
 							0.6f,
@@ -3033,13 +3063,13 @@ extern "C" PROTOTYPE_RENDER(render)
 						);
 
 						set_color(platform->renderer, monochrome(0.6f));
-						render_filled_rect(platform->renderer, vf2 { tm.window_position.x + tm.window_dimensions.x * 0.75f, WIN_DIM.y - tm.window_position.y - tm.window_dimensions.y * 0.3f } - COMPUTER_BUTTON_DIMENSIONS / 2.0f, vxx(COMPUTER_BUTTON_DIMENSIONS));
+						render_filled_rect(platform->renderer, vf2 { tm.window_position.x + tm.window_dimensions.x * 0.75f, DISPLAY_RES.y - tm.window_position.y - tm.window_dimensions.y * 0.3f } - COMPUTER_BUTTON_DIMENSIONS / 2.0f, vxx(COMPUTER_BUTTON_DIMENSIONS));
 
 						render_text
 						(
 							platform->renderer,
 							state->font.major,
-							{ tm.window_position.x + tm.window_dimensions.x * 0.75f, WIN_DIM.y - tm.window_position.y - tm.window_dimensions.y * 0.3f },
+							{ tm.window_position.x + tm.window_dimensions.x * 0.75f, DISPLAY_RES.y - tm.window_position.y - tm.window_dimensions.y * 0.3f },
 							0.5f,
 							FC_ALIGN_CENTER,
 							0.6f,
@@ -3051,13 +3081,13 @@ extern "C" PROTOTYPE_RENDER(render)
 			}
 
 			set_color(platform->renderer, monochrome(0.3f));
-			render_filled_rect(platform->renderer, { 0.0f, static_cast<f32>(WIN_DIM.y - COMPUTER_TASKBAR_HEIGHT) }, { static_cast<f32>(WIN_DIM.x), static_cast<f32>(COMPUTER_TASKBAR_HEIGHT) });
+			render_filled_rect(platform->renderer, { 0.0f, static_cast<f32>(DISPLAY_RES.y - COMPUTER_TASKBAR_HEIGHT) }, { static_cast<f32>(DISPLAY_RES.x), static_cast<f32>(COMPUTER_TASKBAR_HEIGHT) });
 
 			render_texture
 			(
 				platform->renderer,
 				state->title_menu.texture.power_button,
-				{ 0.0f, static_cast<f32>(WIN_DIM.y - COMPUTER_TASKBAR_HEIGHT) },
+				{ 0.0f, static_cast<f32>(DISPLAY_RES.y - COMPUTER_TASKBAR_HEIGHT) },
 				{ COMPUTER_TASKBAR_HEIGHT, COMPUTER_TASKBAR_HEIGHT }
 			);
 
@@ -3065,7 +3095,7 @@ extern "C" PROTOTYPE_RENDER(render)
 			(
 				platform->renderer,
 				state->title_menu.texture.cursor,
-				{ state->title_menu.cursor.x, WIN_DIM.y - state->title_menu.cursor.y },
+				{ state->title_menu.cursor.x, DISPLAY_RES.y - state->title_menu.cursor.y },
 				{ 12.0f, 24.0f }
 			);
 		} break;
@@ -3538,7 +3568,7 @@ extern "C" PROTOTYPE_RENDER(render)
 			}
 
 			SDL_UnlockTexture(state->game.texture.view);
-			render_texture(platform->renderer, state->game.texture.view, { 0.0f, 0.0f }, { static_cast<f32>(VIEW_RES.x) / SCREEN_RES.x * WIN_DIM.x, static_cast<f32>(VIEW_RES.y) / SCREEN_RES.y * WIN_DIM.y });
+			render_texture(platform->renderer, state->game.texture.view, { 0.0f, 0.0f }, { static_cast<f32>(VIEW_RES.x) / SCREEN_RES.x * DISPLAY_RES.x, static_cast<f32>(VIEW_RES.y) / SCREEN_RES.y * DISPLAY_RES.y });
 
 			SDL_SetRenderTarget(platform->renderer, state->game.texture.screen);
 			set_color(platform->renderer, { 0.0f, 0.0f, 0.0f, 0.0f });
@@ -3742,7 +3772,7 @@ extern "C" PROTOTYPE_RENDER(render)
 				}
 			}
 
-			SDL_SetRenderTarget(platform->renderer, 0);
+			SDL_SetRenderTarget(platform->renderer, state->texture.display);
 
 			lambda draw_night_vision_goggles_text =
 				[&](strlit name, vf2 ray)
@@ -3752,7 +3782,7 @@ extern "C" PROTOTYPE_RENDER(render)
 					(
 						platform->renderer,
 						state->font.minor,
-						{ VIEW_RES.x / SCREEN_RES.x * WIN_DIM.x * (0.5f - sign_angle(mod(argument(ray) - state->game.lucia_angle, TAU)) / state->game.lucia_fov), VIEW_RES.y * WIN_DIM.y * 0.5f / SCREEN_RES.y },
+						{ VIEW_RES.x / SCREEN_RES.x * DISPLAY_RES.x * (0.5f - sign_angle(mod(argument(ray) - state->game.lucia_angle, TAU)) / state->game.lucia_fov), VIEW_RES.y * DISPLAY_RES.y * 0.5f / SCREEN_RES.y },
 						0.5f,
 						FC_ALIGN_CENTER,
 						clamp(32.0f / (distance + 1.0f), 0.75f, 2.0f),
@@ -3765,7 +3795,7 @@ extern "C" PROTOTYPE_RENDER(render)
 			draw_night_vision_goggles_text("CIRCUIT_BREAKER", state->game.night_vision_goggles_interpolated_ray_to_circuit_breaker);
 			draw_night_vision_goggles_text("\"EXIT_9341\"", state->game.night_vision_goggles_interpolated_ray_to_door);
 
-			render_texture(platform->renderer, state->game.texture.screen, { 0.0f, 0.0f }, vxx(WIN_DIM));
+			render_texture(platform->renderer, state->game.texture.screen, { 0.0f, 0.0f }, vxx(DISPLAY_RES));
 
 			if (state->game.notification_keytime)
 			{
@@ -3773,7 +3803,7 @@ extern "C" PROTOTYPE_RENDER(render)
 				(
 					platform->renderer,
 					state->font.minor,
-					{ WIN_DIM.x * 0.5f, WIN_DIM.y * 0.6f },
+					{ DISPLAY_RES.x * 0.5f, DISPLAY_RES.y * 0.6f },
 					0.5f,
 					FC_ALIGN_CENTER,
 					1.0f,
@@ -3824,11 +3854,13 @@ extern "C" PROTOTYPE_RENDER(render)
 			{
 				blackout = 1.0f - state->end.entering_keytime;
 			}
-		};
+		} break;
 	}
 
 	set_color(platform->renderer, { 0.0f, 0.0f, 0.0f, blackout });
-	render_filled_rect(platform->renderer, { 0.0f, 0.0f }, vxx(WIN_DIM));
+	render_filled_rect(platform->renderer, { 0.0f, 0.0f }, vxx(DISPLAY_RES));
 
-	SDL_RenderPresent(platform->renderer);
+	SDL_SetRenderTarget(platform->renderer, 0);
+	vf2 display_dimensions = DISPLAY_RES * min(static_cast<f32>(platform->window_dimensions.x) / DISPLAY_RES.x, static_cast<f32>(platform->window_dimensions.y) / DISPLAY_RES.y);
+	render_texture(platform->renderer, state->texture.display, (platform->window_dimensions - display_dimensions) / 2.0f, display_dimensions);
 }

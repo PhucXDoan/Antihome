@@ -5,8 +5,7 @@
 #include <SDL_Mixer.h>
 #include <SDL_image.h>
 
-global constexpr vi2 WIN_DIM            = { 800, 600 };
-global constexpr f32 SECONDS_PER_UPDATE = 1.0f / 60.0f;
+global constexpr f32 SECONDS_PER_UPDATE = 1.0f / 24.0f;
 
 enum_loose (Input, u32)
 {
@@ -37,6 +36,7 @@ enum_loose (Input, u32)
 	escape,
 	enter,
 	tab,
+	alt,
 	left_mouse,
 	right_mouse,
 
@@ -49,15 +49,24 @@ struct InputState
 	u8 prev;
 };
 
-enum struct UpdateCode : u32
+enum struct UpdateCode : u8
 {
 	resume,
 	terminate
 };
 
+enum struct WindowState : u8
+{
+	windowed,
+	fullscreen
+};
+
 struct Platform
 {
+	SDL_Window*   window;
 	SDL_Renderer* renderer;
+	WindowState   window_state;
+	vi2           window_dimensions;
 	memsize       memory_capacity;
 	byte*         memory;
 	InputState    inputs[Input::CAPACITY];
@@ -69,7 +78,7 @@ struct Platform
 #define PROTOTYPE_INITIALIZE(NAME) void NAME(Platform* platform)
 typedef PROTOTYPE_INITIALIZE(PrototypeInitialize);
 
-#define PROTOTYPE_BOOT_UP(NAME) void NAME(Platform* platform, SDL_Window* window)
+#define PROTOTYPE_BOOT_UP(NAME) void NAME(Platform* platform)
 typedef PROTOTYPE_BOOT_UP(PrototypeBootUp);
 
 #define PROTOTYPE_BOOT_DOWN(NAME) void NAME(Platform* platform)
