@@ -15,8 +15,6 @@
 #include "rng.cpp"
 #include "utilities.cpp"
 
-global constexpr vi2 $$DISPLAY_DIM$$ = { 800, 600 };
-
 global constexpr vi2 DISPLAY_RES = { 800, 600 };
 
 global constexpr i32 COMPUTER_TASKBAR_HEIGHT            = 50;
@@ -41,13 +39,11 @@ global constexpr i32 INVENTORY_PADDING     = 5;
 global constexpr f32 CREEPY_SOUND_MIN_TIME = 15.0f;
 global constexpr f32 CREEPY_SOUND_MAX_TIME = 90.0f;
 
-global constexpr vi2 CIRCUIT_BREAKER_SWITCH_GRID                 = { 4, 2 };
 global constexpr vf2 CIRCUIT_BREAKER_HUD_DIMENSIONS              = { 200.0f, 115.0f };
 global constexpr vf2 CIRCUIT_BREAKER_VOLTAGE_DISPLAY_DIMENSIONS  = { CIRCUIT_BREAKER_HUD_DIMENSIONS.x * 0.1f, CIRCUIT_BREAKER_HUD_DIMENSIONS.y * 0.75f };
-global constexpr vf2 CIRCUIT_BREAKER_VOLTAGE_DISPLAY_COORDINATES = { VIEW_RES.x * 0.75f, VIEW_RES.y / 2.0f + CIRCUIT_BREAKER_VOLTAGE_DISPLAY_DIMENSIONS.y / 2.0f };
-global constexpr vf2 CIRCUIT_BREAKER_SWITCH_DIMENSIONS           = { 30.0f, CIRCUIT_BREAKER_HUD_DIMENSIONS.y / CIRCUIT_BREAKER_SWITCH_GRID.y - 20.0f };
-global constexpr vf2 CIRCUIT_BREAKER_SWITCH_PADDINGS             = { (CIRCUIT_BREAKER_VOLTAGE_DISPLAY_COORDINATES.x - (VIEW_RES.x - CIRCUIT_BREAKER_HUD_DIMENSIONS.x) / 2.0f - CIRCUIT_BREAKER_SWITCH_DIMENSIONS.x * CIRCUIT_BREAKER_SWITCH_GRID.x) / (1.0f + CIRCUIT_BREAKER_SWITCH_GRID.x), 20.0f };
-global constexpr vf2 CIRCUIT_BREAKER_HUD_POSITION                = (VIEW_RES - CIRCUIT_BREAKER_HUD_DIMENSIONS) / 2.0f;
+global constexpr f32 CIRCUIT_BREAKER_VOLTAGE_DISPLAY_X           = VIEW_RES.x * 0.75f;
+global constexpr vf2 CIRCUIT_BREAKER_SWITCH_DIMENSIONS           = { 30.0f, 35.0f };
+global constexpr vf2 CIRCUIT_BREAKER_MARGINS                     = { 10.0f, 10.0f };
 
 global constexpr f32 DEATH_DURATION = 8.0f;
 global constexpr f32 FRICTION       = 8.0f;
@@ -238,6 +234,7 @@ enum struct HudType : u8
 
 struct BreakerSwitch
 {
+	vf2    position;
 	bool32 active;
 	i32    voltage;
 };
@@ -495,7 +492,7 @@ struct State
 			{
 				union
 				{
-					BreakerSwitch switches[CIRCUIT_BREAKER_SWITCH_GRID.y][CIRCUIT_BREAKER_SWITCH_GRID.x];
+					BreakerSwitch switches[2][4];
 					BreakerSwitch flat_switches[sizeof(switches) / sizeof(BreakerSwitch)];
 				};
 
@@ -1265,7 +1262,7 @@ extern "C" PROTOTYPE_INITIALIZE(initialize)
 	state->transient_arena.base = platform->memory          + sizeof(State) + state->context_arena.size;
 	state->transient_arena.used = 0;
 
-	state->title_menu.cursor = $$DISPLAY_DIM$$ / 2.0f;
+	state->title_menu.cursor = DISPLAY_RES / 2.0f;
 
 	SDL_SetRelativeMouseMode(SDL_TRUE);
 
@@ -1336,16 +1333,16 @@ extern "C" PROTOTYPE_UPDATE(update)
 			tm.cursor          += tm.cursor_velocity * SECONDS_PER_UPDATE;
 
 			constexpr f32 CURSOR_PADDING = 2.0f;
-			if (tm.cursor.x < CURSOR_PADDING || tm.cursor.x > $$DISPLAY_DIM$$.x - CURSOR_PADDING)
+			if (tm.cursor.x < CURSOR_PADDING || tm.cursor.x > DISPLAY_RES.x - CURSOR_PADDING)
 			{
 				tm.cursor_velocity.x = 0.0f;
-				tm.cursor.x          = clamp(tm.cursor.x, CURSOR_PADDING, static_cast<f32>($$DISPLAY_DIM$$.x - CURSOR_PADDING));
+				tm.cursor.x          = clamp(tm.cursor.x, CURSOR_PADDING, static_cast<f32>(DISPLAY_RES.x - CURSOR_PADDING));
 			}
 
-			if (tm.cursor.y < CURSOR_PADDING || tm.cursor.y > $$DISPLAY_DIM$$.y - CURSOR_PADDING)
+			if (tm.cursor.y < CURSOR_PADDING || tm.cursor.y > DISPLAY_RES.y - CURSOR_PADDING)
 			{
 				tm.cursor_velocity.y = 0.0f;
-				tm.cursor.y          = clamp(tm.cursor.y, CURSOR_PADDING, static_cast<f32>($$DISPLAY_DIM$$.y - CURSOR_PADDING));
+				tm.cursor.y          = clamp(tm.cursor.y, CURSOR_PADDING, static_cast<f32>(DISPLAY_RES.y - CURSOR_PADDING));
 			}
 
 			if (PRESSED(Input::left_mouse))
@@ -1584,10 +1581,21 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 								state->game.hud.cursor = VIEW_RES / 2.0f;
 
-								FOR_ELEMS(it, state->game.hud.circuit_breaker.flat_switches)
+								FOR_RANGE(y, ARRAY_CAPACITY(state->game.hud.circuit_breaker.switches))
 								{
-									it->voltage                                  = 1 + rng(&state->seed, 0, 6);
-									state->game.hud.circuit_breaker.max_voltage += it->voltage;
+									FOR_RANGE(x, ARRAY_CAPACITY(state->game.hud.circuit_breaker.switches[0]))
+									{
+										state->game.hud.circuit_breaker.switches[y][x].position =
+											(VIEW_RES - CIRCUIT_BREAKER_HUD_DIMENSIONS - CIRCUIT_BREAKER_SWITCH_DIMENSIONS) / 2.0f + CIRCUIT_BREAKER_MARGINS +
+												vf2
+												{
+													(CIRCUIT_BREAKER_VOLTAGE_DISPLAY_X - (VIEW_RES.x - CIRCUIT_BREAKER_HUD_DIMENSIONS.x) / 2.0f - 2.0f * CIRCUIT_BREAKER_MARGINS.x) / ARRAY_CAPACITY(state->game.hud.circuit_breaker.switches[0]) * (x + 0.5f),
+													(                                                  CIRCUIT_BREAKER_HUD_DIMENSIONS.y         - 2.0f * CIRCUIT_BREAKER_MARGINS.y) / ARRAY_CAPACITY(state->game.hud.circuit_breaker.switches   ) * (y + 0.5f)
+												};
+
+										state->game.hud.circuit_breaker.switches[y][x].voltage  = 1 + rng(&state->seed, 0, 6);
+										state->game.hud.circuit_breaker.max_voltage            += state->game.hud.circuit_breaker.switches[y][x].voltage;
+									}
 								}
 
 								for (i32 i = 0; i < ARRAY_CAPACITY(state->game.hud.circuit_breaker.flat_switches) / 2;)
@@ -1650,7 +1658,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 						{
 							tm.window_type       = clicked_window_type;
 							tm.window_velocity   = { 0.0f, 0.0f };
-							tm.window_position   = ($$DISPLAY_DIM$$ - tm.window_dimensions) / 2.0f;
+							tm.window_position   = (DISPLAY_RES - tm.window_dimensions) / 2.0f;
 						}
 					}
 				}
@@ -1673,15 +1681,15 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 				tm.window_position += tm.window_velocity * SECONDS_PER_UPDATE;
 
-				if (tm.window_position.x < 2.0f * COMPUTER_TITLE_BAR_HEIGHT - tm.window_dimensions.x || tm.window_position.x > $$DISPLAY_DIM$$.x - COMPUTER_TITLE_BAR_HEIGHT)
+				if (tm.window_position.x < 2.0f * COMPUTER_TITLE_BAR_HEIGHT - tm.window_dimensions.x || tm.window_position.x > DISPLAY_RES.x - COMPUTER_TITLE_BAR_HEIGHT)
 				{
-					tm.window_position.x = clamp(tm.window_position.x, 2.0f * COMPUTER_TITLE_BAR_HEIGHT - tm.window_dimensions.x, static_cast<f32>($$DISPLAY_DIM$$.x - COMPUTER_TITLE_BAR_HEIGHT));
+					tm.window_position.x = clamp(tm.window_position.x, 2.0f * COMPUTER_TITLE_BAR_HEIGHT - tm.window_dimensions.x, static_cast<f32>(DISPLAY_RES.x - COMPUTER_TITLE_BAR_HEIGHT));
 					tm.window_velocity.x = 0.0f;
 				}
 
-				if (tm.window_position.y < COMPUTER_TASKBAR_HEIGHT - tm.window_dimensions.y || tm.window_position.y > $$DISPLAY_DIM$$.y - COMPUTER_TITLE_BAR_HEIGHT - tm.window_dimensions.y)
+				if (tm.window_position.y < COMPUTER_TASKBAR_HEIGHT - tm.window_dimensions.y || tm.window_position.y > DISPLAY_RES.y - COMPUTER_TITLE_BAR_HEIGHT - tm.window_dimensions.y)
 				{
-					tm.window_position.y = clamp(tm.window_position.y, COMPUTER_TASKBAR_HEIGHT - tm.window_dimensions.y, $$DISPLAY_DIM$$.y - COMPUTER_TITLE_BAR_HEIGHT - tm.window_dimensions.y);
+					tm.window_position.y = clamp(tm.window_position.y, COMPUTER_TASKBAR_HEIGHT - tm.window_dimensions.y, DISPLAY_RES.y - COMPUTER_TITLE_BAR_HEIGHT - tm.window_dimensions.y);
 					tm.window_velocity.y = 0.0f;
 				}
 			}
@@ -2188,47 +2196,28 @@ extern "C" PROTOTYPE_UPDATE(update)
 							{
 								if (state->game.hud.circuit_breaker.active_voltage != state->game.hud.circuit_breaker.goal_voltage)
 								{
-									vi2 breaker_switch_position =
-										vxx(vf2 {
-											roundf((state->game.hud.cursor.x - (VIEW_RES.x - CIRCUIT_BREAKER_HUD_DIMENSIONS.x + CIRCUIT_BREAKER_SWITCH_DIMENSIONS.x) / 2.0f - CIRCUIT_BREAKER_SWITCH_PADDINGS.x       ) / (CIRCUIT_BREAKER_SWITCH_DIMENSIONS.x + CIRCUIT_BREAKER_SWITCH_PADDINGS.x)),
-											roundf((state->game.hud.cursor.y - (VIEW_RES.y - CIRCUIT_BREAKER_HUD_DIMENSIONS.y + CIRCUIT_BREAKER_SWITCH_DIMENSIONS.y) / 2.0f - CIRCUIT_BREAKER_SWITCH_PADDINGS.y / 2.0f) / (CIRCUIT_BREAKER_SWITCH_DIMENSIONS.y + CIRCUIT_BREAKER_SWITCH_PADDINGS.y))
-										});
-
-									if
-									(
-										IN_RANGE(breaker_switch_position.x, 0, ARRAY_CAPACITY(state->game.hud.circuit_breaker.switches[0])) &&
-										IN_RANGE(breaker_switch_position.y, 0, ARRAY_CAPACITY(state->game.hud.circuit_breaker.switches   )) &&
-										in_rect
-										(
-											state->game.hud.cursor,
-											(VIEW_RES - CIRCUIT_BREAKER_HUD_DIMENSIONS) / 2.0f
-												+ vf2
-												{
-													(CIRCUIT_BREAKER_SWITCH_DIMENSIONS.x + CIRCUIT_BREAKER_SWITCH_PADDINGS.x) * breaker_switch_position.x + CIRCUIT_BREAKER_SWITCH_PADDINGS.x,
-													(CIRCUIT_BREAKER_SWITCH_DIMENSIONS.y + CIRCUIT_BREAKER_SWITCH_PADDINGS.y) * breaker_switch_position.y + CIRCUIT_BREAKER_SWITCH_PADDINGS.y / 2.0f
-												},
-											CIRCUIT_BREAKER_SWITCH_DIMENSIONS
-										)
-									)
+									FOR_ELEMS(it, state->game.hud.circuit_breaker.flat_switches)
 									{
-										Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.circuit_breaker_switch, 0);
+										if (in_rect(state->game.hud.cursor, it->position, CIRCUIT_BREAKER_SWITCH_DIMENSIONS))
+										{
+											Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.circuit_breaker_switch, 0);
 
-										aliasing breaker_switch = state->game.hud.circuit_breaker.switches[breaker_switch_position.y][breaker_switch_position.x];
-										if (breaker_switch.active)
-										{
-											breaker_switch.active                           = false;
-											state->game.hud.circuit_breaker.active_voltage -= breaker_switch.voltage;
-										}
-										else
-										{
-											breaker_switch.active                           = true;
-											state->game.hud.circuit_breaker.active_voltage += breaker_switch.voltage;
-										}
+											if (it->active)
+											{
+												it->active                                      = false;
+												state->game.hud.circuit_breaker.active_voltage -= it->voltage;
+											}
+											else
+											{
+												it->active                                      = true;
+												state->game.hud.circuit_breaker.active_voltage += it->voltage;
+											}
 
-										if (state->game.hud.circuit_breaker.active_voltage == state->game.hud.circuit_breaker.goal_voltage)
-										{
-											Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.drone_on, 0);
-											state->game.goal = GameGoal::escape;
+											if (state->game.hud.circuit_breaker.active_voltage == state->game.hud.circuit_breaker.goal_voltage)
+											{
+												Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.drone_on, 0);
+												state->game.goal = GameGoal::escape;
+											}
 										}
 									}
 								}
@@ -3632,7 +3621,7 @@ extern "C" PROTOTYPE_RENDER(render)
 					(
 						platform->renderer,
 						state->game.texture.circuit_breaker_panel,
-						CIRCUIT_BREAKER_HUD_POSITION,
+						(VIEW_RES - CIRCUIT_BREAKER_HUD_DIMENSIONS) / 2.0f,
 						CIRCUIT_BREAKER_HUD_DIMENSIONS
 					);
 
@@ -3644,12 +3633,7 @@ extern "C" PROTOTYPE_RENDER(render)
 							(
 								platform->renderer,
 								state->game.texture.circuit_breaker_switches[state->game.hud.circuit_breaker.switches[y][x].active],
-								CIRCUIT_BREAKER_HUD_POSITION
-								+ vf2
-									{
-										x * (CIRCUIT_BREAKER_SWITCH_DIMENSIONS.x + CIRCUIT_BREAKER_SWITCH_PADDINGS.x) + CIRCUIT_BREAKER_SWITCH_PADDINGS.x,
-										CIRCUIT_BREAKER_HUD_DIMENSIONS.y - (y + 1) * (CIRCUIT_BREAKER_SWITCH_DIMENSIONS.y + CIRCUIT_BREAKER_SWITCH_PADDINGS.y) + CIRCUIT_BREAKER_SWITCH_PADDINGS.y / 2.0f
-									},
+								{ state->game.hud.circuit_breaker.switches[y][x].position.x, VIEW_RES.y - CIRCUIT_BREAKER_SWITCH_DIMENSIONS.y - state->game.hud.circuit_breaker.switches[y][x].position.y },
 								CIRCUIT_BREAKER_SWITCH_DIMENSIONS
 							);
 						}
@@ -3675,14 +3659,19 @@ extern "C" PROTOTYPE_RENDER(render)
 						{
 							set_color(platform->renderer, monochrome(0.2f));
 						}
-						render_line(platform->renderer, CIRCUIT_BREAKER_VOLTAGE_DISPLAY_COORDINATES + vf2 { 0.0f, -static_cast<f32>(i) }, CIRCUIT_BREAKER_VOLTAGE_DISPLAY_COORDINATES + vf2 { CIRCUIT_BREAKER_VOLTAGE_DISPLAY_DIMENSIONS.x, -static_cast<f32>(i) });
+						render_line
+						(
+							platform->renderer,
+							{ CIRCUIT_BREAKER_VOLTAGE_DISPLAY_X, (VIEW_RES.y + CIRCUIT_BREAKER_VOLTAGE_DISPLAY_DIMENSIONS.y) / 2.0f - static_cast<f32>(i) },
+							{ CIRCUIT_BREAKER_VOLTAGE_DISPLAY_X + CIRCUIT_BREAKER_VOLTAGE_DISPLAY_DIMENSIONS.x, (VIEW_RES.y + CIRCUIT_BREAKER_VOLTAGE_DISPLAY_DIMENSIONS.y) / 2.0f - static_cast<f32>(i) }
+						);
 					}
 
 					set_color(platform->renderer, monochrome(0.9f));
 					render_filled_rect
 					(
 						platform->renderer,
-						CIRCUIT_BREAKER_VOLTAGE_DISPLAY_COORDINATES + vf2 { 0.0f, -CIRCUIT_BREAKER_VOLTAGE_DISPLAY_DIMENSIONS.y * state->game.hud.circuit_breaker.goal_voltage / state->game.hud.circuit_breaker.max_voltage } - vf2 { 4.0f, 1.0f },
+						vf2 { CIRCUIT_BREAKER_VOLTAGE_DISPLAY_X, (VIEW_RES.y + CIRCUIT_BREAKER_VOLTAGE_DISPLAY_DIMENSIONS.y) / 2.0f - CIRCUIT_BREAKER_VOLTAGE_DISPLAY_DIMENSIONS.y * state->game.hud.circuit_breaker.goal_voltage / state->game.hud.circuit_breaker.max_voltage } - vf2 { 4.0f, 1.0f },
 						{ 8.0f, 2.0f }
 					);
 				} break;
