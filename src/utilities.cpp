@@ -336,7 +336,7 @@ internal vf3 sample_at(Mipmap* mipmap, f32 level, vf2 uv)
 internal void age_animated_sprite(AnimatedSprite* sprite, f32 delta_time)
 {
 	sprite->age_keytime += delta_time * sprite->age_hertz;
-	if (sprite->age_keytime >= 1.0f)
+	while (sprite->age_keytime >= 1.0f)
 	{
 		sprite->current_index  = (sprite->current_index + static_cast<i32>(sprite->age_keytime)) % sprite->frame_count;
 		sprite->age_keytime    -= static_cast<i32>(sprite->age_keytime);

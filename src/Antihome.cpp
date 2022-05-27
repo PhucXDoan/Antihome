@@ -411,9 +411,8 @@ struct State
 		f32                  heart_rate_display_values[32];
 		i32                  heart_rate_display_index;
 		f32                  heart_rate_display_update_keytime;
-		f32                  heart_pulse_current_value_velocity;
-		f32                  heart_pulse_current_value;
 		f32                  heart_pulse_keytime;
+		f32                  heart_pulse_time_since;
 		f32                  heart_bpm;
 		i32                  heartbeat_sfx_index;
 
@@ -1307,8 +1306,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 			aliasing tm = state->title_menu;
 
 			// @TODO@ Make window and cursor stop together.
-			tm.cursor_velocity += 32.0f * platform->cursor_delta;
-			tm.cursor_velocity  = dampen(tm.cursor_velocity, { 0.0f, 0.0f }, 32.0f, SECONDS_PER_UPDATE);
+			tm.cursor_velocity  = dampen(tm.cursor_velocity, 0.8f * platform->cursor_delta / SECONDS_PER_UPDATE, 64.0f, SECONDS_PER_UPDATE);
 			tm.cursor          += tm.cursor_velocity * SECONDS_PER_UPDATE;
 
 			constexpr f32 CURSOR_PADDING = 2.0f;
@@ -1715,7 +1713,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 				if (+wasd && HOLDING(Input::shift) && !state->game.lucia_out_of_breath)
 				{
 					state->game.lucia_velocity        = dampen(state->game.lucia_velocity, { 0.0f, 0.0f }, FRICTION * 0.7f, SECONDS_PER_UPDATE);
-					state->game.lucia_stamina         = clamp(state->game.lucia_stamina - SECONDS_PER_UPDATE / 60.0f * (1.0f + (1.0f - square(1.0f - 2.0f * state->game.lucia_sprint_keytime)) * 4.0f), 0.0f, 1.0f);
+					state->game.lucia_stamina         = clamp(state->game.lucia_stamina - SECONDS_PER_UPDATE / 35.0f * (1.0f + (1.0f - square(1.0f - 2.0f * state->game.lucia_sprint_keytime)) * 4.0f), 0.0f, 1.0f);
 					state->game.lucia_sprint_keytime  = clamp(state->game.lucia_sprint_keytime + SECONDS_PER_UPDATE / 1.5f, 0.0f, 1.0f);
 					if (state->game.lucia_stamina == 0.0f)
 					{
@@ -1806,8 +1804,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 				if (state->game.hud.type != HudType::null)
 				{
-					state->game.hud.cursor_velocity += 13.0f * platform->cursor_delta;
-					state->game.hud.cursor_velocity  = dampen(state->game.hud.cursor_velocity, { 0.0f, 0.0f }, 25.0f, SECONDS_PER_UPDATE);
+					state->game.hud.cursor_velocity  = dampen(state->game.hud.cursor_velocity, 0.3f * platform->cursor_delta / SECONDS_PER_UPDATE, 64.0f, SECONDS_PER_UPDATE);
 					state->game.hud.cursor          += state->game.hud.cursor_velocity * SECONDS_PER_UPDATE;
 					if (state->game.hud.cursor.x < 0.0f || state->game.hud.cursor.x > VIEW_RES.x)
 					{
@@ -2223,7 +2220,8 @@ extern "C" PROTOTYPE_UPDATE(update)
 						state->game.hud.cursor_velocity = { 0.0f, 0.0f };
 						state->game.hud.cursor          = VIEW_RES / 2.0f;
 
-						state->game.lucia_angle_velocity -= 0.1f * platform->cursor_delta.x;
+						state->game.lucia_angle_velocity = dampen(state->game.lucia_angle_velocity, -0.005f * platform->cursor_delta.x / SECONDS_PER_UPDATE, 16.0f, SECONDS_PER_UPDATE);
+						state->game.lucia_angle          = mod(state->game.lucia_angle + state->game.lucia_angle_velocity * SECONDS_PER_UPDATE, TAU);
 
 						lambda hand_on_heuristic =
 							[&](vf2 position)
@@ -2740,16 +2738,18 @@ extern "C" PROTOTYPE_UPDATE(update)
 					}
 				}
 
-				state->game.heart_bpm            = 63.5f + 80.0f * (1.0f - state->game.lucia_stamina);
-				state->game.heart_pulse_keytime += state->game.heart_bpm / 60.0f * SECONDS_PER_UPDATE;
+				state->game.heart_bpm               = 63.5f + 80.0f * (1.0f - state->game.lucia_stamina);
+				state->game.heart_pulse_keytime    += state->game.heart_bpm / 60.0f * SECONDS_PER_UPDATE;
+				state->game.heart_pulse_time_since += SECONDS_PER_UPDATE;
 
-				while (state->game.heart_pulse_keytime >= 1.0f)
+				if (state->game.heart_pulse_keytime >= 1.0f)
 				{
 					Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.heartbeats[state->game.heartbeat_sfx_index], 0);
 
-					state->game.heart_pulse_keytime                -= 1.0f;
-					state->game.heart_pulse_current_value_velocity += 64.0f;
-					state->game.heartbeat_sfx_index                 = (state->game.heartbeat_sfx_index + 1) % ARRAY_CAPACITY(state->game.audio.heartbeats);
+					state->game.heart_pulse_keytime               = 0.0f;
+					state->game.heart_pulse_time_since            = 0.0f;
+					state->game.heart_rate_display_update_keytime = 1.0f;
+					state->game.heartbeat_sfx_index = (state->game.heartbeat_sfx_index + 1) % ARRAY_CAPACITY(state->game.audio.heartbeats);
 				}
 
 				state->game.notification_keytime = clamp(state->game.notification_keytime - SECONDS_PER_UPDATE / 8.0f, 0.0f, 1.0f);
@@ -2766,6 +2766,9 @@ extern "C" PROTOTYPE_UPDATE(update)
 				state->game.hand_on_state       = HandOnState::null;
 				state->game.hud.type            = HudType::null;
 
+				state->game.lucia_angle_velocity = dampen(state->game.lucia_angle_velocity, 0.0f, 16.0f, SECONDS_PER_UPDATE);
+				state->game.lucia_angle          = mod(state->game.lucia_angle + state->game.lucia_angle_velocity * SECONDS_PER_UPDATE, TAU);
+
 				state->game.lucia_velocity    *= 0.9f;
 				state->game.lucia_position.xy  = move(state, state->game.lucia_position.xy, state->game.lucia_velocity * SECONDS_PER_UPDATE);
 				state->game.lucia_position.z   = dampen(state->game.lucia_position.z, 0.1f, 1.0f, SECONDS_PER_UPDATE);
@@ -2778,9 +2781,6 @@ extern "C" PROTOTYPE_UPDATE(update)
 				}
 			}
 
-			state->game.lucia_angle_velocity = dampen(state->game.lucia_angle_velocity, 0.0f, 16.0f, SECONDS_PER_UPDATE);
-			state->game.lucia_angle          = mod(state->game.lucia_angle + state->game.lucia_angle_velocity * SECONDS_PER_UPDATE, TAU);
-
 			state->game.eye_drops_activation              = max(state->game.eye_drops_activation - SECONDS_PER_UPDATE / 45.0f, 0.0f);
 			state->game.interpolated_eye_drops_activation = dampen(state->game.interpolated_eye_drops_activation, state->game.eye_drops_activation, 4.0f, SECONDS_PER_UPDATE);
 
@@ -2788,15 +2788,11 @@ extern "C" PROTOTYPE_UPDATE(update)
 			state->game.interpolated_blur = dampen(state->game.interpolated_blur, state->game.blur_value, 4.0f, SECONDS_PER_UPDATE);
 
 			// @TODO@ Frame-independent.
-			state->game.heart_pulse_current_value_velocity -= 4096.0f * state->game.heart_pulse_current_value * SECONDS_PER_UPDATE;
-			state->game.heart_pulse_current_value_velocity  = dampen(state->game.heart_pulse_current_value_velocity, 0.0f, 32.0f, SECONDS_PER_UPDATE);
-			state->game.heart_pulse_current_value          += state->game.heart_pulse_current_value_velocity * SECONDS_PER_UPDATE;
-
-			state->game.heart_rate_display_update_keytime += SECONDS_PER_UPDATE / 0.05f;
+			state->game.heart_rate_display_update_keytime += SECONDS_PER_UPDATE / 0.025f;
 			while (state->game.heart_rate_display_update_keytime >= 1.0f)
 			{
 				state->game.heart_rate_display_update_keytime                               -= 1.0f;
-				state->game.heart_rate_display_values[state->game.heart_rate_display_index]  = state->game.heart_pulse_current_value;
+				state->game.heart_rate_display_values[state->game.heart_rate_display_index]  = cosf(64.0f * state->game.heart_pulse_time_since) * expf(-25.0f * state->game.heart_pulse_time_since);
 				state->game.heart_rate_display_index                                         = (state->game.heart_rate_display_index + 1) % ARRAY_CAPACITY(state->game.heart_rate_display_values);
 			}
 
@@ -2859,7 +2855,10 @@ extern "C" PROTOTYPE_UPDATE(update)
 				state->game.hud.status.battery_level_keytime   = dampen(state->game.hud.status.battery_level_keytime, 0.0f, 8.0f, SECONDS_PER_UPDATE);
 			}
 
-			age_animated_sprite(&state->game.animated_sprite.fire, SECONDS_PER_UPDATE); // @TEMP@
+			FOR_ELEMS(it, state->game.animated_sprites)
+			{
+				age_animated_sprite(it, SECONDS_PER_UPDATE);
+			}
 		} break;
 
 		case StateContext::end:
