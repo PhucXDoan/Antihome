@@ -17,12 +17,8 @@
 
 global constexpr vi2 DISPLAY_RES = { 800, 600 };
 
-global constexpr i32 COMPUTER_TASKBAR_HEIGHT            = 50;
-global constexpr i32 COMPUTER_ICON_DIM                  = 50;
-global constexpr vi2 COMPUTER_CREDITS_POSITION          = { 55, static_cast<i32>(DISPLAY_RES.y - (COMPUTER_ICON_DIM + 50) * 0.75f) };
-global constexpr vi2 COMPUTER_ANTIHOME_PROGRAM_POSITION = { 55, static_cast<i32>(DISPLAY_RES.y - (COMPUTER_ICON_DIM + 50) * 1.75f) };
-global constexpr i32 COMPUTER_TITLE_BAR_HEIGHT          = 25;
-global constexpr vi2 COMPUTER_BUTTON_DIMENSIONS         = { 45, 27 };
+global constexpr i32 COMPUTER_TASKBAR_HEIGHT   = 50;
+global constexpr i32 COMPUTER_TITLE_BAR_HEIGHT = 25;
 
 global constexpr vi2 SCREEN_RES        = DISPLAY_RES / 3;
 global constexpr i32 STATUS_HUD_HEIGHT = SCREEN_RES.y / 4;
@@ -224,11 +220,15 @@ enum_loose (WindowType, u8)
 	enum_end_region(TYPE)
 };
 
+global struct { vf2 position; vf2 dimensions; strlit name; strlit img_file_path; } WINDOW_ICON_DATA[WindowType::TYPE_COUNT] =
+	{
+		{ { 32.0f, DISPLAY_RES.y - 100.0f }, vx2(64.0f)                       , "Credits" , DATA_DIR "computer/text_file.png"             },
+		{ { 32.0f, DISPLAY_RES.y - 200.0f }, vx2(64.0f)                       , "Antihome", DATA_DIR "computer/antihome_program.png"      },
+		{ { 0.0f, 0.0f                    }, vxx(vx2(COMPUTER_TASKBAR_HEIGHT)), 0         , DATA_DIR "computer/terminal_power_button.png" }
+	};
+
 enum_loose (WindowButtonType, i8)
 {
-	enum_start_region(CREDITS)
-	enum_end_region(CREDITS)
-
 	enum_start_region(ANTIHOME_PROGRAM)
 		antihome_program_lure,
 	enum_end_region(ANTIHOME_PROGRAM)
@@ -308,10 +308,8 @@ struct State
 			{
 				SDL_Texture* desktop;
 				SDL_Texture* cursor;
-				SDL_Texture* power_button;
-				SDL_Texture* text_file;
-				SDL_Texture* antihome_program;
 				SDL_Texture* window_close;
+				SDL_Texture* icons[WindowType::TYPE_COUNT];
 			} texture;
 
 			SDL_Texture* textures[sizeof(texture) / sizeof(SDL_Texture*)];
@@ -330,6 +328,12 @@ struct State
 		vf2          cursor_velocity;
 		vf2          cursor;
 		bool32       cursor_dragging_window;
+		struct
+		{
+			vf2 position;
+			f32 width;
+
+		}            window_icons[WindowType::TYPE_COUNT];
 		WindowType   window_type;
 		vf2          window_velocity;
 		vf2          window_position;
@@ -1132,12 +1136,14 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 	{
 		case StateContext::title_menu:
 		{
-			state->title_menu.texture.desktop          = IMG_LoadTexture(renderer, DATA_DIR "computer/desktop.png");
-			state->title_menu.texture.cursor           = IMG_LoadTexture(renderer, DATA_DIR "computer/cursor.png");
-			state->title_menu.texture.power_button     = IMG_LoadTexture(renderer, DATA_DIR "computer/terminal_power_button.png");
-			state->title_menu.texture.text_file        = IMG_LoadTexture(renderer, DATA_DIR "computer/text_file.png");
-			state->title_menu.texture.antihome_program = IMG_LoadTexture(renderer, DATA_DIR "computer/antihome_program.png");
-			state->title_menu.texture.window_close     = IMG_LoadTexture(renderer, DATA_DIR "computer/window_close.png");
+			state->title_menu.texture.desktop      = IMG_LoadTexture(renderer, DATA_DIR "computer/desktop.png");
+			state->title_menu.texture.cursor       = IMG_LoadTexture(renderer, DATA_DIR "computer/cursor.png");
+			state->title_menu.texture.window_close = IMG_LoadTexture(renderer, DATA_DIR "computer/window_close.png");
+
+			FOR_ELEMS(it, WINDOW_ICON_DATA)
+			{
+				state->title_menu.texture.icons[it_index] = IMG_LoadTexture(renderer, it->img_file_path);
+			}
 
 			state->title_menu.audio.ambience = Mix_LoadWAV(DATA_DIR "audio/computer.wav");
 
@@ -1669,66 +1675,58 @@ extern "C" PROTOTYPE_UPDATE(update)
 				}
 				else
 				{
-					WindowType clicked_window_type = WindowType::null;
-
-					if (in_rect(tm.cursor, vxx(COMPUTER_CREDITS_POSITION), vxx(vx2(COMPUTER_ICON_DIM))))
+					FOR_ELEMS(it, WINDOW_ICON_DATA)
 					{
-						clicked_window_type = WindowType::credits;
-					}
-					else if (in_rect(tm.cursor, vxx(COMPUTER_ANTIHOME_PROGRAM_POSITION), vxx(vx2(COMPUTER_ICON_DIM))))
-					{
-						clicked_window_type = WindowType::antihome_program;
-					}
-					else if (in_rect(tm.cursor, { 0.0f, 0.0f }, vxx(vx2(COMPUTER_TASKBAR_HEIGHT))))
-					{
-						clicked_window_type = WindowType::power;
-					}
-
-					if (+clicked_window_type)
-					{
-						if (clicked_window_type == tm.window_type)
+						if (in_rect(tm.cursor, it->position, it->dimensions))
 						{
-							tm.window_type = WindowType::null;
-						}
-						else
-						{
-							lambda create_button =
-								[&](WindowButtonType region_start, WindowButtonType type, WindowButton button)
-								{
-									ASSERT(tm.window_buttons_count < ARRAY_CAPACITY(tm.window_buttons_buffer));
-									ASSERT(+type - +region_start == tm.window_buttons_count);
-									tm.window_buttons_buffer[tm.window_buttons_count] = button;
-									tm.window_buttons_count += 1;
-								};
+							WindowType clicked_window_type = static_cast<WindowType>(+WindowType::TYPE_START + it_index);
 
-							tm.window_type          = clicked_window_type;
-							tm.window_velocity      = { 0.0f, 0.0f };
-							tm.window_buttons_count = 0;
-
-							switch (clicked_window_type)
+							if (clicked_window_type == tm.window_type)
 							{
-								case WindowType::credits:
+								tm.window_type = WindowType::null;
+							}
+							else
+							{
+								lambda create_button =
+									[&](WindowButtonType region_start, WindowButtonType type, WindowButton button)
+									{
+										ASSERT(tm.window_buttons_count < ARRAY_CAPACITY(tm.window_buttons_buffer));
+										ASSERT(+type - +region_start == tm.window_buttons_count);
+										tm.window_buttons_buffer[tm.window_buttons_count] = button;
+										tm.window_buttons_count += 1;
+									};
+
+								tm.window_type          = clicked_window_type;
+								tm.window_velocity      = { 0.0f, 0.0f };
+								tm.window_buttons_count = 0;
+
+								switch (clicked_window_type)
 								{
-									tm.window_dimensions = { 250.0f, 300.0f };
-								} break;
+									case WindowType::credits:
+									{
+										tm.window_dimensions = { 250.0f, 300.0f };
+									} break;
 
-								case WindowType::antihome_program:
-								{
-									tm.window_dimensions = { 275.0f, 250.0f };
+									case WindowType::antihome_program:
+									{
+										tm.window_dimensions = { 275.0f, 250.0f };
 
-									create_button(WindowButtonType::ANTIHOME_PROGRAM_START, WindowButtonType::antihome_program_lure, { "Lure", monochrome(1.0f), { 0.8f, 0.2f, 0.2f }, { tm.window_dimensions.x * 0.5f, tm.window_dimensions.y * 0.25f }, { 50.0f, 25.0f } });
-								} break;
+										create_button(WindowButtonType::ANTIHOME_PROGRAM_START, WindowButtonType::antihome_program_lure, { "Lure", monochrome(1.0f), { 0.8f, 0.2f, 0.2f }, { tm.window_dimensions.x * 0.5f, tm.window_dimensions.y * 0.25f }, { 50.0f, 25.0f } });
+									} break;
 
-								case WindowType::power:
-								{
-									tm.window_dimensions = { 200.0f, 100.0f };
+									case WindowType::power:
+									{
+										tm.window_dimensions = { 200.0f, 100.0f };
 
-									create_button(WindowButtonType::POWER_START, WindowButtonType::power_no , { "No" , monochrome(1.0f), monochrome(0.5f), { tm.window_dimensions.x * 0.75f, tm.window_dimensions.y * 0.25f }, { 50.0f, 25.0f } });
-									create_button(WindowButtonType::POWER_START, WindowButtonType::power_yes, { "Yes", monochrome(1.0f), monochrome(0.5f), { tm.window_dimensions.x * 0.25f, tm.window_dimensions.y * 0.25f }, { 50.0f, 25.0f } });
-								} break;
+										create_button(WindowButtonType::POWER_START, WindowButtonType::power_no , { "No" , monochrome(1.0f), monochrome(0.5f), { tm.window_dimensions.x * 0.75f, tm.window_dimensions.y * 0.25f }, { 50.0f, 25.0f } });
+										create_button(WindowButtonType::POWER_START, WindowButtonType::power_yes, { "Yes", monochrome(1.0f), monochrome(0.5f), { tm.window_dimensions.x * 0.25f, tm.window_dimensions.y * 0.25f }, { 50.0f, 25.0f } });
+									} break;
+								}
+
+								tm.window_position = (DISPLAY_RES - tm.window_dimensions) / 2.0f;
 							}
 
-							tm.window_position = (DISPLAY_RES - tm.window_dimensions) / 2.0f;
+							break;
 						}
 					}
 				}
@@ -2997,26 +2995,26 @@ extern "C" PROTOTYPE_RENDER(render)
 
 			render_texture(platform->renderer, tm.texture.desktop, { 0.0f, 0.0f }, DISPLAY_RES + vf2 { 0.0f, -COMPUTER_TASKBAR_HEIGHT });
 
-			lambda draw_icon =
-				[&](SDL_Texture* texture, vf2 position, strlit name)
+			FOR_ELEMS(it, WINDOW_ICON_DATA)
+			{
+				if (it_index != +WindowType::power - +WindowType::TYPE_START)
 				{
-					render_texture(platform->renderer, texture, { position.x, DISPLAY_RES.y - COMPUTER_ICON_DIM - position.y }, { COMPUTER_ICON_DIM, COMPUTER_ICON_DIM });
+					render_texture(platform->renderer, tm.texture.icons[it_index], { it->position.x, DISPLAY_RES.y - it->dimensions.y - it->position.y }, it->dimensions);
+
 					render_text
 					(
 						platform->renderer,
 						state->font.major,
-						{ position.x + COMPUTER_ICON_DIM / 2.0f, DISPLAY_RES.y - position.y },
+						{ it->position.x + it->dimensions.x / 2.0f, DISPLAY_RES.y - it->position.y },
 						-0.75f,
 						FC_ALIGN_CENTER,
 						0.5f,
 						{ 1.0f, 1.0f, 1.0f, 1.0f },
 						"%s",
-						name
+						it->name
 					);
-				};
-
-			draw_icon(tm.texture.text_file       , vxx(COMPUTER_CREDITS_POSITION         ), "credits.txt");
-			draw_icon(tm.texture.antihome_program, vxx(COMPUTER_ANTIHOME_PROGRAM_POSITION), "Antihome");
+				}
+			}
 
 			if (+tm.window_type)
 			{
@@ -3122,9 +3120,9 @@ extern "C" PROTOTYPE_RENDER(render)
 			render_texture
 			(
 				platform->renderer,
-				tm.texture.power_button,
-				{ 0.0f, static_cast<f32>(DISPLAY_RES.y - COMPUTER_TASKBAR_HEIGHT) },
-				{ COMPUTER_TASKBAR_HEIGHT, COMPUTER_TASKBAR_HEIGHT }
+				tm.texture.icons[+WindowType::power - +WindowType::TYPE_START],
+				{ WINDOW_ICON_DATA[+WindowType::power - +WindowType::TYPE_START].position.x, DISPLAY_RES.y - WINDOW_ICON_DATA[+WindowType::power - +WindowType::TYPE_START].dimensions.y - WINDOW_ICON_DATA[+WindowType::power - +WindowType::TYPE_START].position.y },
+				WINDOW_ICON_DATA[+WindowType::power - +WindowType::TYPE_START].dimensions
 			);
 
 			render_texture
