@@ -328,6 +328,7 @@ struct State
 		vf2          cursor_velocity;
 		vf2          cursor;
 		bool32       cursor_dragging_window;
+		vf2          cursor_rel_holding_position;
 		struct
 		{
 			vf2 position;
@@ -1360,28 +1361,12 @@ extern "C" PROTOTYPE_UPDATE(update)
 		{
 			aliasing tm = state->title_menu;
 
-			// @TODO@ Make window and cursor stop together.
-			tm.cursor_velocity  = dampen(tm.cursor_velocity, 0.8f * platform->cursor_delta / SECONDS_PER_UPDATE, 64.0f, SECONDS_PER_UPDATE);
-			tm.cursor          += tm.cursor_velocity * SECONDS_PER_UPDATE;
-
-			constexpr f32 CURSOR_PADDING = 2.0f;
-			if (tm.cursor.x < CURSOR_PADDING || tm.cursor.x > DISPLAY_RES.x - CURSOR_PADDING)
-			{
-				tm.cursor_velocity.x = 0.0f;
-				tm.cursor.x          = clamp(tm.cursor.x, CURSOR_PADDING, static_cast<f32>(DISPLAY_RES.x - CURSOR_PADDING));
-			}
-
-			if (tm.cursor.y < CURSOR_PADDING || tm.cursor.y > DISPLAY_RES.y - CURSOR_PADDING)
-			{
-				tm.cursor_velocity.y = 0.0f;
-				tm.cursor.y          = clamp(tm.cursor.y, CURSOR_PADDING, static_cast<f32>(DISPLAY_RES.y - CURSOR_PADDING));
-			}
-
 			if (PRESSED(Input::left_mouse))
 			{
 				if (tm.window_type != WindowType::null && in_rect(tm.cursor, tm.window_position + vf2 { 0.0f, tm.window_dimensions.y }, { tm.window_dimensions.x - COMPUTER_TITLE_BAR_HEIGHT, COMPUTER_TITLE_BAR_HEIGHT }))
 				{
-					tm.cursor_dragging_window = true;
+					tm.cursor_dragging_window      = true;
+					tm.cursor_rel_holding_position = tm.window_position - tm.cursor;
 				}
 				else if (tm.window_type != WindowType::null && in_rect(tm.cursor, tm.window_position + tm.window_dimensions + vf2 { -COMPUTER_TITLE_BAR_HEIGHT, 0.0f }, { COMPUTER_TITLE_BAR_HEIGHT, COMPUTER_TITLE_BAR_HEIGHT }))
 				{
@@ -1736,29 +1721,53 @@ extern "C" PROTOTYPE_UPDATE(update)
 				tm.cursor_dragging_window = false;
 			}
 
+			tm.cursor_velocity  = dampen(tm.cursor_velocity, 0.8f * platform->cursor_delta / SECONDS_PER_UPDATE, 64.0f, SECONDS_PER_UPDATE);
+			tm.cursor          += tm.cursor_velocity * SECONDS_PER_UPDATE;
+
+			constexpr f32 CURSOR_PADDING = 2.0f;
+			vf2 min_region = vx2(CURSOR_PADDING);
+			vf2 max_region = DISPLAY_RES - vx2(CURSOR_PADDING);
+
+			if (tm.cursor_dragging_window)
+			{
+				min_region = { max(min_region.x, -tm.cursor_rel_holding_position.x - tm.window_dimensions.x + 2.0f * COMPUTER_TITLE_BAR_HEIGHT), max(min_region.y, COMPUTER_TASKBAR_HEIGHT - tm.cursor_rel_holding_position.y - tm.window_dimensions.y) };
+				max_region = { min(max_region.x, DISPLAY_RES.x - tm.cursor_rel_holding_position.x - COMPUTER_TITLE_BAR_HEIGHT), min(max_region.y, DISPLAY_RES.y - tm.cursor_rel_holding_position.y - tm.window_dimensions.y - COMPUTER_TITLE_BAR_HEIGHT) };
+			}
+
+			if (tm.cursor.x < min_region.x || tm.cursor.x > max_region.x)
+			{
+				tm.cursor_velocity.x = 0.0f;
+				tm.cursor.x          = clamp(tm.cursor.x, min_region.x, max_region.x);
+			}
+			if (tm.cursor.y < min_region.y || tm.cursor.y > max_region.y)
+			{
+				tm.cursor_velocity.y = 0.0f;
+				tm.cursor.y          = clamp(tm.cursor.y, min_region.y, max_region.y);
+			}
+
 			if (tm.window_type != WindowType::null)
 			{
 				if (tm.cursor_dragging_window)
 				{
 					tm.window_velocity = tm.cursor_velocity;
+					tm.window_position = tm.cursor + tm.cursor_rel_holding_position;
 				}
 				else
 				{
-					tm.window_velocity = dampen(tm.window_velocity, { 0.0f, 0.0f }, 32.0f, SECONDS_PER_UPDATE);
-				}
+					tm.window_velocity  = dampen(tm.window_velocity, { 0.0f, 0.0f }, 32.0f, SECONDS_PER_UPDATE);
+					tm.window_position += tm.window_velocity * SECONDS_PER_UPDATE;
 
-				tm.window_position += tm.window_velocity * SECONDS_PER_UPDATE;
+					if (tm.window_position.x < 2.0f * COMPUTER_TITLE_BAR_HEIGHT - tm.window_dimensions.x || tm.window_position.x > DISPLAY_RES.x - COMPUTER_TITLE_BAR_HEIGHT)
+					{
+						tm.window_position.x = clamp(tm.window_position.x, 2.0f * COMPUTER_TITLE_BAR_HEIGHT - tm.window_dimensions.x, static_cast<f32>(DISPLAY_RES.x - COMPUTER_TITLE_BAR_HEIGHT));
+						tm.window_velocity.x = 0.0f;
+					}
 
-				if (tm.window_position.x < 2.0f * COMPUTER_TITLE_BAR_HEIGHT - tm.window_dimensions.x || tm.window_position.x > DISPLAY_RES.x - COMPUTER_TITLE_BAR_HEIGHT)
-				{
-					tm.window_position.x = clamp(tm.window_position.x, 2.0f * COMPUTER_TITLE_BAR_HEIGHT - tm.window_dimensions.x, static_cast<f32>(DISPLAY_RES.x - COMPUTER_TITLE_BAR_HEIGHT));
-					tm.window_velocity.x = 0.0f;
-				}
-
-				if (tm.window_position.y < COMPUTER_TASKBAR_HEIGHT - tm.window_dimensions.y || tm.window_position.y > DISPLAY_RES.y - COMPUTER_TITLE_BAR_HEIGHT - tm.window_dimensions.y)
-				{
-					tm.window_position.y = clamp(tm.window_position.y, COMPUTER_TASKBAR_HEIGHT - tm.window_dimensions.y, DISPLAY_RES.y - COMPUTER_TITLE_BAR_HEIGHT - tm.window_dimensions.y);
-					tm.window_velocity.y = 0.0f;
+					if (tm.window_position.y < COMPUTER_TASKBAR_HEIGHT - tm.window_dimensions.y || tm.window_position.y > DISPLAY_RES.y - COMPUTER_TITLE_BAR_HEIGHT - tm.window_dimensions.y)
+					{
+						tm.window_position.y = clamp(tm.window_position.y, COMPUTER_TASKBAR_HEIGHT - tm.window_dimensions.y, DISPLAY_RES.y - COMPUTER_TITLE_BAR_HEIGHT - tm.window_dimensions.y);
+						tm.window_velocity.y = 0.0f;
+					}
 				}
 			}
 		} break;
