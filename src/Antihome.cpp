@@ -1,9 +1,3 @@
-/* @TODO@
-	* Better input.
-	* Handle disconnected initial and updated values.
-	* Handle different resolutions.
-*/
-
 // @NOTE@ Credits
 // "A Fast Voxel Traversal Algorithm for Ray Tracing" https://www.flipcode.com/archives/A%20faster%20voxel%20traversal%20algorithm%20for%20ray%20tracing.pdf
 // "How to check if two given line segments intersect?" https://www.geeksforgeeks.org/check-if-two-given-line-segments-intersect/, http://www.dcs.gla.ac.uk/~pat/52233/slides/Geometry1x1.pdf
@@ -230,7 +224,7 @@ global struct { vf2 position; vf2 dimensions; strlit name; strlit img_file_path;
 		{ { 0.0f, 0.0f                    }, vxx(vx2(COMPUTER_TASKBAR_HEIGHT)), 0         , DATA_DIR "computer/terminal_power_button.png" }
 	};
 
-enum_loose (WindowButtonType, i8)
+enum_loose (WindowButtonFamily, i8)
 {
 	enum_start_region(CREDITS)
 	enum_end_region(CREDITS)
@@ -248,7 +242,7 @@ enum_loose (WindowButtonType, i8)
 	enum_end_region(POWER)
 };
 
-enum_loose (WindowSliderType, i8)
+enum_loose (WindowSliderFamily, i8)
 {
 	null,
 
@@ -291,25 +285,25 @@ global constexpr struct
 	{
 		{
 			{ 250.0f, 300.0f },
-			+WindowButtonType::CREDITS_COUNT,
+			+WindowButtonFamily::CREDITS_COUNT,
 			{},
-			+WindowSliderType::CREDITS_COUNT,
+			+WindowSliderFamily::CREDITS_COUNT,
 			{}
 		},
 		{
 			{ 275.0f, 250.0f },
-			+WindowButtonType::ANTIHOME_PROGRAM_COUNT,
+			+WindowButtonFamily::ANTIHOME_PROGRAM_COUNT,
 			{
 				{ "Lure", { 0.8f, 0.2f, 0.2f }, { 0.5f, 0.33f }, { 50.0f, 25.0f } }
 			},
-			+WindowSliderType::ANTIHOME_PROGRAM_COUNT,
+			+WindowSliderFamily::ANTIHOME_PROGRAM_COUNT,
 			{}
 		},
 		{
 			{ 500.0f, 350.0f },
-			+WindowButtonType::SETTINGS_COUNT,
+			+WindowButtonFamily::SETTINGS_COUNT,
 			{},
-			+WindowSliderType::SETTINGS_COUNT,
+			+WindowSliderFamily::SETTINGS_COUNT,
 			{
 				{ "Master volume", 0.0f , 1.00f, { 0.4f, 0.75f }, 0.5f },
 				{ "Brightness"   , 0.25f, 1.25f, { 0.4f, 0.60f }, 0.5f }
@@ -317,12 +311,12 @@ global constexpr struct
 		},
 		{
 			{ 200.0f, 100.0f },
-			+WindowButtonType::POWER_COUNT,
+			+WindowButtonFamily::POWER_COUNT,
 			{
 				{ "No" , { 0.75f, 0.25f }, { 50.0f, 25.0f } },
 				{ "Yes", { 0.25f, 0.25f }, { 50.0f, 25.0f } }
 			},
-			+WindowSliderType::POWER_COUNT,
+			+WindowSliderFamily::POWER_COUNT,
 			{}
 		}
 	};
@@ -388,7 +382,7 @@ struct State
 			f32 brightness;
 		} settings;
 
-		f32 settings_slider_values[WindowSliderType::SETTINGS_COUNT];
+		f32 settings_slider_values[WindowSliderFamily::SETTINGS_COUNT];
 
 		static_assert(sizeof(settings_slider_values) == sizeof(settings));
 	};
@@ -422,7 +416,7 @@ struct State
 		vf2              cursor;
 		bool32           cursor_dragging_window;
 		vf2              cursor_rel_holding_position;
-		WindowSliderType cursor_dragging_slider;
+		WindowSliderFamily cursor_dragging_slider;
 		WindowType       window_type;
 		vf2              window_velocity;
 		vf2              window_position;
@@ -516,6 +510,7 @@ struct State
 				Mix_Chunk* panel_open;
 				Mix_Chunk* panel_close;
 				Mix_Chunk* generator;
+				Mix_Chunk* shock;
 				Mix_Chunk* heartbeats   [2];
 				Mix_Chunk* walk_steps   [ARRAY_CAPACITY(WALK_STEP_WAV_FILE_PATHS)];
 				Mix_Chunk* run_steps    [ARRAY_CAPACITY(RUN_STEP_WAV_FILE_PATHS)];
@@ -640,6 +635,7 @@ struct State
 		vf2 night_vision_goggles_interpolated_ray_to_door;
 		f32 interpolated_eye_drops_activation;
 		f32 eye_drops_activation;
+		f32 flash_stun_activation;
 	} game;
 
 	struct
@@ -885,7 +881,6 @@ internal vf2 ray_to_closest(vf2 position, vf2 target)
 
 internal vf2 rng_open_position(State* state, vi2 coordinates)
 {
-	// @TODO@ Clean up?
 	constexpr f32 SPAWN_PADDING = 0.1f;
 
 	vf2 rng2 = { rng(&state->seed), rng(&state->seed) };
@@ -1031,7 +1026,6 @@ internal vf2 move(State* state, vf2 position, vf2 displacement)
 		data.displacement = { NAN, NAN };
 		data.normal       = { NAN, NAN };
 
-		// @TODO@ Make this smarter.
 		FOR_RANGE(y, static_cast<i32>(floorf(position.y / WALL_SPACING) + min(ceilf(current_displacement.y / WALL_SPACING), 0.0f) - 2.0f), static_cast<i32>(floorf(position.y / WALL_SPACING) + max(floor(current_displacement.y / WALL_SPACING), 0.0f) + 2.0f))
 		{
 			FOR_RANGE(x, static_cast<i32>(floorf(position.x / WALL_SPACING) + min(ceilf(current_displacement.x / WALL_SPACING), 0.0f) - 2.0f), static_cast<i32>(floorf(position.x / WALL_SPACING) + max(floor(current_displacement.x / WALL_SPACING), 0.0f) + 2.0f))
@@ -1292,6 +1286,7 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 			state->game.audio.panel_open             = Mix_LoadWAV(DATA_DIR "audio/panel_open.wav");
 			state->game.audio.panel_close            = Mix_LoadWAV(DATA_DIR "audio/panel_close.wav");
 			state->game.audio.generator              = Mix_LoadWAV(DATA_DIR "audio/generator.wav");
+			state->game.audio.shock                  = Mix_LoadWAV(DATA_DIR "audio/shock.wav");
 			state->game.audio.heartbeats[0]          = Mix_LoadWAV(DATA_DIR "audio/heartbeat_0.wav");
 			state->game.audio.heartbeats[1]          = Mix_LoadWAV(DATA_DIR "audio/heartbeat_1.wav");
 			FOR_ELEMS(it, state->game.audio.walk_steps)
@@ -1372,6 +1367,8 @@ extern "C" PROTOTYPE_INITIALIZE(initialize)
 
 	*state = {};
 
+	state->seed = 3;
+
 	state->context_arena.size = static_cast<memsize>((platform->memory_capacity - sizeof(State)) * 0.75f);
 	state->context_arena.base = platform->memory + sizeof(State);
 	state->context_arena.used = 0;
@@ -1427,8 +1424,8 @@ extern "C" PROTOTYPE_BOOT_DOWN(boot_down)
 	State* state = reinterpret_cast<State*>(platform->memory);
 
 	FOR_ELEMS(it, state->textures) { SDL_DestroyTexture(*it); }
-	FOR_ELEMS(it, state->fonts   ) { FC_FreeFont(*it);        }
 
+	FOR_ELEMS(it, state->fonts) { FC_FreeFont(*it); }
 	boot_down_state(state);
 }
 
@@ -1484,9 +1481,9 @@ extern "C" PROTOTYPE_UPDATE(update)
 								{
 									case WindowType::antihome_program:
 									{
-										switch (+WindowButtonType::ANTIHOME_PROGRAM_START + +button_index)
+										switch (+WindowButtonFamily::ANTIHOME_PROGRAM_START + +button_index)
 										{
-											case WindowButtonType::antihome_program_lure:
+											case WindowButtonFamily::antihome_program_lure:
 											{
 												boot_down_state(state);
 												state->context_arena.used = 0;
@@ -1590,7 +1587,6 @@ extern "C" PROTOTYPE_UPDATE(update)
 													}
 												}
 
-												// @TODO@ More robustness.
 												{
 													memory_arena_checkpoint(&state->transient_arena);
 
@@ -1743,14 +1739,14 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 									case WindowType::power:
 									{
-										switch (+WindowButtonType::POWER_START + +button_index)
+										switch (+WindowButtonFamily::POWER_START + +button_index)
 										{
-											case WindowButtonType::power_no:
+											case WindowButtonFamily::power_no:
 											{
 												tm.window_type = WindowType::null;
 											} break;
 
-											case WindowButtonType::power_yes:
+											case WindowButtonFamily::power_yes:
 											{
 												return UpdateCode::terminate;
 											} break;
@@ -1766,7 +1762,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 							if (norm(tm.cursor - tm.window_position - hadamard_multiply(it->start_uv_position + vf2 { it->u_length * (state->settings_slider_values[it_index] - it->min_value) / (it->max_value - it->min_value), 0.0f }, window_data.dimensions)) < COMPUTER_SLIDER_KNOB_RADIUS)
 							{
-								tm.cursor_dragging_slider = static_cast<WindowSliderType>(+WindowSliderType::SETTINGS_START + it_index);
+								tm.cursor_dragging_slider = static_cast<WindowSliderFamily>(+WindowSliderFamily::SETTINGS_START + it_index);
 							}
 						}
 					}
@@ -1804,7 +1800,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 			else if (RELEASED(Input::left_mouse))
 			{
 				tm.cursor_dragging_window = false;
-				tm.cursor_dragging_slider = WindowSliderType::null;
+				tm.cursor_dragging_slider = WindowSliderFamily::null;
 			}
 
 			tm.cursor_velocity  = dampen(tm.cursor_velocity, 0.8f * platform->cursor_delta / SECONDS_PER_UPDATE, 64.0f, SECONDS_PER_UPDATE);
@@ -1859,13 +1855,13 @@ extern "C" PROTOTYPE_UPDATE(update)
 					}
 				}
 
-				if (tm.cursor_dragging_slider != WindowSliderType::null)
+				if (tm.cursor_dragging_slider != WindowSliderFamily::null)
 				{
-					ASSERT(IN_RANGE(+tm.cursor_dragging_slider, +WindowSliderType::SETTINGS_START, +WindowSliderType::SETTINGS_END));
+					ASSERT(IN_RANGE(+tm.cursor_dragging_slider, +WindowSliderFamily::SETTINGS_START, +WindowSliderFamily::SETTINGS_END));
 
-					aliasing slider = window_data.slider_buffer[+tm.cursor_dragging_slider - +WindowSliderType::SETTINGS_START];
+					aliasing slider = window_data.slider_buffer[+tm.cursor_dragging_slider - +WindowSliderFamily::SETTINGS_START];
 
-					state->settings_slider_values[+tm.cursor_dragging_slider - +WindowSliderType::SETTINGS_START] =
+					state->settings_slider_values[+tm.cursor_dragging_slider - +WindowSliderFamily::SETTINGS_START] =
 						lerp
 						(
 							slider.min_value,
@@ -1885,16 +1881,16 @@ extern "C" PROTOTYPE_UPDATE(update)
 		{
 			DEBUG_once // @TEMP@
 			{
-				//state->game.lucia_position.xy = get_position_of_wall_side(state->game.door_wall_side, 1.0f);
-				state->game.lucia_position.xy = get_position_of_wall_side(state->game.circuit_breaker_wall_side, 1.0f);
+				state->game.lucia_position.xy = get_position_of_wall_side(state->game.door_wall_side, 1.0f);
+				//state->game.lucia_position.xy = get_position_of_wall_side(state->game.circuit_breaker_wall_side, 1.0f);
 				//state->game.lucia_position = { 64.637268f, 26.6f, 1.3239026f };
 				//state->game.lucia_angle    = 5.3498487f;
 				//state->game.monster_position = { 66.295441f, 25.49999f, 1.2878139f };
 				//state->game.monster_normal   = { -0.83331096f, 0.55280459f };
 				//state->game.hud.inventory.array[0][0].type = ItemType::night_vision_goggles;
 				//state->game.hud.inventory.array[0][0].night_vision_goggles.power = 1.0f;
-				//state->game.hud.inventory.array[0][1].type = ItemType::eye_drops;
-				//state->game.hud.inventory.array[0][2].type = ItemType::eye_drops;
+				state->game.hud.inventory.array[0][1].type = ItemType::flashlight;
+				state->game.hud.inventory.array[0][2].type = ItemType::military_grade_batteries;
 			}
 
 			// @TEMP@
@@ -2148,11 +2144,6 @@ extern "C" PROTOTYPE_UPDATE(update)
 																state->game.holding.flashlight = &dropped_on;
 															}
 														}
-														else
-														{
-															state->game.notification_message = "\"I'm not sure how these fit.\"";
-															state->game.notification_keytime = 1.0f;
-														}
 													}
 
 													if (!combined)
@@ -2175,10 +2166,24 @@ extern "C" PROTOTYPE_UPDATE(update)
 																state->game.holding.night_vision_goggles = &dropped_on;
 															}
 														}
-														else
+													}
+
+													if (!combined)
+													{
+														Item* military_grade_batteries;
+														Item* flashlight;
+														if (check_combine(&military_grade_batteries, ItemType::military_grade_batteries, &flashlight, ItemType::flashlight, &dropped_on, state->game.hud.inventory.selected_item))
 														{
-															state->game.notification_message = "\"I'm not sure how these fit.\"";
+															combined = true;
+
+															Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.shock, 0);
+															state->game.notification_message = "(You fried your fingers trying to put military grade batteries into a cheap dollar store flashlight.)";
 															state->game.notification_keytime = 1.0f;
+
+															state->game.hud.type = HudType::null;
+															state->game.lucia_health          -= 0.1f;
+															state->game.blur_value            += 0.5f;
+															state->game.flash_stun_activation += 1.0f;
 														}
 													}
 
@@ -2199,6 +2204,11 @@ extern "C" PROTOTYPE_UPDATE(update)
 																break;
 															}
 														}
+													}
+													else
+													{
+														state->game.notification_message = "\"I'm not sure how these fit.\"";
+														state->game.notification_keytime = 1.0f;
 													}
 												}
 											}
@@ -2421,9 +2431,6 @@ extern "C" PROTOTYPE_UPDATE(update)
 						state->game.hud.cursor_velocity = { 0.0f, 0.0f };
 						state->game.hud.cursor          = VIEW_RES / 2.0f;
 
-						state->game.lucia_angle_velocity = dampen(state->game.lucia_angle_velocity, -0.005f * platform->cursor_delta.x / SECONDS_PER_UPDATE, 16.0f, SECONDS_PER_UPDATE);
-						state->game.lucia_angle          = mod(state->game.lucia_angle + state->game.lucia_angle_velocity * SECONDS_PER_UPDATE, TAU);
-
 						lambda hand_on_heuristic =
 							[&](vf2 position)
 							{
@@ -2435,7 +2442,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 								vf2 ray      = ray_to_closest(state->game.lucia_position.xy, position);
 								f32 distance = norm(ray);
 
-								if (distance > 1.5f)
+								if (distance > 2.0f)
 								{
 									return 0.0f;
 								}
@@ -2453,13 +2460,15 @@ extern "C" PROTOTYPE_UPDATE(update)
 						f32 best_heuristic = 0.0f;
 
 						{
-							vf2 door_position = get_position_of_wall_side(state->game.door_wall_side, 0.25f);
-							f32 heuristic     = hand_on_heuristic(door_position);
+							constexpr vf2 DOOR_KNOB = { 0.525f, 0.9f };
+							vf3 door_knob_position = vx3(get_position_of_wall_side(state->game.door_wall_side, 0.25f) + DOOR_KNOB.x * rotate90(state->game.door_wall_side.normal), DOOR_KNOB.y);
+
+							f32 heuristic = hand_on_heuristic(door_knob_position.xy);
 							if (best_heuristic < heuristic)
 							{
 								best_heuristic            = heuristic;
 								state->game.hand_on_state = HandOnState::door;
-								hand_reach_position       = vx3(door_position, WALL_HEIGHT / 2.0f);
+								hand_reach_position       = door_knob_position;
 							}
 						}
 
@@ -2573,6 +2582,17 @@ extern "C" PROTOTYPE_UPDATE(update)
 						}
 					} break;
 				}
+
+				if (state->game.hud.type == HudType::null)
+				{
+					state->game.lucia_angle_velocity = dampen(state->game.lucia_angle_velocity, -0.005f * platform->cursor_delta.x / SECONDS_PER_UPDATE, 16.0f, SECONDS_PER_UPDATE);
+				}
+				else
+				{
+					state->game.lucia_angle_velocity = dampen(state->game.lucia_angle_velocity, 0.0f, 16.0f, SECONDS_PER_UPDATE);
+				}
+
+				state->game.lucia_angle = mod(state->game.lucia_angle + state->game.lucia_angle_velocity * SECONDS_PER_UPDATE, TAU);
 
 				state->game.hud.circuit_breaker.interpolated_voltage_velocity  = dampen(state->game.hud.circuit_breaker.interpolated_voltage_velocity, 32.0f * (state->game.hud.circuit_breaker.active_voltage - state->game.hud.circuit_breaker.interpolated_voltage), 16.0f, SECONDS_PER_UPDATE);
 				state->game.hud.circuit_breaker.interpolated_voltage          += state->game.hud.circuit_breaker.interpolated_voltage_velocity * SECONDS_PER_UPDATE;
@@ -2983,6 +3003,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 			state->game.eye_drops_activation              = max(state->game.eye_drops_activation - SECONDS_PER_UPDATE / 45.0f, 0.0f);
 			state->game.interpolated_eye_drops_activation = dampen(state->game.interpolated_eye_drops_activation, state->game.eye_drops_activation, 4.0f, SECONDS_PER_UPDATE);
+			state->game.flash_stun_activation             = dampen(state->game.flash_stun_activation, 0.0f, 16.0f, SECONDS_PER_UPDATE);
 
 			state->game.blur_value        = max(state->game.blur_value - SECONDS_PER_UPDATE / 8.0f, lerp(0.0f, 0.2f, square(1.0f - state->game.lucia_health)));
 			state->game.interpolated_blur = dampen(state->game.interpolated_blur, state->game.blur_value, 4.0f, SECONDS_PER_UPDATE);
@@ -3376,10 +3397,16 @@ extern "C" PROTOTYPE_RENDER(render)
 									&& (!+ray_casted_wall_side.voxel || distance < wall_distance)
 								)
 								{
-									ray_casted_wall_side.normal = voxel_data->normal * (dot(ray_horizontal, voxel_data->normal) < 0.0f ? 1.0f : -1.0f);
+									ray_casted_wall_side.normal = voxel_data->normal;
 									ray_casted_wall_side.voxel  = voxel_data->voxel;
 									wall_distance               = distance;
 									wall_portion                = portion;
+
+									if (dot(ray_horizontal, voxel_data->normal) > 0.0f)
+									{
+										ray_casted_wall_side.normal *= -1.0f;
+										wall_portion                 = 1.0f - wall_portion;
+									}
 								}
 							}
 						}
@@ -3430,11 +3457,6 @@ extern "C" PROTOTYPE_RENDER(render)
 										rotate90(ray_casted_wall_side.normal),
 										normalize(ray_to_closest(get_position_of_wall_side(ray_casted_wall_side, 0.0f), get_position_of_wall_side(state->game.door_wall_side, 0.0f)))
 									);
-
-								if (dot(ray_horizontal, get_wall_voxel_data(ray_casted_wall_side.voxel)->normal) > 0.0f)
-								{
-									direction = -direction;
-								}
 
 								constexpr f32 THRESHOLD = 0.7f;
 
@@ -3625,7 +3647,6 @@ extern "C" PROTOTYPE_RENDER(render)
 								);
 						}
 
-						// @TODO@ Lerp is slow!
 						*current_view_pixel =
 							pack_color
 							(
@@ -3683,7 +3704,6 @@ extern "C" PROTOTYPE_RENDER(render)
 								uv
 							);
 
-						// @TODO@ Lerp is slow!
 						*current_view_pixel =
 							pack_color
 							(
@@ -3722,7 +3742,7 @@ extern "C" PROTOTYPE_RENDER(render)
 			__m128 m_night_vision_goggles_r                 = _mm_set_ps1(0.0f);
 			__m128 m_night_vision_goggles_g                 = _mm_set_ps1(2.5f);
 			__m128 m_night_vision_goggles_b                 = _mm_set_ps1(0.0f);
-			__m128 m_brightness                             = _mm_set_ps1(state->settings.brightness);
+			__m128 m_brightness                             = _mm_set_ps1(state->settings.brightness + 128.0f * square(state->game.flash_stun_activation));
 
 			FOR_RANGE(y, VIEW_RES.y)
 			{
@@ -4013,12 +4033,12 @@ extern "C" PROTOTYPE_RENDER(render)
 
 			if (state->game.notification_keytime)
 			{
-				render_text
+				render_boxed_text
 				(
 					platform->renderer,
 					state->font.minor,
-					{ DISPLAY_RES.x * 0.5f, DISPLAY_RES.y * 0.6f },
-					0.5f,
+					{ DISPLAY_RES.x * 0.10f, DISPLAY_RES.y * 0.6f },
+					{ DISPLAY_RES.x * 0.80f, DISPLAY_RES.y * 0.9f },
 					FC_ALIGN_CENTER,
 					1.0f,
 					{ 1.0f, 1.0f, 1.0f, sinf(TAU / 4.0f * square(state->game.notification_keytime)) },
