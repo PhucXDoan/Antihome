@@ -91,6 +91,7 @@ internal constexpr f32 dot(vf2 u, vf2 v) { return u.x * v.x + u.y * v.y;        
 
 internal constexpr vf3 cross(vf3 u, vf3 v) { return { u.y * v.z - u.z * v.y, u.z * v.x - u.x * v.z, u.x * v.y - u.y * v.x }; }
 
+internal constexpr vf2 hadamard_multiply(vf2 u, vf2 v) { return { u.x * v.x, u.y * v.y                       }; }
 internal constexpr vf3 hadamard_multiply(vf3 u, vf3 v) { return { u.x * v.x, u.y * v.y, u.z * v.z            }; }
 internal constexpr vf4 hadamard_multiply(vf4 u, vf4 v) { return { u.x * v.x, u.y * v.y, u.z * v.z, u.w * v.w }; }
 
@@ -716,7 +717,7 @@ internal void render_texture(SDL_Renderer* renderer, SDL_Texture* texture, vf2 p
 }
 
 template <typename... ARGUMENTS>
-internal void render_text(SDL_Renderer* renderer, FC_Font* font, vf2 coordinates, f32 baseline_offset, FC_AlignEnum alignment, f32 scalar, vf4 rgba, strlit fstr, ARGUMENTS... arguments)
+internal void render_text(SDL_Renderer* renderer, FC_Font* font, vf2 coordinates, f32 baseline_offset, FC_AlignEnum alignment, f32 scalar, vf4 color, strlit fstr, ARGUMENTS... arguments)
 {
 	FC_DrawEffect
 	(
@@ -730,10 +731,10 @@ internal void render_text(SDL_Renderer* renderer, FC_Font* font, vf2 coordinates
 			FC_MakeScale(scalar, scalar),
 			FC_MakeColor
 			(
-				static_cast<u8>(rgba.x * 255.0f),
-				static_cast<u8>(rgba.y * 255.0f),
-				static_cast<u8>(rgba.z * 255.0f),
-				static_cast<u8>(rgba.w * 255.0f)
+				static_cast<u8>(color.x * 255.0f),
+				static_cast<u8>(color.y * 255.0f),
+				static_cast<u8>(color.z * 255.0f),
+				static_cast<u8>(color.w * 255.0f)
 			)
 		),
 		fstr,
@@ -742,7 +743,13 @@ internal void render_text(SDL_Renderer* renderer, FC_Font* font, vf2 coordinates
 }
 
 template <typename... ARGUMENTS>
-internal void render_boxed_text(SDL_Renderer* renderer, FC_Font* font, vf2 coordinates, vf2 dimensions, FC_AlignEnum alignment, f32 scalar, vf4 rgba, strlit fstr, ARGUMENTS... arguments)
+internal void render_text(SDL_Renderer* renderer, FC_Font* font, vf2 coordinates, f32 baseline_offset, FC_AlignEnum alignment, f32 scalar, vf3 color, strlit fstr, ARGUMENTS... arguments)
+{
+	render_text(renderer, font, coordinates, baseline_offset, alignment, scalar, vx4(color, 1.0f), fstr, arguments...);
+}
+
+template <typename... ARGUMENTS>
+internal void render_boxed_text(SDL_Renderer* renderer, FC_Font* font, vf2 coordinates, vf2 dimensions, FC_AlignEnum alignment, f32 scalar, vf4 color, strlit fstr, ARGUMENTS... arguments)
 {
 	FC_DrawBoxEffect
 	(
@@ -755,15 +762,21 @@ internal void render_boxed_text(SDL_Renderer* renderer, FC_Font* font, vf2 coord
 			FC_MakeScale(scalar, scalar),
 			FC_MakeColor
 			(
-				static_cast<u8>(rgba.x * 255.0f),
-				static_cast<u8>(rgba.y * 255.0f),
-				static_cast<u8>(rgba.z * 255.0f),
-				static_cast<u8>(rgba.w * 255.0f)
+				static_cast<u8>(color.x * 255.0f),
+				static_cast<u8>(color.y * 255.0f),
+				static_cast<u8>(color.z * 255.0f),
+				static_cast<u8>(color.w * 255.0f)
 			)
 		),
 		fstr,
 		arguments...
 	);
+}
+
+template <typename... ARGUMENTS>
+internal void render_boxed_text(SDL_Renderer* renderer, FC_Font* font, vf2 coordinates, vf2 dimensions, FC_AlignEnum alignment, f32 scalar, vf3 color, strlit fstr, ARGUMENTS... arguments)
+{
+	render_boxed_text(renderer, font, coordinates, dimensions, alignment, scalar, vx4(color, 1.0f), fstr, arguments)
 }
 
 internal void render_line(SDL_Renderer* renderer, vf2 start, vf2 end)
