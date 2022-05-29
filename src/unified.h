@@ -11,11 +11,12 @@
 #define STATIC_ASSERT(EXPRESSION)
 #endif
 
-#define internal static
-#define persist  static
-#define global   static
-#define aliasing auto&
-#define lambda   const auto
+#define internal    static
+#define persist     static
+#define global      static
+#define precomputed static const
+#define aliasing    auto&
+#define lambda      const auto
 
 #define MACRO_CONCAT__(X, Y)                            X##Y
 #define MACRO_CONCAT_(X, Y)                             MACRO_CONCAT__(X, Y)

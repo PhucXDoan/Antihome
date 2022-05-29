@@ -498,6 +498,7 @@ struct State
 			{
 				Mix_Chunk* drone;
 				Mix_Chunk* drone_low;
+				Mix_Chunk* drone_loud;
 				Mix_Chunk* drone_off;
 				Mix_Chunk* drone_on;
 				Mix_Chunk* blackout;
@@ -509,8 +510,8 @@ struct State
 				Mix_Chunk* door_budge;
 				Mix_Chunk* panel_open;
 				Mix_Chunk* panel_close;
-				Mix_Chunk* generator;
 				Mix_Chunk* shock;
+				Mix_Chunk* night_vision_goggles_on;
 				Mix_Chunk* heartbeats   [2];
 				Mix_Chunk* walk_steps   [ARRAY_CAPACITY(WALK_STEP_WAV_FILE_PATHS)];
 				Mix_Chunk* run_steps    [ARRAY_CAPACITY(RUN_STEP_WAV_FILE_PATHS)];
@@ -1015,7 +1016,6 @@ internal Item* spawn_item(State* state, ItemType type = ItemType::null)
 
 internal vf2 move(State* state, vf2 position, vf2 displacement)
 {
-	#if 1
 	vf2 current_position     = position;
 	vf2 current_displacement = displacement;
 	FOR_RANGE(4)
@@ -1075,14 +1075,10 @@ internal vf2 move(State* state, vf2 position, vf2 displacement)
 		}
 	}
 	return current_position;
-	#else
-	return position + displacement;
-	#endif
 }
 
 internal bool32 exists_clear_way(State* state, vf2 position, vf2 goal)
 {
-	#if 1
 	position.x = mod(position.x, MAP_DIM * WALL_SPACING);
 	position.y = mod(position.y, MAP_DIM * WALL_SPACING);
 	goal.x     = mod(goal.x    , MAP_DIM * WALL_SPACING);
@@ -1138,7 +1134,6 @@ internal bool32 exists_clear_way(State* state, vf2 position, vf2 goal)
 			coordinates.y += step.y;
 		}
 	}
-	#endif
 
 	return false;
 }
@@ -1184,7 +1179,11 @@ internal vf3 shader(State* state, vf3 color, Material material, bool32 in_light,
 	{
 		if (material == Material::monster)
 		{
-			fire_light = 0.7f;
+			fire_light = 2.0f;
+		}
+		else if (material == Material::fire)
+		{
+			fire_light = 3.0f;
 		}
 		else
 		{
@@ -1272,23 +1271,24 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 			state->game.texture.circuit_breaker_switches[true ] = IMG_LoadTexture(renderer, DATA_DIR "hud/circuit_breaker_switch_on.png");
 			state->game.texture.circuit_breaker_panel           = IMG_LoadTexture(renderer, DATA_DIR "hud/circuit_breaker_panel.png");
 
-			state->game.audio.drone                  = Mix_LoadWAV(DATA_DIR "audio/drone.wav");
-			state->game.audio.drone_low              = Mix_LoadWAV(DATA_DIR "audio/drone_low.wav");
-			state->game.audio.drone_off              = Mix_LoadWAV(DATA_DIR "audio/drone_off.wav");
-			state->game.audio.drone_on               = Mix_LoadWAV(DATA_DIR "audio/drone_on.wav");
-			state->game.audio.blackout               = Mix_LoadWAV(DATA_DIR "audio/blackout.wav");
-			state->game.audio.eletronical            = Mix_LoadWAV(DATA_DIR "audio/eletronical.wav");
-			state->game.audio.pick_up_paper          = Mix_LoadWAV(DATA_DIR "audio/pick_up_paper.wav");
-			state->game.audio.pick_up_heavy          = Mix_LoadWAV(DATA_DIR "audio/pick_up_heavy.wav");
-			state->game.audio.switch_toggle          = Mix_LoadWAV(DATA_DIR "audio/switch_toggle.wav");
-			state->game.audio.circuit_breaker_switch = Mix_LoadWAV(DATA_DIR "audio/lever_flip.wav");
-			state->game.audio.door_budge             = Mix_LoadWAV(DATA_DIR "audio/door_budge.wav");
-			state->game.audio.panel_open             = Mix_LoadWAV(DATA_DIR "audio/panel_open.wav");
-			state->game.audio.panel_close            = Mix_LoadWAV(DATA_DIR "audio/panel_close.wav");
-			state->game.audio.generator              = Mix_LoadWAV(DATA_DIR "audio/generator.wav");
-			state->game.audio.shock                  = Mix_LoadWAV(DATA_DIR "audio/shock.wav");
-			state->game.audio.heartbeats[0]          = Mix_LoadWAV(DATA_DIR "audio/heartbeat_0.wav");
-			state->game.audio.heartbeats[1]          = Mix_LoadWAV(DATA_DIR "audio/heartbeat_1.wav");
+			state->game.audio.drone                    = Mix_LoadWAV(DATA_DIR "audio/drone.wav");
+			state->game.audio.drone_low                = Mix_LoadWAV(DATA_DIR "audio/drone_low.wav");
+			state->game.audio.drone_loud               = Mix_LoadWAV(DATA_DIR "audio/drone_loud.wav");
+			state->game.audio.drone_off                = Mix_LoadWAV(DATA_DIR "audio/drone_off.wav");
+			state->game.audio.drone_on                 = Mix_LoadWAV(DATA_DIR "audio/drone_on.wav");
+			state->game.audio.blackout                 = Mix_LoadWAV(DATA_DIR "audio/blackout.wav");
+			state->game.audio.eletronical              = Mix_LoadWAV(DATA_DIR "audio/eletronical.wav");
+			state->game.audio.pick_up_paper            = Mix_LoadWAV(DATA_DIR "audio/pick_up_paper.wav");
+			state->game.audio.pick_up_heavy            = Mix_LoadWAV(DATA_DIR "audio/pick_up_heavy.wav");
+			state->game.audio.switch_toggle            = Mix_LoadWAV(DATA_DIR "audio/switch_toggle.wav");
+			state->game.audio.circuit_breaker_switch   = Mix_LoadWAV(DATA_DIR "audio/lever_flip.wav");
+			state->game.audio.door_budge               = Mix_LoadWAV(DATA_DIR "audio/door_budge.wav");
+			state->game.audio.panel_open               = Mix_LoadWAV(DATA_DIR "audio/panel_open.wav");
+			state->game.audio.panel_close              = Mix_LoadWAV(DATA_DIR "audio/panel_close.wav");
+			state->game.audio.shock                    = Mix_LoadWAV(DATA_DIR "audio/shock.wav");
+			state->game.audio.night_vision_goggles_on  = Mix_LoadWAV(DATA_DIR "audio/night_vision_goggles_on.wav");
+			state->game.audio.heartbeats[0]            = Mix_LoadWAV(DATA_DIR "audio/heartbeat_0.wav");
+			state->game.audio.heartbeats[1]            = Mix_LoadWAV(DATA_DIR "audio/heartbeat_1.wav");
 			FOR_ELEMS(it, state->game.audio.walk_steps)
 			{
 				*it = Mix_LoadWAV(WALK_STEP_WAV_FILE_PATHS[it_index]);
@@ -1315,8 +1315,8 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 			Mix_VolumeChunk(state->game.audio.drone_low, 0);
 			Mix_PlayChannel(+AudioChannel::r1, state->game.audio.drone_low, -1);
 
-			Mix_VolumeChunk(state->game.audio.generator, 0);
-			Mix_PlayChannel(+AudioChannel::r2, state->game.audio.generator, -1);
+			Mix_VolumeChunk(state->game.audio.drone_loud, 0);
+			Mix_PlayChannel(+AudioChannel::r2, state->game.audio.drone_loud, -1);
 		} break;
 
 		case StateContext::end:
@@ -1881,14 +1881,15 @@ extern "C" PROTOTYPE_UPDATE(update)
 		{
 			DEBUG_once // @TEMP@
 			{
-				state->game.lucia_position.xy = get_position_of_wall_side(state->game.door_wall_side, 1.0f);
+				//state->game.lucia_position.xy = get_position_of_wall_side(state->game.door_wall_side, 1.0f);
 				//state->game.lucia_position.xy = get_position_of_wall_side(state->game.circuit_breaker_wall_side, 1.0f);
+				state->game.lucia_position.xy = { 1.0f, 1.0f };
 				//state->game.lucia_position = { 64.637268f, 26.6f, 1.3239026f };
 				//state->game.lucia_angle    = 5.3498487f;
 				//state->game.monster_position = { 66.295441f, 25.49999f, 1.2878139f };
 				//state->game.monster_normal   = { -0.83331096f, 0.55280459f };
-				//state->game.hud.inventory.array[0][0].type = ItemType::night_vision_goggles;
-				//state->game.hud.inventory.array[0][0].night_vision_goggles.power = 1.0f;
+				state->game.hud.inventory.array[0][0].type = ItemType::night_vision_goggles;
+				state->game.hud.inventory.array[0][0].night_vision_goggles.power = 1.0f;
 				state->game.hud.inventory.array[0][1].type = ItemType::flashlight;
 				state->game.hud.inventory.array[0][2].type = ItemType::military_grade_batteries;
 			}
@@ -1899,8 +1900,8 @@ extern "C" PROTOTYPE_UPDATE(update)
 			Mix_VolumeChunk(state->game.audio.drone    , static_cast<i32>(MIX_MAX_VOLUME *         state->game.ceiling_lights_keytime  * (1.0f - state->game.exiting_keytime)));
 			Mix_VolumeChunk(state->game.audio.drone_low, static_cast<i32>(MIX_MAX_VOLUME * (1.0f - state->game.ceiling_lights_keytime) * (1.0f - state->game.exiting_keytime)));
 
-			f32 circuit_breaker_volume = 2.0f / (norm(ray_to_closest(state->game.lucia_position.xy, get_position_of_wall_side(state->game.circuit_breaker_wall_side, 0.25f))) + 0.25f);
-			Mix_VolumeChunk(state->game.audio.generator, static_cast<i32>(MIX_MAX_VOLUME * clamp(circuit_breaker_volume, 0.0f, 1.0f)));
+			f32 circuit_breaker_volume = 2.0f / (norm_sq(ray_to_closest(state->game.lucia_position.xy, get_position_of_wall_side(state->game.circuit_breaker_wall_side, 0.25f))) + 0.25f);
+			Mix_VolumeChunk(state->game.audio.drone_loud, static_cast<i32>(MIX_MAX_VOLUME * clamp(circuit_breaker_volume, 0.0f, 1.0f)));
 			Mix_VolumeChunk(state->game.audio.heartbeats[state->game.heartbeat_sfx_index], static_cast<i32>(MIX_MAX_VOLUME * clamp((state->game.heart_bpm - 50.0f) / 80.0f, 0.0f, 1.0f)));
 
 			state->game.hand_on_state     = HandOnState::null;
@@ -2285,13 +2286,15 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 										case ItemType::night_vision_goggles:
 										{
-											// Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.switch_toggle, 0); // @TODO@ Audio
 											if (state->game.hud.inventory.selected_item == state->game.holding.night_vision_goggles)
 											{
+												Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.pick_up_heavy, 0);
 												state->game.holding.night_vision_goggles = 0;
 											}
 											else if (state->game.hud.inventory.selected_item->night_vision_goggles.power)
 											{
+												Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.pick_up_heavy, 0);
+												Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.night_vision_goggles_on, 0);
 												state->game.holding.night_vision_goggles = state->game.hud.inventory.selected_item;
 												state->game.holding.flashlight           = 0;
 											}
@@ -3098,7 +3101,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 				if (state->end.entering_keytime == 1.0f)
 				{
-					if (PRESSED(Input::space))
+					if (PRESSED(Input::space) || PRESSED(Input::left_mouse))
 					{
 						Mix_PlayChannel(+AudioChannel::r2, state->end.audio.shooting, 0);
 						state->end.is_exiting = true;
@@ -3393,7 +3396,7 @@ extern "C" PROTOTYPE_RENDER(render)
 										(ray_casted_wall_side.coordinates + voxel_data->start) * WALL_SPACING,
 										(ray_casted_wall_side.coordinates + voxel_data->end  ) * WALL_SPACING
 									)
-									&& IN_RANGE(portion, 0.0f, 1.0f)
+									&& 0.0f <= portion && portion <= 1.0f
 									&& (!+ray_casted_wall_side.voxel || distance < wall_distance)
 								)
 								{
@@ -3589,11 +3592,16 @@ extern "C" PROTOTYPE_RENDER(render)
 
 				memory_arena_checkpoint(&state->transient_arena);
 
-				scan(Material::fire, get_image_of_frame(&state->game.animated_sprite.fire), { 70.0f, 60.0f, WALL_HEIGHT / 2.0f }, { 1.0f, 0.0f }, { 1.0f, 1.0f });
-
 				if (state->game.monster_timeout == 0.0f)
 				{
 					scan(Material::monster, get_image_of_frame(&state->game.animated_sprite.monster), state->game.monster_position, state->game.monster_normal, { 1.0f, 1.0f });
+
+					constexpr i32 FIRE_COUNT = 3;
+					FOR_RANGE(i, FIRE_COUNT)
+					{
+						vf2 ray = polar(state->time + static_cast<f32>(i) / FIRE_COUNT * TAU);
+						scan(Material::fire, get_image_of_frame(&state->game.animated_sprite.fire), state->game.monster_position + vx3(ray, 0.0f), normalize(ray_to_closest(state->game.monster_position.xy, state->game.lucia_position.xy)), { 1.0f, 1.0f });
+					}
 				}
 
 				if (state->game.hand_on_state != HandOnState::null)
@@ -3682,6 +3690,10 @@ extern "C" PROTOTYPE_RENDER(render)
 							normal   = { 0.0f, 0.0f, 1.0f };
 							mipmap   = &state->game.mipmap.floor;
 							material = Material::floor;
+
+							precomputed f32 FLOOR_DIM = MAP_DIM * WALL_SPACING / roundf(MAP_DIM * WALL_SPACING / 4.0f);
+							uv.x = mod(uv.x / FLOOR_DIM, 1.0f);
+							uv.y = mod(uv.y / FLOOR_DIM, 1.0f);
 						}
 						else
 						{
@@ -3691,10 +3703,11 @@ extern "C" PROTOTYPE_RENDER(render)
 							normal   = { 0.0f, 0.0f, -1.0f };
 							mipmap   = &state->game.mipmap.ceiling;
 							material = Material::ceiling;
-						}
 
-						uv.x = mod(uv.x / 4.0f, 1.0f);
-						uv.y = mod(uv.y / 4.0f, 1.0f);
+							precomputed f32 CEILING_DIM = MAP_DIM * WALL_SPACING / roundf(MAP_DIM * WALL_SPACING / 4.0f);
+							uv.x = mod(uv.x / CEILING_DIM, 1.0f);
+							uv.y = mod(uv.y / CEILING_DIM, 1.0f);
+						}
 
 						vf3 floor_ceiling_color =
 							sample_at
