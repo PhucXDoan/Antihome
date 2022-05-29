@@ -28,7 +28,7 @@ global constexpr f32 WALL_SPACING          = 3.0f;
 global constexpr i32 INVENTORY_DIM         = 30;
 global constexpr i32 INVENTORY_PADDING     = 5;
 global constexpr f32 CREEPY_SOUND_MIN_TIME = 15.0f;
-global constexpr f32 CREEPY_SOUND_MAX_TIME = 90.0f;
+global constexpr f32 CREEPY_SOUND_MAX_TIME = 60.0f;
 
 global constexpr vf2 CIRCUIT_BREAKER_HUD_DIMENSIONS              = { 200.0f, 115.0f };
 global constexpr vf2 CIRCUIT_BREAKER_VOLTAGE_DISPLAY_DIMENSIONS  = { CIRCUIT_BREAKER_HUD_DIMENSIONS.x * 0.1f, CIRCUIT_BREAKER_HUD_DIMENSIONS.y * 0.75f };
@@ -47,9 +47,9 @@ enum_loose (AudioChannel, i8)
 		r0,
 		r1,
 		r2,
-		r3,
 	enum_end_region(RESERVED)
 	enum_start_region(UNRESERVED)
+		_3,
 		_4,
 		_5,
 		_6,
@@ -90,16 +90,31 @@ global constexpr strlit CREEPY_SOUND_WAV_FILE_PATHS[] =
 		DATA_DIR "audio/creepy_sound_4.wav",
 		DATA_DIR "audio/creepy_sound_5.wav",
 		DATA_DIR "audio/creepy_sound_6.wav",
-		DATA_DIR "audio/creepy_sound_7.wav"
+		DATA_DIR "audio/creepy_sound_7.wav",
+		DATA_DIR "audio/creepy_sound_8.wav",
+		DATA_DIR "audio/creepy_sound_9.wav",
+		DATA_DIR "audio/creepy_sound_10.wav",
+		DATA_DIR "audio/creepy_sound_11.wav",
+		DATA_DIR "audio/creepy_sound_12.wav",
+		DATA_DIR "audio/creepy_sound_13.wav",
+		DATA_DIR "audio/creepy_sound_14.wav",
+		DATA_DIR "audio/creepy_sound_15.wav"
 	};
 
 global constexpr struct { f32 min_scalar; f32 max_scalar; strlit file_path; } PAPER_DATA[] =
 	{
-		{ 0.2f, 0.8f, DATA_DIR "papers/terry_entry_0.png" },
-		{ 0.2f, 0.8f, DATA_DIR "papers/terry_entry_1.png" },
-		{ 0.2f, 0.8f, DATA_DIR "papers/terry_entry_2.png" },
-		{ 0.2f, 0.8f, DATA_DIR "papers/terry_entry_3.png" },
-		{ 0.2f, 0.8f, DATA_DIR "papers/terry_entry_4.png" }
+		{ 0.20f, 0.8f, DATA_DIR "papers/terry_entry_0.png" },
+		{ 0.20f, 0.8f, DATA_DIR "papers/terry_entry_1.png" },
+		{ 0.20f, 0.8f, DATA_DIR "papers/terry_entry_2.png" },
+		{ 0.20f, 0.8f, DATA_DIR "papers/terry_entry_3.png" },
+		{ 0.20f, 0.8f, DATA_DIR "papers/terry_entry_4.png" },
+		{ 0.15f, 0.7f, DATA_DIR "papers/he_misses_us.jpg"  }
+	};
+
+global constexpr strlit BLOOD_DROPS[] =
+	{
+		DATA_DIR "blood_drop_0.png",
+		DATA_DIR "blood_drop_1.png"
 	};
 
 enum_loose (ItemType, u8)
@@ -512,6 +527,7 @@ struct State
 				Mix_Chunk* panel_close;
 				Mix_Chunk* shock;
 				Mix_Chunk* night_vision_goggles_on;
+				Mix_Chunk* horror       [2];
 				Mix_Chunk* heartbeats   [2];
 				Mix_Chunk* walk_steps   [ARRAY_CAPACITY(WALK_STEP_WAV_FILE_PATHS)];
 				Mix_Chunk* run_steps    [ARRAY_CAPACITY(RUN_STEP_WAV_FILE_PATHS)];
@@ -561,6 +577,8 @@ struct State
 		PathCoordinatesNode* monster_path;
 		vi2                  monster_path_goal;
 		vf3                  monster_position;
+		bool32               monster_chasing_lucia;
+		f32                  monster_roam_update_keytime;
 		vf2                  monster_velocity;
 		vf2                  monster_normal;
 
@@ -1138,6 +1156,199 @@ internal bool32 exists_clear_way(State* state, vf2 position, vf2 goal)
 	return false;
 }
 
+internal PathCoordinatesNode* path_find(State* state, vi2 start, vi2 end)
+{
+	memory_arena_checkpoint(&state->transient_arena);
+
+	struct PathVertex
+	{
+		bool32 is_set;
+		f32    best_weight;
+		vi2    prev_coordinates;
+	};
+
+	struct PathQueueNode
+	{
+		f32            estimated_length;
+		vi2            prev_coordinates;
+		vi2            coordinates;
+		PathQueueNode* next_node;
+	};
+
+	PathVertex path_vertices[MAP_DIM * 2][MAP_DIM] = {};
+	path_vertices[start.y][start.x].is_set = true;
+
+	PathQueueNode* path_queue = memory_arena_allocate<PathQueueNode>(&state->transient_arena);
+	path_queue->estimated_length = path_distance_function(start, end);
+	path_queue->prev_coordinates = { -1, -1 };
+	path_queue->coordinates      = start;
+	path_queue->next_node        = 0;
+
+	PathQueueNode* available_path_queue_node = 0;
+
+	while (path_queue && path_queue->coordinates != end)
+	{
+		PathQueueNode* head = path_queue;
+		path_queue = path_queue->next_node;
+
+		struct ADJACENT { WallVoxel side; vi2 delta_coordinates; };
+		constexpr ADJACENT HORI[] =
+			{
+				{ WallVoxel::bottom, { -1, -1 } },
+				{ WallVoxel::bottom, {  0, -1 } },
+				{ WallVoxel::left  , { -1,  0 } },
+				{ WallVoxel::left  , {  1,  0 } },
+				{ WallVoxel::bottom, { -1,  1 } },
+				{ WallVoxel::bottom, {  0,  1 } }
+			};
+
+		constexpr ADJACENT VERT[] =
+			{
+				{ WallVoxel::bottom, { 0, -2 } },
+				{ WallVoxel::left  , { 0, -1 } },
+				{ WallVoxel::left  , { 1, -1 } },
+				{ WallVoxel::left  , { 0,  1 } },
+				{ WallVoxel::left  , { 1,  1 } },
+				{ WallVoxel::bottom, { 0,  2 } }
+			};
+
+		FOR_ELEMS(it, head->coordinates.y % 2 == 0 ? VERT : HORI)
+		{
+			vi2 next_coordinates =
+				{
+					mod(head->coordinates.x + it->delta_coordinates.x, MAP_DIM    ),
+					mod(head->coordinates.y + it->delta_coordinates.y, MAP_DIM * 2)
+				};
+
+			if (next_coordinates == head->prev_coordinates || +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(next_coordinates)) & it->side))
+			{
+				continue;
+			}
+
+			if (head->coordinates.y % 2 == 0)
+			{
+				if (it->delta_coordinates.y < 0)
+				{
+					if
+					(
+						it->delta_coordinates != vi2 { 1, -1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates) + vi2 { 0, -1 }) & WallVoxel::back_slash   ) ||
+						it->delta_coordinates != vi2 { 0, -1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates) + vi2 { 0, -1 }) & WallVoxel::forward_slash)
+					)
+					{
+						continue;
+					}
+				}
+				else if
+				(
+					it->delta_coordinates != vi2 { 0, 1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates)) & WallVoxel::back_slash   ) ||
+					it->delta_coordinates != vi2 { 1, 1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates)) & WallVoxel::forward_slash)
+				)
+				{
+					continue;
+				}
+			}
+			else if (it->delta_coordinates.x < 0)
+			{
+				if
+				(
+					it->delta_coordinates != vi2 { -1,  1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates) + vi2 { -1, 0 }) & WallVoxel::back_slash   ) ||
+					it->delta_coordinates != vi2 { -1, -1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates) + vi2 { -1, 0 }) & WallVoxel::forward_slash)
+				)
+				{
+					continue;
+				}
+			}
+			else if
+			(
+				it->delta_coordinates != vi2 { 0, -1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates)) & WallVoxel::back_slash   ) ||
+				it->delta_coordinates != vi2 { 0,  1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates)) & WallVoxel::forward_slash)
+			)
+			{
+				continue;
+			}
+
+			f32         next_weight = path_vertices[head->coordinates.y][head->coordinates.x].best_weight + path_distance_function(head->coordinates, next_coordinates);
+			PathVertex* next_vertex = &path_vertices[next_coordinates.y][next_coordinates.x];
+
+			if (!next_vertex->is_set || next_vertex->best_weight > next_weight)
+			{
+				next_vertex->is_set           = true;
+				next_vertex->best_weight      = next_weight;
+				next_vertex->prev_coordinates = head->coordinates;
+
+				PathQueueNode** repeated_node = &path_queue;
+
+				while (*repeated_node && (*repeated_node)->coordinates != next_coordinates)
+				{
+					repeated_node = &(*repeated_node)->next_node;
+				}
+
+				if (*repeated_node)
+				{
+					PathQueueNode* tail = (*repeated_node)->next_node;
+					(*repeated_node)->next_node = available_path_queue_node;
+					available_path_queue_node = *repeated_node;
+					*repeated_node = tail;
+				}
+
+				f32             next_estimated_length = next_weight + path_distance_function(next_coordinates, end);
+				PathQueueNode** post_node             = &path_queue;
+				while (*post_node && (*post_node)->estimated_length < next_estimated_length)
+				{
+					post_node = &(*post_node)->next_node;
+				}
+
+				PathQueueNode* new_node;
+				if (available_path_queue_node)
+				{
+					new_node                  = available_path_queue_node;
+					available_path_queue_node = available_path_queue_node->next_node;
+				}
+				else
+				{
+					new_node = memory_arena_allocate<PathQueueNode>(&state->transient_arena);
+				}
+
+				new_node->estimated_length = next_estimated_length;
+				new_node->prev_coordinates = head->coordinates;
+				new_node->coordinates      = next_coordinates;
+				new_node->next_node        = *post_node;
+				*post_node = new_node;
+			}
+		}
+
+		head->next_node = available_path_queue_node;
+		available_path_queue_node = head;
+	}
+
+	PathCoordinatesNode* path = 0;
+
+	if (path_queue && path_queue->coordinates == end)
+	{
+		vi2 coordinates = end;
+		while (true)
+		{
+			PathCoordinatesNode* path_coordinates_node = allocate_path_coordinates_node(state);
+			path_coordinates_node->coordinates = coordinates;
+			path_coordinates_node->next_node   = path;
+			path = path_coordinates_node;
+
+			if (coordinates == start)
+			{
+				break;
+			}
+
+			coordinates = path_vertices[coordinates.y][coordinates.x].prev_coordinates;
+		}
+	}
+	else
+	{
+		ASSERT(false);
+	}
+
+	return path;
+}
+
 enum struct Material : u8
 {
 	null,
@@ -1244,9 +1455,9 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 			state->game.texture_sprite.hand                    = init_texture_sprite(renderer, DATA_DIR "hand.png");
 			state->game.texture_sprite.flashlight_on           = init_texture_sprite(renderer, DATA_DIR "items/flashlight_on.png");
 			state->game.texture_sprite.night_vision_goggles_on = init_texture_sprite(renderer, DATA_DIR "items/night_vision_goggles_on.png");
-			FOR_ELEMS(it, ITEM_DATA)
+			FOR_ELEMS(it, state->game.texture_sprite.default_items)
 			{
-				state->game.texture_sprite.default_items[it_index] = init_texture_sprite(renderer, it->img_file_path);
+				*it = init_texture_sprite(renderer, ITEM_DATA[it_index].img_file_path);
 			}
 			FOR_ELEMS(it, state->game.texture_sprite.papers)
 			{
@@ -1287,6 +1498,8 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 			state->game.audio.panel_close              = Mix_LoadWAV(DATA_DIR "audio/panel_close.wav");
 			state->game.audio.shock                    = Mix_LoadWAV(DATA_DIR "audio/shock.wav");
 			state->game.audio.night_vision_goggles_on  = Mix_LoadWAV(DATA_DIR "audio/night_vision_goggles_on.wav");
+			state->game.audio.horror[0]                = Mix_LoadWAV(DATA_DIR "audio/horror_0.wav");
+			state->game.audio.horror[1]                = Mix_LoadWAV(DATA_DIR "audio/horror_1.wav");
 			state->game.audio.heartbeats[0]            = Mix_LoadWAV(DATA_DIR "audio/heartbeat_0.wav");
 			state->game.audio.heartbeats[1]            = Mix_LoadWAV(DATA_DIR "audio/heartbeat_1.wav");
 			FOR_ELEMS(it, state->game.audio.walk_steps)
@@ -1881,9 +2094,9 @@ extern "C" PROTOTYPE_UPDATE(update)
 		{
 			DEBUG_once // @TEMP@
 			{
-				//state->game.lucia_position.xy = get_position_of_wall_side(state->game.door_wall_side, 1.0f);
+				state->game.lucia_position.xy = get_position_of_wall_side(state->game.door_wall_side, 1.0f);
 				//state->game.lucia_position.xy = get_position_of_wall_side(state->game.circuit_breaker_wall_side, 1.0f);
-				state->game.lucia_position.xy = { 1.0f, 1.0f };
+				//state->game.lucia_position.xy = { 1.0f, 1.0f };
 				//state->game.lucia_position = { 64.637268f, 26.6f, 1.3239026f };
 				//state->game.lucia_angle    = 5.3498487f;
 				//state->game.monster_position = { 66.295441f, 25.49999f, 1.2878139f };
@@ -1897,12 +2110,10 @@ extern "C" PROTOTYPE_UPDATE(update)
 			// @TEMP@
 			//state->game.lucia_health = max(state->game.lucia_health - 0.1f * SECONDS_PER_UPDATE, 0.0f);
 
-			Mix_VolumeChunk(state->game.audio.drone    , static_cast<i32>(MIX_MAX_VOLUME *         state->game.ceiling_lights_keytime  * (1.0f - state->game.exiting_keytime)));
-			Mix_VolumeChunk(state->game.audio.drone_low, static_cast<i32>(MIX_MAX_VOLUME * (1.0f - state->game.ceiling_lights_keytime) * (1.0f - state->game.exiting_keytime)));
-
-			f32 circuit_breaker_volume = 2.0f / (norm_sq(ray_to_closest(state->game.lucia_position.xy, get_position_of_wall_side(state->game.circuit_breaker_wall_side, 0.25f))) + 0.25f);
-			Mix_VolumeChunk(state->game.audio.drone_loud, static_cast<i32>(MIX_MAX_VOLUME * clamp(circuit_breaker_volume, 0.0f, 1.0f)));
-			Mix_VolumeChunk(state->game.audio.heartbeats[state->game.heartbeat_sfx_index], static_cast<i32>(MIX_MAX_VOLUME * clamp((state->game.heart_bpm - 50.0f) / 80.0f, 0.0f, 1.0f)));
+			Mix_VolumeChunk(state->game.audio.drone                                      , static_cast<i32>(MIX_MAX_VOLUME *         state->game.ceiling_lights_keytime  * (1.0f - state->game.exiting_keytime)));
+			Mix_VolumeChunk(state->game.audio.drone_low                                  , static_cast<i32>(MIX_MAX_VOLUME * (1.0f - state->game.ceiling_lights_keytime) * (1.0f - state->game.exiting_keytime)));
+			Mix_VolumeChunk(state->game.audio.drone_loud                                 , static_cast<i32>(MIX_MAX_VOLUME * clamp(1.0f / (norm_sq(ray_to_closest(state->game.lucia_position.xy, get_position_of_wall_side(state->game.circuit_breaker_wall_side, 0.25f))) + 1.0f), 0.0f, 1.0f)));
+			Mix_VolumeChunk(state->game.audio.heartbeats[state->game.heartbeat_sfx_index], static_cast<i32>(MIX_MAX_VOLUME * clamp((state->game.heart_bpm - 30.0f) / 80.0f, 0.0f, 1.0f)));
 
 			state->game.hand_on_state     = HandOnState::null;
 			state->game.hand_hovered_item = 0;
@@ -2275,6 +2486,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 											else if (state->game.hud.inventory.selected_item->flashlight.power)
 											{
 												state->game.holding.flashlight           = state->game.hud.inventory.selected_item;
+												state->game.flashlight_ray.xy            = polar(state->game.lucia_angle);
 												state->game.holding.night_vision_goggles = 0;
 											}
 											else
@@ -2673,202 +2885,45 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 				if (state->game.monster_timeout == 0.0f)
 				{
-					vi2 current_lucia_coordinates = get_closest_open_path_coordinates(state, state->game.lucia_position.xy);
-					if (!state->game.monster_path && norm(ray_to_closest(state->game.monster_position.xy, state->game.lucia_position.xy)) > 2.0f || state->game.monster_path && current_lucia_coordinates != state->game.monster_path_goal)
+					if (state->game.monster_chasing_lucia)
 					{
-						vi2 starting_coordinates = get_closest_open_path_coordinates(state, state->game.monster_position.xy);
-						state->game.monster_path_goal = current_lucia_coordinates;
-
-						struct PathVertex
+						if (!exists_clear_way(state, state->game.monster_position.xy, state->game.lucia_position.xy) && norm(ray_to_closest(state->game.monster_position.xy, state->game.lucia_position.xy)) > 30.0f)
 						{
-							bool32 is_set;
-							f32    best_weight;
-							vi2    prev_coordinates;
-						};
+							DEBUG_printf("roaming\n");
+							state->game.monster_chasing_lucia = false;
+						}
+					}
+					else if (exists_clear_way(state, state->game.monster_position.xy, state->game.lucia_position.xy) && norm(ray_to_closest(state->game.monster_position.xy, state->game.lucia_position.xy)) < 25.0f)
+					{
+						Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.horror[0], 0);
+						state->game.monster_chasing_lucia = true;
+					}
 
-						struct PathQueueNode
+					vi2 updated_monster_path_goal = state->game.monster_path_goal;
+					if (state->game.monster_chasing_lucia)
+					{
+						updated_monster_path_goal = get_closest_open_path_coordinates(state, state->game.lucia_position.xy);
+					}
+					else
+					{
+						state->game.monster_roam_update_keytime -= SECONDS_PER_UPDATE / 16.0f;
+
+						if (state->game.monster_roam_update_keytime <= 0.0f || norm(ray_to_closest(path_coordinates_to_position(state->game.monster_path_goal), state->game.lucia_position.xy)) > 8.0f)
 						{
-							f32            estimated_length;
-							vi2            prev_coordinates;
-							vi2            coordinates;
-							PathQueueNode* next_node;
-						};
+							state->game.monster_roam_update_keytime = 1.0f;
+							updated_monster_path_goal = get_closest_open_path_coordinates(state, state->game.lucia_position.xy + vf2 { rng(&state->seed, -16.0f, 16.0f), rng(&state->seed, -16.0f, 16.0f) });
+						}
+					}
 
-						PathVertex path_vertices[MAP_DIM * 2][MAP_DIM] = {};
-						path_vertices[starting_coordinates.y][starting_coordinates.x].is_set = true;
-
-						PathQueueNode* path_queue = memory_arena_allocate<PathQueueNode>(&state->transient_arena);
-						path_queue->estimated_length = path_distance_function(starting_coordinates, state->game.monster_path_goal);
-						path_queue->prev_coordinates = { -1, -1 };
-						path_queue->coordinates      = starting_coordinates;
-						path_queue->next_node        = 0;
-
-						PathQueueNode* available_path_queue_node = 0;
-
-						while (path_queue && path_queue->coordinates != state->game.monster_path_goal)
+					if (updated_monster_path_goal != state->game.monster_path_goal)
+					{
+						while (state->game.monster_path)
 						{
-							PathQueueNode* head = path_queue;
-							path_queue = path_queue->next_node;
-
-							struct ADJACENT { WallVoxel side; vi2 delta_coordinates; };
-							constexpr ADJACENT HORI[] =
-								{
-									{ WallVoxel::bottom, { -1, -1 } },
-									{ WallVoxel::bottom, {  0, -1 } },
-									{ WallVoxel::left  , { -1,  0 } },
-									{ WallVoxel::left  , {  1,  0 } },
-									{ WallVoxel::bottom, { -1,  1 } },
-									{ WallVoxel::bottom, {  0,  1 } }
-								};
-
-							constexpr ADJACENT VERT[] =
-								{
-									{ WallVoxel::bottom, { 0, -2 } },
-									{ WallVoxel::left  , { 0, -1 } },
-									{ WallVoxel::left  , { 1, -1 } },
-									{ WallVoxel::left  , { 0,  1 } },
-									{ WallVoxel::left  , { 1,  1 } },
-									{ WallVoxel::bottom, { 0,  2 } }
-								};
-
-							FOR_ELEMS(it, head->coordinates.y % 2 == 0 ? VERT : HORI)
-							{
-								vi2 next_coordinates =
-									{
-										mod(head->coordinates.x + it->delta_coordinates.x, MAP_DIM    ),
-										mod(head->coordinates.y + it->delta_coordinates.y, MAP_DIM * 2)
-									};
-
-								if (next_coordinates == head->prev_coordinates || +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(next_coordinates)) & it->side))
-								{
-									continue;
-								}
-
-								if (head->coordinates.y % 2 == 0)
-								{
-									if (it->delta_coordinates.y < 0)
-									{
-										if
-										(
-											it->delta_coordinates != vi2 { 1, -1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates) + vi2 { 0, -1 }) & WallVoxel::back_slash   ) ||
-											it->delta_coordinates != vi2 { 0, -1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates) + vi2 { 0, -1 }) & WallVoxel::forward_slash)
-										)
-										{
-											continue;
-										}
-									}
-									else if
-									(
-										it->delta_coordinates != vi2 { 0, 1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates)) & WallVoxel::back_slash   ) ||
-										it->delta_coordinates != vi2 { 1, 1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates)) & WallVoxel::forward_slash)
-									)
-									{
-										continue;
-									}
-								}
-								else if (it->delta_coordinates.x < 0)
-								{
-									if
-									(
-										it->delta_coordinates != vi2 { -1,  1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates) + vi2 { -1, 0 }) & WallVoxel::back_slash   ) ||
-										it->delta_coordinates != vi2 { -1, -1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates) + vi2 { -1, 0 }) & WallVoxel::forward_slash)
-									)
-									{
-										continue;
-									}
-								}
-								else if
-								(
-									it->delta_coordinates != vi2 { 0, -1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates)) & WallVoxel::back_slash   ) ||
-									it->delta_coordinates != vi2 { 0,  1 } && +(*get_wall_voxel(state, path_coordinates_to_map_coordinates(head->coordinates)) & WallVoxel::forward_slash)
-								)
-								{
-									continue;
-								}
-
-								f32         next_weight = path_vertices[head->coordinates.y][head->coordinates.x].best_weight + path_distance_function(head->coordinates, next_coordinates);
-								PathVertex* next_vertex = &path_vertices[next_coordinates.y][next_coordinates.x];
-
-								if (!next_vertex->is_set || next_vertex->best_weight > next_weight)
-								{
-									next_vertex->is_set           = true;
-									next_vertex->best_weight      = next_weight;
-									next_vertex->prev_coordinates = head->coordinates;
-
-									PathQueueNode** repeated_node = &path_queue;
-
-									while (*repeated_node && (*repeated_node)->coordinates != next_coordinates)
-									{
-										repeated_node = &(*repeated_node)->next_node;
-									}
-
-									if (*repeated_node)
-									{
-										PathQueueNode* tail = (*repeated_node)->next_node;
-										(*repeated_node)->next_node = available_path_queue_node;
-										available_path_queue_node = *repeated_node;
-										*repeated_node = tail;
-									}
-
-									f32             next_estimated_length = next_weight + path_distance_function(next_coordinates, state->game.monster_path_goal);
-									PathQueueNode** post_node             = &path_queue;
-									while (*post_node && (*post_node)->estimated_length < next_estimated_length)
-									{
-										post_node = &(*post_node)->next_node;
-									}
-
-									PathQueueNode* new_node;
-									if (available_path_queue_node)
-									{
-										new_node                  = available_path_queue_node;
-										available_path_queue_node = available_path_queue_node->next_node;
-									}
-									else
-									{
-										new_node = memory_arena_allocate<PathQueueNode>(&state->transient_arena);
-									}
-
-									new_node->estimated_length = next_estimated_length;
-									new_node->prev_coordinates = head->coordinates;
-									new_node->coordinates      = next_coordinates;
-									new_node->next_node        = *post_node;
-									*post_node = new_node;
-								}
-							}
-
-							head->next_node = available_path_queue_node;
-							available_path_queue_node = head;
+							state->game.monster_path = deallocate_path_coordinates_node(state, state->game.monster_path);
 						}
 
-						if (path_queue && path_queue->coordinates == state->game.monster_path_goal)
-						{
-							while (state->game.monster_path)
-							{
-								state->game.monster_path = deallocate_path_coordinates_node(state, state->game.monster_path);
-							}
-
-							vi2 coordinates = state->game.monster_path_goal;
-							while (true)
-							{
-								PathCoordinatesNode* path_coordinates_node = allocate_path_coordinates_node(state);
-								path_coordinates_node->coordinates = coordinates;
-								path_coordinates_node->next_node   = state->game.monster_path;
-								state->game.monster_path = path_coordinates_node;
-
-								if (coordinates == starting_coordinates)
-								{
-									break;
-								}
-
-								coordinates = path_vertices[coordinates.y][coordinates.x].prev_coordinates;
-							}
-						}
-						else
-						{
-							ASSERT(false);
-						}
-
-						ASSERT(get_closest_open_path_coordinates(state, state->game.lucia_position.xy) == state->game.monster_path_goal);
+						state->game.monster_path      = path_find(state, get_closest_open_path_coordinates(state, state->game.monster_position.xy), updated_monster_path_goal);
+						state->game.monster_path_goal = updated_monster_path_goal;
 					}
 
 					if (state->game.monster_path)
@@ -2880,7 +2935,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 						}
 						else
 						{
-							state->game.monster_velocity = dampen(state->game.monster_velocity, normalize(ray) * 3.0f, 4.0f, SECONDS_PER_UPDATE);
+							state->game.monster_velocity = dampen(state->game.monster_velocity, normalize(ray) * 5.0f, 3.0f, SECONDS_PER_UPDATE);
 						}
 					}
 					else
@@ -2888,12 +2943,13 @@ extern "C" PROTOTYPE_UPDATE(update)
 						vf2 ray = ray_to_closest(state->game.monster_position.xy, state->game.lucia_position.xy);
 						if (norm(ray) > 1.0f)
 						{
-							state->game.monster_velocity = dampen(state->game.monster_velocity, normalize(ray) * 3.0f, 4.0f, SECONDS_PER_UPDATE);
+							state->game.monster_velocity = dampen(state->game.monster_velocity, normalize(ray) * 4.0f, 4.0f, SECONDS_PER_UPDATE);
 						}
 						else
 						{
 							// @NOTE@ Lucia hit.
 
+							Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.horror[1], 0);
 							state->game.monster_timeout   = 32.0f;
 							state->game.blur_value        = 1.0f;
 							state->game.lucia_health      = max(state->game.lucia_health - 0.25f, 0.0f);
@@ -2912,11 +2968,22 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 					state->game.monster_position.z = cosf(state->time * 3.0f) * 0.15f + WALL_HEIGHT / 2.0f;
 
-					vf2 ray      = ray_to_closest(state->game.monster_position.xy, state->game.lucia_position.xy);
-					f32 distance = norm(ray);
-					if (distance >= 0.001f)
+					if (state->game.monster_chasing_lucia)
 					{
-						state->game.monster_normal = normalize(dampen(state->game.monster_normal, ray / distance, 8.0f, SECONDS_PER_UPDATE));
+						vf2 ray      = ray_to_closest(state->game.monster_position.xy, state->game.lucia_position.xy);
+						f32 distance = norm(ray);
+						if (distance >= 0.001f)
+						{
+							state->game.monster_normal = normalize(dampen(state->game.monster_normal, ray / distance, 8.0f, SECONDS_PER_UPDATE));
+						}
+					}
+					else
+					{
+						f32 distance = norm(state->game.monster_velocity);
+						if (distance > 0.001f)
+						{
+							state->game.monster_normal = normalize(dampen(state->game.monster_normal, state->game.monster_velocity / distance, 8.0f, SECONDS_PER_UPDATE));
+						}
 					}
 				}
 
@@ -2961,7 +3028,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 					}
 				}
 
-				state->game.heart_bpm               = 63.5f + 80.0f * (1.0f - state->game.lucia_stamina);
+				state->game.heart_bpm               = 63.5f + 80.0f * (1.0f - state->game.lucia_stamina) * (1.0f - state->game.lucia_health);
 				state->game.heart_pulse_keytime    += state->game.heart_bpm / 60.0f * SECONDS_PER_UPDATE;
 				state->game.heart_pulse_time_since += SECONDS_PER_UPDATE;
 
@@ -3599,8 +3666,11 @@ extern "C" PROTOTYPE_RENDER(render)
 					constexpr i32 FIRE_COUNT = 3;
 					FOR_RANGE(i, FIRE_COUNT)
 					{
-						vf2 ray = polar(state->time + static_cast<f32>(i) / FIRE_COUNT * TAU);
-						scan(Material::fire, get_image_of_frame(&state->game.animated_sprite.fire), state->game.monster_position + vx3(ray, 0.0f), normalize(ray_to_closest(state->game.monster_position.xy, state->game.lucia_position.xy)), { 1.0f, 1.0f });
+						vf3 fire_position = state->game.monster_position + vx3(polar(state->time + static_cast<f32>(i) / FIRE_COUNT * TAU), 0.0f);
+						if (exists_clear_way(state, state->game.monster_position.xy, fire_position.xy))
+						{
+							scan(Material::fire, get_image_of_frame(&state->game.animated_sprite.fire), fire_position, normalize(ray_to_closest(state->game.monster_position.xy, state->game.lucia_position.xy)), { 1.0f, 1.0f });
+						}
 					}
 				}
 
@@ -4002,7 +4072,7 @@ extern "C" PROTOTYPE_RENDER(render)
 			constexpr vf2 HEART_RATE_MONITOR_DIMENSIONS  = { 50.0f, STATUS_HUD_HEIGHT * 0.6f };
 			constexpr vf2 HEART_RATE_MONITOR_COORDINATES = vf2 { SCREEN_RES.x - 15.0f - HEART_RATE_MONITOR_DIMENSIONS.x, SCREEN_RES.y - (STATUS_HUD_HEIGHT + HEART_RATE_MONITOR_DIMENSIONS.y) / 2.0f };
 
-			set_color(platform->renderer, monochrome(0.15f));
+			set_color(platform->renderer, vf3 { lerp(0.15f, 0.7f, clamp(1.0f - state->game.heart_pulse_time_since, 0.0f, 1.0f) * square(1.0f - state->game.lucia_health)), 0.15f, 0.15f });
 			render_filled_rect(platform->renderer, HEART_RATE_MONITOR_COORDINATES, HEART_RATE_MONITOR_DIMENSIONS);
 
 			FOR_ELEMS(it, state->game.heart_rate_display_values, ARRAY_CAPACITY(state->game.heart_rate_display_values) - 1)
@@ -4079,12 +4149,13 @@ extern "C" PROTOTYPE_RENDER(render)
 				FC_ALIGN_LEFT,
 				1.0f,
 				{ 1.0f, 1.0f, 1.0f, 1.0f },
-				"%.2f %.2f\n%.2f %.2f\n%.2f %.2f\n%.2f\n%.2f",
+				"%.2f %.2f\n%.2f %.2f\n%.2f %.2f\n%.2f\n%.2f\n%.2f",
 				state->game.lucia_position.x, state->game.lucia_position.y,
 				state->game.door_wall_side.coordinates.x * WALL_SPACING, state->game.door_wall_side.coordinates.y * WALL_SPACING,
 				state->game.monster_position.x, state->game.monster_position.y,
 				state->game.monster_timeout,
-				state->game.lucia_health
+				state->game.lucia_health,
+				state->game.monster_roam_update_keytime
 			);
 		} break;
 
