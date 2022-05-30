@@ -103,6 +103,20 @@ global constexpr strlit CREEPY_SOUND_WAV_FILE_PATHS[] =
 		DATA_DIR "audio/creepy_sound_15.wav"
 	};
 
+global constexpr strlit RADIO_WAV_FILE_PATHS[] =
+	{
+		DATA_DIR "audio/radio_0.wav",
+		DATA_DIR "audio/radio_1.wav",
+		DATA_DIR "audio/radio_2.wav",
+		DATA_DIR "audio/radio_3.wav",
+		DATA_DIR "audio/radio_4.wav",
+		DATA_DIR "audio/radio_5.wav",
+		DATA_DIR "audio/radio_6.wav",
+		DATA_DIR "audio/radio_7.wav",
+		DATA_DIR "audio/radio_8.wav",
+		DATA_DIR "audio/radio_9.wav"
+	};
+
 global constexpr struct { f32 min_scalar; f32 max_scalar; strlit file_path; } PAPER_DATA[] =
 	{
 		{ 0.20f, 0.8f, DATA_DIR "papers/terry_entry_0.png" },
@@ -174,6 +188,11 @@ struct Item
 		{
 			f32 power;
 		} night_vision_goggles;
+
+		struct
+		{
+			f32 power;
+		} radio;
 	};
 };
 
@@ -550,8 +569,10 @@ struct State
 				Mix_Chunk* night_vision_goggles_on;
 				Mix_Chunk* first_aid_kit;
 				Mix_Chunk* acid_burn;
+				Mix_Chunk* squelch;
 				Mix_Chunk* horror       [2];
 				Mix_Chunk* heartbeats   [2];
+				Mix_Chunk* radio_clips  [ARRAY_CAPACITY(RADIO_WAV_FILE_PATHS)];
 				Mix_Chunk* walk_steps   [ARRAY_CAPACITY(WALK_STEP_WAV_FILE_PATHS)];
 				Mix_Chunk* run_steps    [ARRAY_CAPACITY(RUN_STEP_WAV_FILE_PATHS)];
 				Mix_Chunk* creepy_sounds[ARRAY_CAPACITY(CREEPY_SOUND_WAV_FILE_PATHS)];
@@ -622,7 +643,7 @@ struct State
 		Item*                hand_hovered_item;
 
 		i32                  item_count;
-		Item                 item_buffer[MAP_DIM * MAP_DIM / 6];
+		Item                 item_buffer[MAP_DIM * MAP_DIM / 16];
 
 		struct
 		{
@@ -638,7 +659,11 @@ struct State
 
 			struct
 			{
-				Item   array[2][4];
+				union
+				{
+					Item array[2][4];
+					Item flat_array[sizeof(array) / sizeof(Item)];
+				};
 				vf2    click_position;
 				Item*  selected_item;
 				bool32 grabbing;
@@ -675,21 +700,24 @@ struct State
 			{
 				Item* flashlight;
 				Item* night_vision_goggles;
+				Item* radio;
 			} holding;
 
 			Item* holdings[sizeof(holding) / sizeof(Item*)];
 		};
 
-		f32 flashlight_activation;
-		vf3 flashlight_ray;
-		f32 flashlight_keytime;
-		f32 night_vision_goggles_activation;
-		f32 night_vision_goggles_scan_line_keytime;
-		vf2 night_vision_goggles_interpolated_ray_to_circuit_breaker;
-		vf2 night_vision_goggles_interpolated_ray_to_door;
-		f32 interpolated_eye_drops_activation;
-		f32 eye_drops_activation;
-		f32 flash_stun_activation;
+		f32    flashlight_activation;
+		vf3    flashlight_ray;
+		f32    flashlight_keytime;
+		f32    night_vision_goggles_activation;
+		f32    night_vision_goggles_scan_line_keytime;
+		vf2    night_vision_goggles_interpolated_ray_to_circuit_breaker;
+		vf2    night_vision_goggles_interpolated_ray_to_door;
+		f32    interpolated_eye_drops_activation;
+		f32    eye_drops_activation;
+		f32    flash_stun_activation;
+		f32    radio_keytime;
+		bool8  played_radio_clips[ARRAY_CAPACITY(RADIO_WAV_FILE_PATHS)];
 	} game;
 
 	struct
@@ -1516,28 +1544,33 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 				*it = IMG_LoadTexture(renderer, LUCIA_STATE_IMG_FILE_PATHS[it_index]);
 			}
 
-			state->game.audio.drone                    = Mix_LoadWAV(DATA_DIR "audio/drone.wav");
-			state->game.audio.drone_low                = Mix_LoadWAV(DATA_DIR "audio/drone_low.wav");
-			state->game.audio.drone_loud               = Mix_LoadWAV(DATA_DIR "audio/drone_loud.wav");
-			state->game.audio.drone_off                = Mix_LoadWAV(DATA_DIR "audio/drone_off.wav");
-			state->game.audio.drone_on                 = Mix_LoadWAV(DATA_DIR "audio/drone_on.wav");
-			state->game.audio.blackout                 = Mix_LoadWAV(DATA_DIR "audio/blackout.wav");
-			state->game.audio.eletronical              = Mix_LoadWAV(DATA_DIR "audio/eletronical.wav");
-			state->game.audio.pick_up_paper            = Mix_LoadWAV(DATA_DIR "audio/pick_up_paper.wav");
-			state->game.audio.pick_up_heavy            = Mix_LoadWAV(DATA_DIR "audio/pick_up_heavy.wav");
-			state->game.audio.switch_toggle            = Mix_LoadWAV(DATA_DIR "audio/switch_toggle.wav");
-			state->game.audio.circuit_breaker_switch   = Mix_LoadWAV(DATA_DIR "audio/lever_flip.wav");
-			state->game.audio.door_budge               = Mix_LoadWAV(DATA_DIR "audio/door_budge.wav");
-			state->game.audio.panel_open               = Mix_LoadWAV(DATA_DIR "audio/panel_open.wav");
-			state->game.audio.panel_close              = Mix_LoadWAV(DATA_DIR "audio/panel_close.wav");
-			state->game.audio.shock                    = Mix_LoadWAV(DATA_DIR "audio/shock.wav");
-			state->game.audio.night_vision_goggles_on  = Mix_LoadWAV(DATA_DIR "audio/night_vision_goggles_on.wav");
-			state->game.audio.first_aid_kit            = Mix_LoadWAV(DATA_DIR "audio/first_aid_kit.wav");
-			state->game.audio.acid_burn                = Mix_LoadWAV(DATA_DIR "audio/acid_burn.wav");
-			state->game.audio.horror[0]                = Mix_LoadWAV(DATA_DIR "audio/horror_0.wav");
-			state->game.audio.horror[1]                = Mix_LoadWAV(DATA_DIR "audio/horror_1.wav");
-			state->game.audio.heartbeats[0]            = Mix_LoadWAV(DATA_DIR "audio/heartbeat_0.wav");
-			state->game.audio.heartbeats[1]            = Mix_LoadWAV(DATA_DIR "audio/heartbeat_1.wav");
+			state->game.audio.drone                   = Mix_LoadWAV(DATA_DIR "audio/drone.wav");
+			state->game.audio.drone_low               = Mix_LoadWAV(DATA_DIR "audio/drone_low.wav");
+			state->game.audio.drone_loud              = Mix_LoadWAV(DATA_DIR "audio/drone_loud.wav");
+			state->game.audio.drone_off               = Mix_LoadWAV(DATA_DIR "audio/drone_off.wav");
+			state->game.audio.drone_on                = Mix_LoadWAV(DATA_DIR "audio/drone_on.wav");
+			state->game.audio.blackout                = Mix_LoadWAV(DATA_DIR "audio/blackout.wav");
+			state->game.audio.eletronical             = Mix_LoadWAV(DATA_DIR "audio/eletronical.wav");
+			state->game.audio.pick_up_paper           = Mix_LoadWAV(DATA_DIR "audio/pick_up_paper.wav");
+			state->game.audio.pick_up_heavy           = Mix_LoadWAV(DATA_DIR "audio/pick_up_heavy.wav");
+			state->game.audio.switch_toggle           = Mix_LoadWAV(DATA_DIR "audio/switch_toggle.wav");
+			state->game.audio.circuit_breaker_switch  = Mix_LoadWAV(DATA_DIR "audio/lever_flip.wav");
+			state->game.audio.door_budge              = Mix_LoadWAV(DATA_DIR "audio/door_budge.wav");
+			state->game.audio.panel_open              = Mix_LoadWAV(DATA_DIR "audio/panel_open.wav");
+			state->game.audio.panel_close             = Mix_LoadWAV(DATA_DIR "audio/panel_close.wav");
+			state->game.audio.shock                   = Mix_LoadWAV(DATA_DIR "audio/shock.wav");
+			state->game.audio.night_vision_goggles_on = Mix_LoadWAV(DATA_DIR "audio/night_vision_goggles_on.wav");
+			state->game.audio.first_aid_kit           = Mix_LoadWAV(DATA_DIR "audio/first_aid_kit.wav");
+			state->game.audio.acid_burn               = Mix_LoadWAV(DATA_DIR "audio/acid_burn.wav");
+			state->game.audio.squelch                 = Mix_LoadWAV(DATA_DIR "audio/squelch.wav");
+			state->game.audio.horror[0]               = Mix_LoadWAV(DATA_DIR "audio/horror_0.wav");
+			state->game.audio.horror[1]               = Mix_LoadWAV(DATA_DIR "audio/horror_1.wav");
+			state->game.audio.heartbeats[0]           = Mix_LoadWAV(DATA_DIR "audio/heartbeat_0.wav");
+			state->game.audio.heartbeats[1]           = Mix_LoadWAV(DATA_DIR "audio/heartbeat_1.wav");
+			FOR_ELEMS(it, state->game.audio.radio_clips)
+			{
+				*it = Mix_LoadWAV(RADIO_WAV_FILE_PATHS[it_index]);
+			}
 			FOR_ELEMS(it, state->game.audio.walk_steps)
 			{
 				*it = Mix_LoadWAV(WALK_STEP_WAV_FILE_PATHS[it_index]);
@@ -1949,7 +1982,8 @@ extern "C" PROTOTYPE_UPDATE(update)
 													spawn_item(state, type);
 												}
 
-												FOR_RANGE(ARRAY_CAPACITY(state->game.item_buffer) - state->game.item_count)
+												i32 leftover_count = ARRAY_CAPACITY(state->game.item_buffer) - state->game.item_count;
+												FOR_RANGE(leftover_count)
 												{
 													spawn_item(state);
 												}
@@ -2135,7 +2169,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 		{
 			DEBUG_once // @TEMP@
 			{
-				state->game.lucia_position.xy = get_position_of_wall_side(state->game.door_wall_side, 1.0f);
+				//state->game.lucia_position.xy = get_position_of_wall_side(state->game.door_wall_side, 1.0f);
 				//state->game.lucia_position.xy = get_position_of_wall_side(state->game.circuit_breaker_wall_side, 1.0f);
 				//state->game.lucia_position.xy = { 1.0f, 1.0f };
 				//state->game.lucia_position = { 64.637268f, 26.6f, 1.3239026f };
@@ -2146,6 +2180,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 				state->game.hud.inventory.array[0][0].night_vision_goggles.power = 1.0f;
 				state->game.hud.inventory.array[0][1].type = ItemType::flashlight;
 				state->game.hud.inventory.array[0][2].type = ItemType::first_aid_kit;
+				state->game.hud.inventory.array[0][3].type = ItemType::radio;
 
 				//state->game.lucia_health = max(state->game.lucia_health - 0.4f, 0.0f);
 			}
@@ -2444,23 +2479,32 @@ extern "C" PROTOTYPE_UPDATE(update)
 														}
 													}
 
+													if (!combined)
+													{
+														Item* cheap_batteries;
+														Item* radio;
+														if (check_combine(&cheap_batteries, ItemType::cheap_batteries, &radio, ItemType::radio, &dropped_on, state->game.hud.inventory.selected_item))
+														{
+															combined = true;
+
+															Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.eletronical, 0);
+															state->game.notification_message = "(You put some batteries in the radio.)";
+															state->game.notification_keytime = 1.0f;
+
+															combined_result = *radio;
+															combined_result.radio.power = min(combined_result.radio.power + 0.25f, 1.0f);
+
+															if (state->game.holding.radio == state->game.hud.inventory.selected_item)
+															{
+																state->game.holding.radio = &dropped_on;
+															}
+														}
+													}
+
 													if (combined)
 													{
 														state->game.hud.inventory.selected_item->type = ItemType::null;
 														dropped_on                                    = combined_result;
-
-														Item* item = spawn_item(state);
-														FOR_RANGE(16)
-														{
-															if (exists_clear_way(state, item->position.xy, state->game.lucia_position.xy))
-															{
-																item->position.xy = rng_open_position(state);
-															}
-															else
-															{
-																break;
-															}
-														}
 													}
 													else
 													{
@@ -2620,6 +2664,76 @@ extern "C" PROTOTYPE_UPDATE(update)
 												state->game.lucia_health          = max(state->game.lucia_health - 0.15f, 0.0f);
 												state->game.blur_value           += 0.25f;
 												state->game.hud.inventory.selected_item->type = ItemType::null;
+											}
+										} break;
+
+										case ItemType::radio:
+										{
+											if (state->game.hud.inventory.selected_item == state->game.holding.radio && state->game.radio_keytime > 0.0f)
+											{
+												Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.squelch, 0);
+
+												FOR_ELEMS(it, state->game.audio.radio_clips)
+												{
+													Mix_VolumeChunk(*it, 0);
+												}
+
+												state->game.holding.radio = 0;
+											}
+											else if (state->game.hud.inventory.selected_item->radio.power)
+											{
+												if (state->game.radio_keytime == 0.0f)
+												{
+													state->game.radio_keytime = 1.0f;
+													state->game.holding.radio = state->game.hud.inventory.selected_item;
+
+													i32 unplayed_count = 0;
+													FOR_ELEMS(it, state->game.played_radio_clips)
+													{
+														Mix_VolumeChunk(state->game.audio.radio_clips[it_index], static_cast<i32>(MIX_MAX_VOLUME));
+														if (!*it)
+														{
+															unplayed_count += 1;
+														}
+													}
+
+													if (unplayed_count == 0)
+													{
+														FOR_ELEMS(it, state->game.played_radio_clips)
+														{
+															*it = false;
+														}
+														unplayed_count = ARRAY_CAPACITY(state->game.audio.radio_clips);
+													}
+
+													i32 index = rng(&state->seed, 0, unplayed_count);
+													FOR_ELEMS(it, state->game.played_radio_clips)
+													{
+														if (!*it)
+														{
+															index -= 1;
+
+															if (index < 0)
+															{
+																*it = true;
+																Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.radio_clips[it_index], 0);
+																break;
+															}
+														}
+													}
+												}
+												else
+												{
+													Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.squelch, 0);
+													state->game.notification_message = "\"No signal right now.\"";
+													state->game.notification_keytime = 1.0f;
+												}
+											}
+											else
+											{
+												Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.switch_toggle, 0);
+												state->game.notification_message = "\"The radio is dead.\"";
+												state->game.notification_keytime = 1.0f;
 											}
 										} break;
 									}
@@ -3196,6 +3310,24 @@ extern "C" PROTOTYPE_UPDATE(update)
 				state->game.heart_rate_display_index                                         = (state->game.heart_rate_display_index + 1) % ARRAY_CAPACITY(state->game.heart_rate_display_values);
 			}
 
+			if (state->game.holding.radio)
+			{
+				state->game.holding.radio->radio.power = max(state->game.holding.radio->radio.power - SECONDS_PER_UPDATE / 120.0f, 0.0f);
+
+				if (state->game.holding.radio->radio.power == 0.0f)
+				{
+					Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.squelch, 0);
+					state->game.notification_message = "\"The radio died.\"";
+					state->game.notification_keytime = 1.0f;
+					state->game.holding.radio        = 0;
+
+					FOR_ELEMS(clip, state->game.audio.radio_clips)
+					{
+						Mix_VolumeChunk(*clip, 0);
+					}
+				}
+			}
+
 			f32 battery_display_level = 0.0f;
 
 			if (state->game.holding.flashlight)
@@ -3210,7 +3342,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 			}
 			else
 			{
-				state->game.flashlight_activation = dampen(state->game.flashlight_activation, 0.0f, 25.0f, SECONDS_PER_UPDATE);
+				state->game.flashlight_activation = dampen(state->game.flashlight_activation, 0.0f, 8.0f, SECONDS_PER_UPDATE);
 			}
 
 			if (state->game.holding.night_vision_goggles)
@@ -3281,6 +3413,8 @@ extern "C" PROTOTYPE_UPDATE(update)
 					state->game.lucia_state = LuciaState::anxious;
 				}
 			}
+
+			state->game.radio_keytime = max(state->game.radio_keytime - SECONDS_PER_UPDATE / 30.0f, 0.0f);
 		} break;
 
 		case StateContext::end:
@@ -4036,7 +4170,26 @@ extern "C" PROTOTYPE_RENDER(render)
 									(VIEW_RES.y - (ARRAY_CAPACITY(state->game.hud.inventory.array   ) * (INVENTORY_DIM + INVENTORY_PADDING) - INVENTORY_PADDING)) / 2.0f + y * (INVENTORY_DIM + INVENTORY_PADDING)
 								};
 
-							set_color(platform->renderer, &state->game.hud.inventory.array[y][x] == state->game.hud.inventory.selected_item ? vf3 { 0.7f, 0.7f, 0.25f } : monochrome(0.5f));
+							if (&state->game.hud.inventory.array[y][x] == state->game.hud.inventory.selected_item)
+							{
+								set_color(platform->renderer, vf3 { 0.8f, 0.8f, 0.3f });
+							}
+							else
+							{
+								FOR_ELEMS(it, state->game.holdings)
+								{
+									if (*it == &state->game.hud.inventory.array[y][x])
+									{
+										set_color(platform->renderer, vf3 { 0.6f, 0.6f, 0.2f });
+										goto BREAK;
+									}
+								}
+
+								set_color(platform->renderer, monochrome(0.5f));
+							}
+
+
+							BREAK:;
 							render_rect(platform->renderer, position, vxx(vx2(INVENTORY_DIM)));
 
 							set_color(platform->renderer, monochrome(0.3f));
@@ -4280,13 +4433,14 @@ extern "C" PROTOTYPE_RENDER(render)
 				FC_ALIGN_LEFT,
 				1.0f,
 				{ 1.0f, 1.0f, 1.0f, 1.0f },
-				"%.2f %.2f\n%.2f %.2f\n%.2f %.2f\n%.2f\n%.2f\n%.2f",
+				"%.2f %.2f\n%.2f %.2f\n%.2f %.2f\n%.2f\n%.2f\n%i / %zu",
 				state->game.lucia_position.x, state->game.lucia_position.y,
 				state->game.door_wall_side.coordinates.x * WALL_SPACING, state->game.door_wall_side.coordinates.y * WALL_SPACING,
 				state->game.monster_position.x, state->game.monster_position.y,
 				state->game.monster_timeout,
 				state->game.lucia_health,
-				state->game.monster_roam_update_keytime
+				state->game.item_count,
+				ARRAY_CAPACITY(state->game.item_buffer)
 			);
 		} break;
 
