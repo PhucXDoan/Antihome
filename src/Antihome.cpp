@@ -36,6 +36,8 @@ global constexpr f32 CIRCUIT_BREAKER_VOLTAGE_DISPLAY_X           = VIEW_RES.x * 
 global constexpr vf2 CIRCUIT_BREAKER_SWITCH_DIMENSIONS           = { 30.0f, 35.0f };
 global constexpr vf2 CIRCUIT_BREAKER_MARGINS                     = { 10.0f, 10.0f };
 
+global constexpr f32 FIRST_AID_KIT_THRESHOLD = 0.85f;
+
 global constexpr f32 DEATH_DURATION = 8.0f;
 global constexpr f32 FRICTION       = 8.0f;
 
@@ -359,6 +361,29 @@ enum struct GameGoal : u8
 	escape
 };
 
+enum_loose (LuciaState, u8)
+{
+	normal,
+	anxious,
+	wounded,
+	anxious_wounded,
+	haunted,
+	hit,
+	healed,
+	CAPACITY
+};
+
+global constexpr strlit LUCIA_STATE_IMG_FILE_PATHS[LuciaState::CAPACITY] =
+	{
+		DATA_DIR "hud/lucia_normal.png",
+		DATA_DIR "hud/lucia_anxious.png",
+		DATA_DIR "hud/lucia_wounded.png",
+		DATA_DIR "hud/lucia_anxious_wounded.png",
+		DATA_DIR "hud/lucia_haunted.png",
+		DATA_DIR "hud/lucia_hit.png",
+		DATA_DIR "hud/lucia_healed.png"
+	};
+
 struct State
 {
 	MemoryArena  context_arena;
@@ -495,13 +520,9 @@ struct State
 			{
 				SDL_Texture* screen;
 				SDL_Texture* view;
-				SDL_Texture* lucia_haunted;
-				SDL_Texture* lucia_healed;
-				SDL_Texture* lucia_hit;
-				SDL_Texture* lucia_normal;
-				SDL_Texture* lucia_wounded;
 				SDL_Texture* circuit_breaker_switches[2];
 				SDL_Texture* circuit_breaker_panel;
+				SDL_Texture* lucia_states[LuciaState::CAPACITY];
 			} texture;
 
 			SDL_Texture* textures[sizeof(texture) / sizeof(SDL_Texture*)];
@@ -584,6 +605,8 @@ struct State
 		bool32               lucia_out_of_breath;
 		f32                  lucia_health;
 		f32                  lucia_dying_keytime;
+		LuciaState           lucia_state;
+		f32                  lucia_state_keytime;
 
 		f32                  monster_timeout;
 		PathCoordinatesNode* monster_path;
@@ -1485,14 +1508,13 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 
 			state->game.texture.screen                          = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET   , SCREEN_RES.x, SCREEN_RES.y);
 			state->game.texture.view                            = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_STREAMING, VIEW_RES.x  , VIEW_RES.y  );
-			state->game.texture.lucia_haunted                   = IMG_LoadTexture(renderer, DATA_DIR "hud/lucia_haunted.png");
-			state->game.texture.lucia_healed                    = IMG_LoadTexture(renderer, DATA_DIR "hud/lucia_healed.png");
-			state->game.texture.lucia_hit                       = IMG_LoadTexture(renderer, DATA_DIR "hud/lucia_hit.png");
-			state->game.texture.lucia_normal                    = IMG_LoadTexture(renderer, DATA_DIR "hud/lucia_normal.png");
-			state->game.texture.lucia_wounded                   = IMG_LoadTexture(renderer, DATA_DIR "hud/lucia_wounded.png");
 			state->game.texture.circuit_breaker_switches[false] = IMG_LoadTexture(renderer, DATA_DIR "hud/circuit_breaker_switch_off.png");
 			state->game.texture.circuit_breaker_switches[true ] = IMG_LoadTexture(renderer, DATA_DIR "hud/circuit_breaker_switch_on.png");
 			state->game.texture.circuit_breaker_panel           = IMG_LoadTexture(renderer, DATA_DIR "hud/circuit_breaker_panel.png");
+			FOR_ELEMS(it, state->game.texture.lucia_states)
+			{
+				*it = IMG_LoadTexture(renderer, LUCIA_STATE_IMG_FILE_PATHS[it_index]);
+			}
 
 			state->game.audio.drone                    = Mix_LoadWAV(DATA_DIR "audio/drone.wav");
 			state->game.audio.drone_low                = Mix_LoadWAV(DATA_DIR "audio/drone_low.wav");
@@ -2124,10 +2146,9 @@ extern "C" PROTOTYPE_UPDATE(update)
 				state->game.hud.inventory.array[0][0].night_vision_goggles.power = 1.0f;
 				state->game.hud.inventory.array[0][1].type = ItemType::flashlight;
 				state->game.hud.inventory.array[0][2].type = ItemType::first_aid_kit;
-			}
 
-			// @TEMP@
-			//state->game.lucia_health = max(state->game.lucia_health - 0.1f * SECONDS_PER_UPDATE, 0.0f);
+				//state->game.lucia_health = max(state->game.lucia_health - 0.4f, 0.0f);
+			}
 
 			Mix_VolumeChunk(state->game.audio.drone                                      , static_cast<i32>(MIX_MAX_VOLUME *         state->game.ceiling_lights_keytime  * (1.0f - state->game.exiting_keytime)));
 			Mix_VolumeChunk(state->game.audio.drone_low                                  , static_cast<i32>(MIX_MAX_VOLUME * (1.0f - state->game.ceiling_lights_keytime) * (1.0f - state->game.exiting_keytime)));
@@ -2368,7 +2389,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 															state->game.notification_keytime = 1.0f;
 
 															combined_result = *flashlight;
-															combined_result.flashlight.power = 1.0f;
+															combined_result.flashlight.power = min(combined_result.flashlight.power + 0.25f, 1.0f);
 
 															if (state->game.holding.flashlight == state->game.hud.inventory.selected_item)
 															{
@@ -2390,7 +2411,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 															state->game.notification_keytime = 1.0f;
 
 															combined_result = *night_vision_goggles;
-															combined_result.night_vision_goggles.power = 1.0f;
+															combined_result.night_vision_goggles.power = min(combined_result.night_vision_goggles.power + 0.25f, 1.0f);
 
 															if (state->game.holding.night_vision_goggles == state->game.hud.inventory.selected_item)
 															{
@@ -2541,6 +2562,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 											}
 											else
 											{
+												Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.switch_toggle, 0);
 												state->game.notification_message = "\"The night vision goggles are dead.\"";
 												state->game.notification_keytime = 1.0f;
 											}
@@ -2548,28 +2570,44 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 										case ItemType::eye_drops:
 										{
-											Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.acid_burn, 0);
-											state->game.notification_message  = "(You dumped the whole eye drop container into your eyes.)";
-											state->game.notification_keytime  = 1.0f;
-											state->game.eye_drops_activation += 1.0f;
-											state->game.blur_value           += 0.5f;
+											if (state->game.holding.night_vision_goggles)
+											{
+												Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.acid_burn, 0);
+												Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.shock, 0);
+												state->game.notification_message                = "(You dumped the whole eye drop container onto the night vision goggles.)";
+												state->game.notification_keytime                = 1.0f;
+												state->game.blur_value                         += 1.0f;
+												state->game.flash_stun_activation              += 2.0f;
+												state->game.holding.night_vision_goggles->type  = ItemType::null;
+												state->game.holding.night_vision_goggles        = 0;
+											}
+											else
+											{
+												Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.acid_burn, 0);
+												state->game.notification_message  = "(You dumped the whole eye drop container into your eyes.)";
+												state->game.notification_keytime  = 1.0f;
+												state->game.eye_drops_activation += 1.0f;
+												state->game.blur_value           += 0.5f;
+											}
 
 											state->game.hud.inventory.selected_item->type = ItemType::null;
 										} break;
 
 										case ItemType::first_aid_kit:
 										{
-											if (state->game.lucia_health > 0.9f)
+											if (state->game.lucia_health > FIRST_AID_KIT_THRESHOLD)
 											{
 												state->game.notification_message = "\"I don't think this is supposed to be eaten... yet.\"";
 												state->game.notification_keytime = 1.0f;
 											}
-											else if (rng(&state->seed) < 0.75f)
+											else if (rng(&state->seed) < 0.85f)
 											{
 												Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.first_aid_kit, 0);
-												state->game.notification_message  = "(You wrapped the bandages and poured the antiseptic.)";
-												state->game.notification_keytime  = 1.0f;
-												state->game.lucia_health          = min(state->game.lucia_health + 0.5f, 1.0f);
+												state->game.notification_message = "(You wrapped the bandages and poured the antiseptic.)";
+												state->game.notification_keytime = 1.0f;
+												state->game.lucia_state          = LuciaState::healed;
+												state->game.lucia_state_keytime  = 1.0f;
+												state->game.lucia_health         = min(state->game.lucia_health + 0.5f, 1.0f);
 												state->game.hud.inventory.selected_item->type = ItemType::null;
 											}
 											else
@@ -2577,7 +2615,9 @@ extern "C" PROTOTYPE_UPDATE(update)
 												Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.acid_burn, 0);
 												state->game.notification_message  = "(You ate the bandages and drank the antiseptic.)";
 												state->game.notification_keytime  = 1.0f;
-												state->game.lucia_health          = max(state->game.lucia_health - 0.25f, 0.0f);
+												state->game.lucia_state           = LuciaState::hit;
+												state->game.lucia_state_keytime   = 1.0f;
+												state->game.lucia_health          = max(state->game.lucia_health - 0.15f, 0.0f);
 												state->game.blur_value           += 0.25f;
 												state->game.hud.inventory.selected_item->type = ItemType::null;
 											}
@@ -2940,15 +2980,16 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 				if (state->game.monster_timeout == 0.0f)
 				{
+					vf2 ray_to_monster = ray_to_closest(state->game.monster_position.xy, state->game.lucia_position.xy);
 					if (state->game.monster_chasing_lucia)
 					{
-						if (!exists_clear_way(state, state->game.monster_position.xy, state->game.lucia_position.xy) && norm(ray_to_closest(state->game.monster_position.xy, state->game.lucia_position.xy)) > 30.0f)
+						if (!exists_clear_way(state, state->game.monster_position.xy, state->game.lucia_position.xy) && norm(ray_to_monster) > 30.0f)
 						{
 							Mix_FadeOutMusic(4000);
 							state->game.monster_chasing_lucia = false;
 						}
 					}
-					else if (exists_clear_way(state, state->game.monster_position.xy, state->game.lucia_position.xy) && norm(ray_to_closest(state->game.monster_position.xy, state->game.lucia_position.xy)) < 25.0f)
+					else if (exists_clear_way(state, state->game.monster_position.xy, state->game.lucia_position.xy) && norm(ray_to_monster) < 25.0f)
 					{
 						if (state->game.goal == GameGoal::fix_power)
 						{
@@ -3018,6 +3059,8 @@ extern "C" PROTOTYPE_UPDATE(update)
 							state->game.monster_timeout       = 32.0f;
 							state->game.monster_chasing_lucia = false;
 							state->game.blur_value            = 1.0f;
+							state->game.lucia_state           = LuciaState::haunted;
+							state->game.lucia_state_keytime   = 1.0f;
 							state->game.lucia_health          = max(state->game.lucia_health - 0.25f, 0.0f);
 							state->game.lucia_position.xy     = rng_open_position(state);
 						}
@@ -3215,6 +3258,28 @@ extern "C" PROTOTYPE_UPDATE(update)
 			FOR_ELEMS(it, state->game.animated_sprites)
 			{
 				age_animated_sprite(it, SECONDS_PER_UPDATE);
+			}
+
+			state->game.lucia_state_keytime  = max(state->game.lucia_state_keytime - SECONDS_PER_UPDATE / 1.5f, 0.0f);
+
+			if (state->game.lucia_state_keytime == 0.0f)
+			{
+				if (state->game.lucia_health <= 0.25f)
+				{
+					state->game.lucia_state = LuciaState::anxious_wounded;
+				}
+				else if (state->game.lucia_health < FIRST_AID_KIT_THRESHOLD)
+				{
+					state->game.lucia_state = LuciaState::wounded;
+				}
+				else if (state->game.goal == GameGoal::find_door)
+				{
+					state->game.lucia_state = LuciaState::normal;
+				}
+				else
+				{
+					state->game.lucia_state = LuciaState::anxious;
+				}
 			}
 		} break;
 
@@ -4080,14 +4145,6 @@ extern "C" PROTOTYPE_RENDER(render)
 			set_color(platform->renderer, monochrome(0.1f));
 			render_filled_rect(platform->renderer, { 0.0f, static_cast<f32>(SCREEN_RES.y - STATUS_HUD_HEIGHT) }, vxx(vi2 { SCREEN_RES.x, STATUS_HUD_HEIGHT }));
 
-			render_texture
-			(
-				platform->renderer,
-				state->game.texture.lucia_normal,
-				{ SCREEN_RES.x / 2.0f - STATUS_HUD_HEIGHT / 2.0f, static_cast<f32>(SCREEN_RES.y - STATUS_HUD_HEIGHT) },
-				{ STATUS_HUD_HEIGHT, STATUS_HUD_HEIGHT }
-			);
-
 			if (state->game.hud.status.battery_display_keytime > 0.0f)
 			{
 				constexpr vf2 BATTERY_DIMENSIONS   = { 20.0f, STATUS_HUD_HEIGHT * 0.65f };
@@ -4179,6 +4236,14 @@ extern "C" PROTOTYPE_RENDER(render)
 			draw_night_vision_goggles_text("\"EXIT_9341\"", state->game.night_vision_goggles_interpolated_ray_to_door);
 
 			render_texture(platform->renderer, state->game.texture.screen, { 0.0f, 0.0f }, vxx(DISPLAY_RES));
+
+			render_texture
+			(
+				platform->renderer,
+				state->game.texture.lucia_states[+state->game.lucia_state],
+				{ (SCREEN_RES.x - STATUS_HUD_HEIGHT) / 2.0f / SCREEN_RES.x * DISPLAY_RES.x, static_cast<f32>(SCREEN_RES.y - STATUS_HUD_HEIGHT) / SCREEN_RES.y * DISPLAY_RES.y },
+				{ static_cast<f32>(STATUS_HUD_HEIGHT) / SCREEN_RES.x * DISPLAY_RES.x, static_cast<f32>(STATUS_HUD_HEIGHT) / SCREEN_RES.y * DISPLAY_RES.y }
+			);
 
 			if (state->game.notification_keytime)
 			{
