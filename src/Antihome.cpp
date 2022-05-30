@@ -527,6 +527,8 @@ struct State
 				Mix_Chunk* panel_close;
 				Mix_Chunk* shock;
 				Mix_Chunk* night_vision_goggles_on;
+				Mix_Chunk* first_aid_kit;
+				Mix_Chunk* acid_burn;
 				Mix_Chunk* horror       [2];
 				Mix_Chunk* heartbeats   [2];
 				Mix_Chunk* walk_steps   [ARRAY_CAPACITY(WALK_STEP_WAV_FILE_PATHS)];
@@ -535,6 +537,16 @@ struct State
 			} audio;
 
 			Mix_Chunk* audios[sizeof(audio) / sizeof(Mix_Chunk*)];
+		};
+
+		union
+		{
+			struct
+			{
+				Mix_Music* chases[2];
+			} music;
+
+			Mix_Music* musics[sizeof(music) / sizeof(Mix_Music*)];
 		};
 
 		GameGoal             goal;
@@ -1498,6 +1510,8 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 			state->game.audio.panel_close              = Mix_LoadWAV(DATA_DIR "audio/panel_close.wav");
 			state->game.audio.shock                    = Mix_LoadWAV(DATA_DIR "audio/shock.wav");
 			state->game.audio.night_vision_goggles_on  = Mix_LoadWAV(DATA_DIR "audio/night_vision_goggles_on.wav");
+			state->game.audio.first_aid_kit            = Mix_LoadWAV(DATA_DIR "audio/first_aid_kit.wav");
+			state->game.audio.acid_burn                = Mix_LoadWAV(DATA_DIR "audio/acid_burn.wav");
 			state->game.audio.horror[0]                = Mix_LoadWAV(DATA_DIR "audio/horror_0.wav");
 			state->game.audio.horror[1]                = Mix_LoadWAV(DATA_DIR "audio/horror_1.wav");
 			state->game.audio.heartbeats[0]            = Mix_LoadWAV(DATA_DIR "audio/heartbeat_0.wav");
@@ -1515,9 +1529,13 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 				*it = Mix_LoadWAV(CREEPY_SOUND_WAV_FILE_PATHS[it_index]);
 			}
 
+			state->game.music.chases[0] = Mix_LoadMUS(DATA_DIR "audio/chase_0.wav");
+			state->game.music.chases[1] = Mix_LoadMUS(DATA_DIR "audio/chase_1.wav");
+
 			#if DEBUG
 			FOR_ELEMS(it, state->game.textures) { ASSERT(*it); }
 			FOR_ELEMS(it, state->game.audios  ) { ASSERT(*it); }
+			FOR_ELEMS(it, state->game.musics  ) { ASSERT(*it); }
 			#endif
 
 			SDL_SetTextureBlendMode(state->game.texture.screen, SDL_BLENDMODE_BLEND);
@@ -1564,6 +1582,7 @@ internal void boot_down_state(State* state)
 			FOR_ELEMS(it, state->game.mipmaps         ) { deinit_mipmap(it);          }
 			FOR_ELEMS(it, state->game.textures        ) { SDL_DestroyTexture(*it);    }
 			FOR_ELEMS(it, state->game.audios          ) { Mix_FreeChunk(*it);         }
+			FOR_ELEMS(it, state->game.musics          ) { Mix_FreeMusic(*it);         }
 		} break;
 
 		case StateContext::end:
@@ -2104,7 +2123,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 				state->game.hud.inventory.array[0][0].type = ItemType::night_vision_goggles;
 				state->game.hud.inventory.array[0][0].night_vision_goggles.power = 1.0f;
 				state->game.hud.inventory.array[0][1].type = ItemType::flashlight;
-				state->game.hud.inventory.array[0][2].type = ItemType::military_grade_batteries;
+				state->game.hud.inventory.array[0][2].type = ItemType::first_aid_kit;
 			}
 
 			// @TEMP@
@@ -2141,7 +2160,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 				if (+wasd && HOLDING(Input::shift) && !state->game.lucia_out_of_breath)
 				{
 					state->game.lucia_velocity        = dampen(state->game.lucia_velocity, { 0.0f, 0.0f }, FRICTION * 0.7f, SECONDS_PER_UPDATE);
-					state->game.lucia_stamina         = clamp(state->game.lucia_stamina - SECONDS_PER_UPDATE / 35.0f * (1.0f + (1.0f - square(1.0f - 2.0f * state->game.lucia_sprint_keytime)) * 4.0f), 0.0f, 1.0f);
+					state->game.lucia_stamina         = clamp(state->game.lucia_stamina - SECONDS_PER_UPDATE / 60.0f * (1.0f + (1.0f - square(1.0f - 2.0f * state->game.lucia_sprint_keytime)) * 4.0f), 0.0f, 1.0f);
 					state->game.lucia_sprint_keytime  = clamp(state->game.lucia_sprint_keytime + SECONDS_PER_UPDATE / 1.5f, 0.0f, 1.0f);
 					if (state->game.lucia_stamina == 0.0f)
 					{
@@ -2396,6 +2415,11 @@ extern "C" PROTOTYPE_UPDATE(update)
 															state->game.lucia_health          -= 0.1f;
 															state->game.blur_value            += 0.5f;
 															state->game.flash_stun_activation += 1.0f;
+
+															if (state->game.holding.flashlight == flashlight)
+															{
+																state->game.holding.flashlight = 0;
+															}
 														}
 													}
 
@@ -2485,9 +2509,14 @@ extern "C" PROTOTYPE_UPDATE(update)
 											}
 											else if (state->game.hud.inventory.selected_item->flashlight.power)
 											{
-												state->game.holding.flashlight           = state->game.hud.inventory.selected_item;
-												state->game.flashlight_ray.xy            = polar(state->game.lucia_angle);
-												state->game.holding.night_vision_goggles = 0;
+												state->game.holding.flashlight = state->game.hud.inventory.selected_item;
+												state->game.flashlight_ray.xy  = polar(state->game.lucia_angle);
+
+												if (state->game.holding.night_vision_goggles)
+												{
+													Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.pick_up_heavy, 0);
+													state->game.holding.night_vision_goggles = 0;
+												}
 											}
 											else
 											{
@@ -2519,13 +2548,39 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 										case ItemType::eye_drops:
 										{
-											// Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.switch_toggle, 0); // @TODO@ Audio
+											Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.acid_burn, 0);
 											state->game.notification_message  = "(You dumped the whole eye drop container into your eyes.)";
 											state->game.notification_keytime  = 1.0f;
 											state->game.eye_drops_activation += 1.0f;
 											state->game.blur_value           += 0.5f;
 
 											state->game.hud.inventory.selected_item->type = ItemType::null;
+										} break;
+
+										case ItemType::first_aid_kit:
+										{
+											if (state->game.lucia_health > 0.9f)
+											{
+												state->game.notification_message = "\"I don't think this is supposed to be eaten... yet.\"";
+												state->game.notification_keytime = 1.0f;
+											}
+											else if (rng(&state->seed) < 0.75f)
+											{
+												Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.first_aid_kit, 0);
+												state->game.notification_message  = "(You wrapped the bandages and poured the antiseptic.)";
+												state->game.notification_keytime  = 1.0f;
+												state->game.lucia_health          = min(state->game.lucia_health + 0.5f, 1.0f);
+												state->game.hud.inventory.selected_item->type = ItemType::null;
+											}
+											else
+											{
+												Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.acid_burn, 0);
+												state->game.notification_message  = "(You ate the bandages and drank the antiseptic.)";
+												state->game.notification_keytime  = 1.0f;
+												state->game.lucia_health          = max(state->game.lucia_health - 0.25f, 0.0f);
+												state->game.blur_value           += 0.25f;
+												state->game.hud.inventory.selected_item->type = ItemType::null;
+											}
 										} break;
 									}
 
@@ -2889,12 +2944,21 @@ extern "C" PROTOTYPE_UPDATE(update)
 					{
 						if (!exists_clear_way(state, state->game.monster_position.xy, state->game.lucia_position.xy) && norm(ray_to_closest(state->game.monster_position.xy, state->game.lucia_position.xy)) > 30.0f)
 						{
-							DEBUG_printf("roaming\n");
+							Mix_FadeOutMusic(4000);
 							state->game.monster_chasing_lucia = false;
 						}
 					}
 					else if (exists_clear_way(state, state->game.monster_position.xy, state->game.lucia_position.xy) && norm(ray_to_closest(state->game.monster_position.xy, state->game.lucia_position.xy)) < 25.0f)
 					{
+						if (state->game.goal == GameGoal::fix_power)
+						{
+							Mix_FadeInMusic(state->game.music.chases[1], -1, 2000);
+						}
+						else
+						{
+							Mix_FadeInMusic(state->game.music.chases[0], -1, 2000);
+						}
+
 						Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.horror[0], 0);
 						state->game.monster_chasing_lucia = true;
 					}
@@ -2938,7 +3002,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 							state->game.monster_velocity = dampen(state->game.monster_velocity, normalize(ray) * 5.0f, 3.0f, SECONDS_PER_UPDATE);
 						}
 					}
-					else
+					else if (state->game.monster_chasing_lucia)
 					{
 						vf2 ray = ray_to_closest(state->game.monster_position.xy, state->game.lucia_position.xy);
 						if (norm(ray) > 1.0f)
@@ -2949,11 +3013,13 @@ extern "C" PROTOTYPE_UPDATE(update)
 						{
 							// @NOTE@ Lucia hit.
 
+							Mix_FadeOutMusic(2500);
 							Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.horror[1], 0);
-							state->game.monster_timeout   = 32.0f;
-							state->game.blur_value        = 1.0f;
-							state->game.lucia_health      = max(state->game.lucia_health - 0.25f, 0.0f);
-							state->game.lucia_position.xy = rng_open_position(state);
+							state->game.monster_timeout       = 32.0f;
+							state->game.monster_chasing_lucia = false;
+							state->game.blur_value            = 1.0f;
+							state->game.lucia_health          = max(state->game.lucia_health - 0.25f, 0.0f);
+							state->game.lucia_position.xy     = rng_open_position(state);
 						}
 					}
 
