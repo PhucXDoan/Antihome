@@ -610,6 +610,7 @@ struct State
 		f32                  heart_bpm;
 		i32                  heartbeat_sfx_index;
 
+		f32                  percieved_wall_height;
 		WallVoxel            wall_voxels[MAP_DIM][MAP_DIM];
 		WallSide             door_wall_side;
 		WallSide             circuit_breaker_wall_side;
@@ -723,6 +724,8 @@ struct State
 		f32    flash_stun_activation;
 		f32    radio_keytime;
 		bool8  played_radio_clips[ARRAY_CAPACITY(RADIO_WAV_FILE_PATHS)];
+		f32    pills_effect_activations[4];
+		f32    interpolated_pills_effect_activations[ARRAY_CAPACITY(pills_effect_activations)];
 	} game;
 
 	struct
@@ -1436,7 +1439,7 @@ internal vf3 shader(State* state, vf3 color, Material material, bool32 in_light,
 	constexpr vf3 AMBIENT_COLOR = { 1.0f, 1.0f, 1.0f };
 	f32 ambient_light =
 		0.5f / (square(distance) / 9.0f / (square(state->game.night_vision_goggles_activation) * 16.0f + 1.0f + (material == Material::item ? 4.0f : 0.0f) + state->game.interpolated_eye_drops_activation * 3.0f) + 1.0f)
-			+ lerp(0.6f, 1.3f, (state->game.lucia_position.z + ray.z * distance) / WALL_HEIGHT) * (0.5f - 4.0f * cube(0.5f - state->game.ceiling_lights_keytime));
+			+ lerp(0.6f, 1.3f, (state->game.lucia_position.z + ray.z * distance) / state->game.percieved_wall_height) * (0.5f - 4.0f * cube(0.5f - state->game.ceiling_lights_keytime));
 
 	if (material == Material::item)
 	{
@@ -1697,7 +1700,6 @@ extern "C" PROTOTYPE_BOOT_UP(boot_up)
 
 	state->font.major = FC_CreateFont();
 	FC_LoadFont(state->font.major, platform->renderer, DATA_DIR "Consolas.ttf", 32, FC_MakeColor(255, 255, 255, 255), TTF_STYLE_NORMAL);
-
 	state->font.minor = FC_CreateFont();
 	FC_LoadFont(state->font.minor, platform->renderer, DATA_DIR "Consolas.ttf", 16, FC_MakeColor(255, 255, 255, 255), TTF_STYLE_NORMAL);
 
@@ -1782,6 +1784,8 @@ extern "C" PROTOTYPE_UPDATE(update)
 												state->context            = StateContext::game;
 												state->game               = {};
 												boot_up_state(platform->renderer, state);
+
+												state->game.percieved_wall_height = WALL_HEIGHT;
 
 												FOR_RANGE(MAP_DIM * MAP_DIM)
 												{
@@ -2193,9 +2197,10 @@ extern "C" PROTOTYPE_UPDATE(update)
 				//state->game.monster_normal   = { -0.83331096f, 0.55280459f };
 				state->game.hud.inventory.array[0][0].type = ItemType::night_vision_goggles;
 				state->game.hud.inventory.array[0][0].night_vision_goggles.power = 1.0f;
-				state->game.hud.inventory.array[0][1].type = ItemType::flashlight;
-				state->game.hud.inventory.array[0][2].type = ItemType::first_aid_kit;
-				state->game.hud.inventory.array[0][3].type = ItemType::radio;
+				state->game.hud.inventory.array[0][1].type = ItemType::pills;
+				state->game.hud.inventory.array[0][2].type = ItemType::pills;
+				state->game.hud.inventory.array[0][3].type = ItemType::pills;
+				state->game.hud.inventory.array[1][0].type = ItemType::pills;
 
 				//state->game.lucia_health = max(state->game.lucia_health - 0.4f, 0.0f);
 			}
@@ -2751,6 +2756,24 @@ extern "C" PROTOTYPE_UPDATE(update)
 												state->game.notification_keytime = 1.0f;
 											}
 										} break;
+
+										case ItemType::pills:
+										{
+											constexpr strlit MESSAGES[] =
+												{
+													"(You feel strange.)",
+													"(You feel your stomach churning.)",
+													"(You dry swallowed all the pills.)"
+												};
+											state->game.notification_message = MESSAGES[rng(&state->seed, 0, ARRAY_CAPACITY(MESSAGES))];
+											state->game.notification_keytime = 1.0f;
+
+											i32 index = rng(&state->seed, 0, ARRAY_CAPACITY(state->game.pills_effect_activations));
+											state->game.pills_effect_activations[index] += 1.0f;
+											DEBUG_printf("%i\n", index);
+
+											state->game.hud.inventory.selected_item->type = ItemType::null;
+										} break;
 									}
 
 									if (state->game.hud.type == HudType::inventory)
@@ -2918,7 +2941,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 							{
 								best_heuristic            = heuristic;
 								state->game.hand_on_state = HandOnState::circuit_breaker;
-								hand_reach_position       = vx3(circuit_breaker_position, WALL_HEIGHT / 2.0f);
+								hand_reach_position       = vx3(circuit_breaker_position, state->game.percieved_wall_height / 2.0f);
 							}
 						}
 
@@ -3199,7 +3222,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 					state->game.monster_velocity = move(state, &state->game.monster_position.xy, state->game.monster_velocity * SECONDS_PER_UPDATE) / SECONDS_PER_UPDATE;
 
-					state->game.monster_position.z = cosf(state->time * 3.0f) * 0.15f + WALL_HEIGHT / 2.0f;
+					state->game.monster_position.z = cosf(state->time * 3.0f) * 0.15f + state->game.percieved_wall_height / 2.0f;
 
 					if (state->game.monster_chase_keytime)
 					{
@@ -3326,8 +3349,19 @@ extern "C" PROTOTYPE_UPDATE(update)
 			state->game.interpolated_eye_drops_activation = dampen(state->game.interpolated_eye_drops_activation, state->game.eye_drops_activation, 4.0f, SECONDS_PER_UPDATE);
 			state->game.flash_stun_activation             = dampen(state->game.flash_stun_activation, 0.0f, 16.0f, SECONDS_PER_UPDATE);
 
-			state->game.blur_value        = max(state->game.blur_value - SECONDS_PER_UPDATE / 8.0f, lerp(0.0f, 0.2f, square(1.0f - state->game.lucia_health)));
+			f32 pill_dosage_total = 0.0f;
+			FOR_ELEMS(it, state->game.pills_effect_activations)
+			{
+				pill_dosage_total += *it;
+			}
+
+			state->game.blur_value        = max(state->game.blur_value - SECONDS_PER_UPDATE / 8.0f, lerp(0.0f, 0.2f, square(1.0f - state->game.lucia_health)) + pill_dosage_total / 16.0f);
 			state->game.interpolated_blur = dampen(state->game.interpolated_blur, state->game.blur_value, 4.0f, SECONDS_PER_UPDATE);
+
+			if (pill_dosage_total > 3.0f)
+			{
+				state->game.lucia_health = dampen(state->game.lucia_health, 0.0f, 0.05f, SECONDS_PER_UPDATE);
+			}
 
 			// @TODO@ Frame-independent.
 			state->game.heart_rate_display_update_keytime += SECONDS_PER_UPDATE / 0.025f;
@@ -3446,6 +3480,14 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 			state->game.flashlight_ray.xy = dampen(state->game.flashlight_ray.xy, polar(state->game.lucia_angle + sinf(state->game.flashlight_keytime * TAU * 15.0f) * 0.1f), 16.0f, SECONDS_PER_UPDATE);
 			state->game.flashlight_ray    = normalize(state->game.flashlight_ray);
+
+			FOR_ELEMS(it, state->game.interpolated_pills_effect_activations)
+			{
+				*it = dampen(*it, state->game.pills_effect_activations[it_index] * (sinf(state->time / 8.0f) + 1.0f) / 2.0f, 0.1f, SECONDS_PER_UPDATE);
+				state->game.pills_effect_activations[it_index] = max(state->game.pills_effect_activations[it_index] - SECONDS_PER_UPDATE / 60.0f, 0.0f);
+			}
+
+			state->game.percieved_wall_height = dampen(state->game.percieved_wall_height, WALL_HEIGHT + state->game.interpolated_pills_effect_activations[1], 1.0f, SECONDS_PER_UPDATE);
 		} break;
 
 		case StateContext::end:
@@ -3782,8 +3824,8 @@ extern "C" PROTOTYPE_RENDER(render)
 							ray_casted_wall_side.coordinates.x = mod(ray_casted_wall_side.coordinates.x, MAP_DIM);
 							ray_casted_wall_side.coordinates.y = mod(ray_casted_wall_side.coordinates.y, MAP_DIM);
 
-							wall_starting_y = static_cast<i32>(VIEW_RES.y / 2.0f - HORT_TO_VERT_K / state->game.lucia_fov *                state->game.lucia_position.z  / (wall_distance + 0.01f));
-							wall_ending_y   = static_cast<i32>(VIEW_RES.y / 2.0f + HORT_TO_VERT_K / state->game.lucia_fov * (WALL_HEIGHT - state->game.lucia_position.z) / (wall_distance + 0.01f));
+							wall_starting_y = static_cast<i32>(VIEW_RES.y / 2.0f - HORT_TO_VERT_K / state->game.lucia_fov * state->game.lucia_position.z / (wall_distance + lerp(0.01f, 1.0f, state->game.interpolated_pills_effect_activations[0])));
+							wall_ending_y   = static_cast<i32>(VIEW_RES.y / 2.0f + HORT_TO_VERT_K / state->game.lucia_fov * (state->game.percieved_wall_height - state->game.lucia_position.z) / (wall_distance + lerp(0.01f, 3.0f, state->game.interpolated_pills_effect_activations[0])));
 
 							if (equal_wall_sides(ray_casted_wall_side, state->game.door_wall_side))
 							{
@@ -3987,7 +4029,7 @@ extern "C" PROTOTYPE_RENDER(render)
 
 					for (RenderScanNode* node = render_scan_node; node; node = node->next_node)
 					{
-						if (IN_RANGE(y, node->starting_y, node->ending_y) && IN_RANGE(state->game.lucia_position.z + ray.z * node->distance, 0.0f, WALL_HEIGHT))
+						if (IN_RANGE(y, node->starting_y, node->ending_y) && IN_RANGE(state->game.lucia_position.z + ray.z * node->distance, 0.0f, state->game.percieved_wall_height))
 						{
 							scan_pixel = sample_at(&node->image, { node->portion, (static_cast<f32>(y) - node->starting_y) / (node->ending_y - node->starting_y) });
 							if (scan_pixel.w)
@@ -4001,7 +4043,7 @@ extern "C" PROTOTYPE_RENDER(render)
 					if (IN_RANGE(y, wall_starting_y, wall_ending_y))
 					{
 						f32 y_portion          = static_cast<f32>(y - wall_starting_y) / (wall_ending_y - wall_starting_y);
-						f32 distance           = sqrtf(square(wall_distance) + square(y_portion * WALL_HEIGHT - state->game.lucia_position.z));
+						f32 distance           = sqrtf(square(wall_distance) + square(y_portion * state->game.percieved_wall_height - state->game.lucia_position.z));
 
 						vf4 wall_overlay_color = { NAN, NAN, NAN, 0.0f };
 						if (wall_overlay && IN_RANGE(y_portion, wall_overlay_uv_position.y, wall_overlay_uv_position.y + wall_overlay_uv_dimensions.y))
@@ -4017,7 +4059,7 @@ extern "C" PROTOTYPE_RENDER(render)
 								(
 									&state->game.mipmap.wall,
 									(distance / 4.0f + state->game.mipmap.wall.level_count * square(1.0f - fabsf(dot(ray, vx3(ray_casted_wall_side.normal, 0.0f))))) * (1.0f - state->game.interpolated_eye_drops_activation),
-									{ wall_portion, y_portion }
+									{ mod(wall_portion + state->game.interpolated_pills_effect_activations[0] / 2.0f, 1.0f), mod(y_portion + sinf(state->game.interpolated_pills_effect_activations[0]), 1.0f) }
 								);
 						}
 
@@ -4057,22 +4099,22 @@ extern "C" PROTOTYPE_RENDER(render)
 							mipmap   = &state->game.mipmap.floor;
 							material = Material::floor;
 
-							precomputed f32 FLOOR_DIM = MAP_DIM * WALL_SPACING / roundf(MAP_DIM * WALL_SPACING / 4.0f);
-							uv.x = mod(uv.x / FLOOR_DIM, 1.0f);
-							uv.y = mod(uv.y / FLOOR_DIM, 1.0f);
+							f32 floor_dim = MAP_DIM * WALL_SPACING / roundf(MAP_DIM * WALL_SPACING / 4.0f);
+							uv.x = mod(uv.x / floor_dim + cosf(state->time / 5.0f) * state->game.interpolated_pills_effect_activations[2] * 8.0f / (distance + 4.0f), 1.0f);
+							uv.y = mod(uv.y / floor_dim + sinf(state->time / 5.0f) * state->game.interpolated_pills_effect_activations[3] * 8.0f / (distance + 4.0f), 1.0f);
 						}
 						else
 						{
-							f32 zk   = (WALL_HEIGHT - state->game.lucia_position.z) / ray.z;
+							f32 zk   = (state->game.percieved_wall_height - state->game.lucia_position.z) / ray.z;
 							uv       = state->game.lucia_position.xy + zk * ray.xy;
-							distance = sqrtf(norm_sq(uv - state->game.lucia_position.xy) + square(WALL_HEIGHT - state->game.lucia_position.z));
+							distance = sqrtf(norm_sq(uv - state->game.lucia_position.xy) + square(state->game.percieved_wall_height - state->game.lucia_position.z));
 							normal   = { 0.0f, 0.0f, -1.0f };
 							mipmap   = &state->game.mipmap.ceiling;
 							material = Material::ceiling;
 
-							precomputed f32 CEILING_DIM = MAP_DIM * WALL_SPACING / roundf(MAP_DIM * WALL_SPACING / 4.0f);
-							uv.x = mod(uv.x / CEILING_DIM, 1.0f);
-							uv.y = mod(uv.y / CEILING_DIM, 1.0f);
+							f32 ceiling_dim = MAP_DIM * WALL_SPACING / roundf(MAP_DIM * WALL_SPACING / 4.0f) + state->game.interpolated_pills_effect_activations[3];
+							uv.x = mod(uv.x / ceiling_dim + cosf(state->time / 8.0f) * state->game.interpolated_pills_effect_activations[3] * 16.0f / (distance + 3.0f), 1.0f);
+							uv.y = mod(uv.y / ceiling_dim + sinf(state->time / 8.0f) * state->game.interpolated_pills_effect_activations[2] * 16.0f / (distance + 3.0f), 1.0f);
 						}
 
 						vf3 floor_ceiling_color =
