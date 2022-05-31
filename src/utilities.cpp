@@ -80,6 +80,7 @@ internal constexpr vf2 lerp(vf2 a, vf2 b, f32 t) { return a * (1.0f - t) + b * t
 internal constexpr f32 lerp(f32 a, f32 b, f32 t) { return a * (1.0f - t) + b * t; }
 
 internal __m128 lerp(__m128 a, __m128 b, __m128 t) { return _mm_add_ps(_mm_mul_ps(a, _mm_sub_ps(m_one, t)), _mm_mul_ps(b, t)); }
+internal __m128 clamp(__m128 x, __m128 a, __m128 b) { return _mm_min_ps(_mm_max_ps(x, a), b); }
 
 internal constexpr f32 dampen(f32 a, f32 b, f32 k, f32 dt) { return lerp(a, b, 1.0f - expf(-k * dt)); }
 internal constexpr vf2 dampen(vf2 a, vf2 b, f32 k, f32 dt) { return lerp(a, b, 1.0f - expf(-k * dt)); }
