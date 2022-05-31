@@ -625,6 +625,7 @@ struct State
 		f32                  lucia_sprint_keytime;
 		bool32               lucia_out_of_breath;
 		f32                  lucia_health;
+		f32                  interpolated_lucia_health;
 		f32                  lucia_dying_keytime;
 		LuciaState           lucia_state;
 		f32                  lucia_state_keytime;
@@ -1968,10 +1969,11 @@ extern "C" PROTOTYPE_UPDATE(update)
 													}
 												}
 
-												state->game.lucia_position.z = LUCIA_HEIGHT;
-												state->game.lucia_fov        = TAU / 3.0f;
-												state->game.lucia_stamina    = 1.0f;
-												state->game.lucia_health     = 1.0f;
+												state->game.lucia_position.z          = LUCIA_HEIGHT;
+												state->game.lucia_fov                 = TAU / 3.0f;
+												state->game.lucia_stamina             = 1.0f;
+												state->game.lucia_health              = 1.0f;
+												state->game.interpolated_lucia_health = 1.0f;
 
 												state->game.monster_timeout = 8.0f;
 
@@ -2167,9 +2169,18 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 		case StateContext::game:
 		{
+			if (HOLDING(Input::down))
+			{
+				state->game.lucia_health -= 0.1f * SECONDS_PER_UPDATE;
+			}
+			if (HOLDING(Input::up))
+			{
+				state->game.lucia_health += 0.1f * SECONDS_PER_UPDATE;
+			}
+
 			DEBUG_once // @TEMP@
 			{
-				//state->game.lucia_position.xy = get_position_of_wall_side(state->game.door_wall_side, 1.0f);
+				state->game.lucia_position.xy = get_position_of_wall_side(state->game.door_wall_side, 1.0f);
 				//state->game.lucia_position.xy = get_position_of_wall_side(state->game.circuit_breaker_wall_side, 1.0f);
 				//state->game.lucia_position.xy = { 1.0f, 1.0f };
 				//state->game.lucia_position = { 64.637268f, 26.6f, 1.3239026f };
@@ -3251,7 +3262,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 					}
 				}
 
-				state->game.heart_bpm               = 63.5f + 80.0f * (1.0f - state->game.lucia_stamina) * (1.0f - state->game.lucia_health);
+				state->game.heart_bpm               = 63.5f + 80.0f * (1.0f - state->game.lucia_stamina) + 30.0f * clamp(1.0f - state->game.lucia_health, 0.0f, 1.0f);
 				state->game.heart_pulse_keytime    += state->game.heart_bpm / 60.0f * SECONDS_PER_UPDATE;
 				state->game.heart_pulse_time_since += SECONDS_PER_UPDATE;
 
@@ -3415,6 +3426,8 @@ extern "C" PROTOTYPE_UPDATE(update)
 			}
 
 			state->game.radio_keytime = max(state->game.radio_keytime - SECONDS_PER_UPDATE / 30.0f, 0.0f);
+
+			state->game.interpolated_lucia_health = dampen(state->game.interpolated_lucia_health, state->game.lucia_health, 1.0f, SECONDS_PER_UPDATE);
 		} break;
 
 		case StateContext::end:
@@ -4345,10 +4358,12 @@ extern "C" PROTOTYPE_RENDER(render)
 				}
 			}
 
-			constexpr vf2 HEART_RATE_MONITOR_DIMENSIONS  = { 50.0f, STATUS_HUD_HEIGHT * 0.6f };
+			constexpr vf2 HEART_RATE_MONITOR_DIMENSIONS  = { 65.0f, STATUS_HUD_HEIGHT * 0.6f };
 			constexpr vf2 HEART_RATE_MONITOR_COORDINATES = vf2 { SCREEN_RES.x - 15.0f - HEART_RATE_MONITOR_DIMENSIONS.x, SCREEN_RES.y - (STATUS_HUD_HEIGHT + HEART_RATE_MONITOR_DIMENSIONS.y) / 2.0f };
 
-			set_color(platform->renderer, vf3 { lerp(0.15f, 0.7f, clamp(1.0f - state->game.heart_pulse_time_since, 0.0f, 1.0f) * square(1.0f - state->game.lucia_health)), 0.15f, 0.15f });
+			set_color(platform->renderer, monochrome(0.0f));
+			render_rect(platform->renderer, HEART_RATE_MONITOR_COORDINATES + vf2 { -1.0f, -1.0f }, HEART_RATE_MONITOR_DIMENSIONS + vf2 { 2.0f, 2.0f });
+			set_color(platform->renderer, vf3 { lerp(0.15f, 0.7f, clamp(1.0f - state->game.heart_pulse_time_since, 0.0f, 1.0f) * square(1.0f - state->game.interpolated_lucia_health)), 0.15f, 0.15f });
 			render_filled_rect(platform->renderer, HEART_RATE_MONITOR_COORDINATES, HEART_RATE_MONITOR_DIMENSIONS);
 
 			FOR_ELEMS(it, state->game.heart_rate_display_values, ARRAY_CAPACITY(state->game.heart_rate_display_values) - 1)
@@ -4364,6 +4379,15 @@ extern "C" PROTOTYPE_RENDER(render)
 					);
 				}
 			}
+
+			constexpr f32 HEALTH_DISPLAY_WIDTH = 10.0f;
+
+			set_color(platform->renderer, monochrome(0.0f));
+			render_filled_rect(platform->renderer, HEART_RATE_MONITOR_COORDINATES + vf2 { -HEALTH_DISPLAY_WIDTH, 0.0f } + vf2 { -1.0f, -1.0f }, vf2 { HEALTH_DISPLAY_WIDTH, HEART_RATE_MONITOR_DIMENSIONS.y } + vf2 { 2.0f, 2.0f });
+			set_color(platform->renderer, vf3 { lerp(0.1f, 1.0f, clamp(1.0f - square(state->game.heart_pulse_time_since), 0.0f, 1.0f)), 0.1f, 0.1f });
+			render_filled_rect(platform->renderer, HEART_RATE_MONITOR_COORDINATES + vf2 { -HEALTH_DISPLAY_WIDTH, 0.0f }, { HEALTH_DISPLAY_WIDTH, HEART_RATE_MONITOR_DIMENSIONS.y });
+			set_color(platform->renderer, vf3 { 0.1f, lerp(0.7f, 1.0f, clamp(1.0f - state->game.heart_pulse_time_since, 0.0f, 1.0f)), 0.1f });
+			render_filled_rect(platform->renderer, HEART_RATE_MONITOR_COORDINATES + vf2 { -HEALTH_DISPLAY_WIDTH, HEART_RATE_MONITOR_DIMENSIONS.y * (1.0f - state->game.interpolated_lucia_health) }, { HEALTH_DISPLAY_WIDTH, HEART_RATE_MONITOR_DIMENSIONS.y * state->game.interpolated_lucia_health });
 
 			SDL_SetRenderTarget(platform->renderer, state->texture.display);
 
@@ -4433,14 +4457,13 @@ extern "C" PROTOTYPE_RENDER(render)
 				FC_ALIGN_LEFT,
 				1.0f,
 				{ 1.0f, 1.0f, 1.0f, 1.0f },
-				"%.2f %.2f\n%.2f %.2f\n%.2f %.2f\n%.2f\n%.2f\n%i / %zu",
+				"%.2f %.2f\n%.2f %.2f\n%.2f %.2f\n%.2f\n%.2f\n%.2f",
 				state->game.lucia_position.x, state->game.lucia_position.y,
 				state->game.door_wall_side.coordinates.x * WALL_SPACING, state->game.door_wall_side.coordinates.y * WALL_SPACING,
 				state->game.monster_position.x, state->game.monster_position.y,
 				state->game.monster_timeout,
 				state->game.lucia_health,
-				state->game.item_count,
-				ARRAY_CAPACITY(state->game.item_buffer)
+				state->game.heart_bpm
 			);
 		} break;
 
