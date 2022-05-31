@@ -1,6 +1,6 @@
 // @NOTE@ Credits
 // "A Fast Voxel Traversal Algorithm for Ray Tracing" https://www.flipcode.com/archives/A%20faster%20voxel%20traversal%20algorithm%20for%20ray%20tracing.pdf
-// "How to check if two given line segments intersect?" https://www.geeksforgeeks.org/check-if-two-given-line-segments-intersect/, http://www.dcs.gla.ac.uk/~pat/52233/slides/Geometry1x1.pdf
+// "How to check if two given line segments intersect?" https://www.geeksforgeeks.org/check-if-two-given-line-segments-intersect/ (http://www.dcs.gla.ac.uk/~pat/52233/slides/Geometry1x1.pdf)
 
 #define STB_IMAGE_IMPLEMENTATION true
 #include <stb_image.h>
@@ -246,7 +246,7 @@ enum_loose (WindowType, u8)
 
 	enum_start_region(TYPE)
 		credits,
-		antihome_program,
+		room_protocol,
 		settings,
 		power,
 	enum_end_region(TYPE)
@@ -255,7 +255,7 @@ enum_loose (WindowType, u8)
 global struct { vf2 position; vf2 dimensions; strlit name; strlit img_file_path; } WINDOW_ICON_DATA[WindowType::TYPE_COUNT] =
 	{
 		{ { 32.0f, DISPLAY_RES.y - 100.0f }, vx2(64.0f)                       , "Credits" , DATA_DIR "computer/text_file.png"             },
-		{ { 32.0f, DISPLAY_RES.y - 200.0f }, vx2(64.0f)                       , "Antihome", DATA_DIR "computer/antihome_program.png"      },
+		{ { 32.0f, DISPLAY_RES.y - 200.0f }, vx2(64.0f)                       , "Room"    , DATA_DIR "computer/room_protocol.png"         },
 		{ { 32.0f, DISPLAY_RES.y - 300.0f }, vx2(64.0f)                       , "Settings", DATA_DIR "computer/gear.png"                  },
 		{ { 0.0f, 0.0f                    }, vxx(vx2(COMPUTER_TASKBAR_HEIGHT)), 0         , DATA_DIR "computer/terminal_power_button.png" }
 	};
@@ -265,9 +265,9 @@ enum_loose (WindowButtonFamily, i8)
 	enum_start_region(CREDITS)
 	enum_end_region(CREDITS)
 
-	enum_start_region(ANTIHOME_PROGRAM)
-		antihome_program_lure,
-	enum_end_region(ANTIHOME_PROGRAM)
+	enum_start_region(ROOM_PROTOCOL)
+		room_protocol_lure,
+	enum_end_region(ROOM_PROTOCOL)
 
 	enum_start_region(SETTINGS)
 	enum_end_region(SETTINGS)
@@ -285,8 +285,8 @@ enum_loose (WindowSliderFamily, i8)
 	enum_start_region(CREDITS)
 	enum_end_region(CREDITS)
 
-	enum_start_region(ANTIHOME_PROGRAM)
-	enum_end_region(ANTIHOME_PROGRAM)
+	enum_start_region(ROOM_PROTOCOL)
+	enum_end_region(ROOM_PROTOCOL)
 
 	enum_start_region(SETTINGS)
 		settings_master_volume,
@@ -328,11 +328,11 @@ global constexpr struct
 		},
 		{
 			{ 275.0f, 250.0f },
-			+WindowButtonFamily::ANTIHOME_PROGRAM_COUNT,
+			+WindowButtonFamily::ROOM_PROTOCOL_COUNT,
 			{
 				{ "Lure", { 0.8f, 0.2f, 0.2f }, { 0.5f, 0.33f }, { 50.0f, 25.0f } }
 			},
-			+WindowSliderFamily::ANTIHOME_PROGRAM_COUNT,
+			+WindowSliderFamily::ROOM_PROTOCOL_COUNT,
 			{}
 		},
 		{
@@ -1700,7 +1700,7 @@ extern "C" PROTOTYPE_BOOT_UP(boot_up)
 	boot_up_state(platform->renderer, state);
 
 	{
-		SDL_Surface* icon = SDL_LoadBMP(DATA_DIR "antihome_icon.bmp");
+		SDL_Surface* icon = SDL_LoadBMP(DATA_DIR "room_protocol.bmp");
 		SDL_SetWindowIcon(platform->window, icon);
 		SDL_FreeSurface(icon);
 	}
@@ -1767,11 +1767,11 @@ extern "C" PROTOTYPE_UPDATE(update)
 							{
 								switch (tm.window_type)
 								{
-									case WindowType::antihome_program:
+									case WindowType::room_protocol:
 									{
-										switch (+WindowButtonFamily::ANTIHOME_PROGRAM_START + +button_index)
+										switch (+WindowButtonFamily::ROOM_PROTOCOL_START + +button_index)
 										{
-											case WindowButtonFamily::antihome_program_lure:
+											case WindowButtonFamily::room_protocol_lure:
 											{
 												boot_down_state(state);
 												state->context_arena.used = 0;
@@ -3547,7 +3547,7 @@ extern "C" PROTOTYPE_RENDER(render)
 							);
 						} break;
 
-						case WindowType::antihome_program:
+						case WindowType::room_protocol:
 						{
 							set_color(platform->renderer, monochrome(0.4f));
 							render_filled_rect(platform->renderer, { tm.window_position.x, DISPLAY_RES.y - window_data.dimensions.y - tm.window_position.y }, window_data.dimensions);
@@ -3559,9 +3559,9 @@ extern "C" PROTOTYPE_RENDER(render)
 								{ tm.window_position.x + window_data.dimensions.x * 0.5f, DISPLAY_RES.y - tm.window_position.y - window_data.dimensions.y * 0.7f },
 								0.5f,
 								FC_ALIGN_CENTER,
-								1.25f,
+								1.5f,
 								{ 1.0f, 1.0f, 1.0f, 1.0f },
-								"ANTIHOME"
+								"ROOM"
 							);
 						} break;
 

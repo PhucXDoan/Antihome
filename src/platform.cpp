@@ -2,8 +2,8 @@
 #include "unified.h"
 #include "platform.h"
 
-global constexpr strlit DLL_FILE_PATH      = EXE_DIR "Antihome.dll";
-global constexpr strlit DLL_TEMP_FILE_PATH = EXE_DIR "Antihome.dll.temp"; // @TODO@ Do files get written in the exe file directory or the data directory?
+global constexpr strlit DLL_FILE_PATH      = EXE_DIR "Room.dll";
+global constexpr strlit DLL_TEMP_FILE_PATH = EXE_DIR "Room.dll.temp"; // @TODO@ Do files get written in the exe file directory or the data directory?
 
 global byte*                dll;
 global time_t               dll_modification_time;
@@ -75,11 +75,11 @@ int main(int, char**)
 	}
 	DEFER { Mix_CloseAudio(); };
 
-	constexpr vi2 INITIAL_WINDOW_DIM = { 1200, 800 };
+	constexpr vi2 INITIAL_WINDOW_DIM = { 800, 600 };
 
 	Platform platform = {};
 
-	platform.window = SDL_CreateWindow("Antihome", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, INITIAL_WINDOW_DIM.x, INITIAL_WINDOW_DIM.y, 0);
+	platform.window = SDL_CreateWindow("Room", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, INITIAL_WINDOW_DIM.x, INITIAL_WINDOW_DIM.y, 0);
 	DEFER { SDL_DestroyWindow(platform.window); };
 	if (!platform.window)
 	{
