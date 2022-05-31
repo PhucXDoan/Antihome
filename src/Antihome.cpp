@@ -634,7 +634,7 @@ struct State
 		PathCoordinatesNode* monster_path;
 		vi2                  monster_path_goal;
 		vf3                  monster_position;
-		bool32               monster_chasing_lucia;
+		f32                  monster_chase_keytime;
 		f32                  monster_roam_update_keytime;
 		vf2                  monster_velocity;
 		vf2                  monster_normal;
@@ -2586,7 +2586,6 @@ extern "C" PROTOTYPE_UPDATE(update)
 											else if (state->game.hud.inventory.selected_item->flashlight.power)
 											{
 												state->game.holding.flashlight = state->game.hud.inventory.selected_item;
-												state->game.flashlight_ray.xy  = polar(state->game.lucia_angle);
 
 												if (state->game.holding.night_vision_goggles)
 												{
@@ -3106,31 +3105,32 @@ extern "C" PROTOTYPE_UPDATE(update)
 				if (state->game.monster_timeout == 0.0f)
 				{
 					vf2 ray_to_monster = ray_to_closest(state->game.monster_position.xy, state->game.lucia_position.xy);
-					if (state->game.monster_chasing_lucia)
+					if (state->game.monster_chase_keytime)
 					{
-						if (!exists_clear_way(state, state->game.monster_position.xy, state->game.lucia_position.xy) && norm(ray_to_monster) > 30.0f)
+						if (exists_clear_way(state, state->game.monster_position.xy, state->game.lucia_position.xy))
 						{
-							Mix_FadeOutMusic(4000);
-							state->game.monster_chasing_lucia = false;
-						}
-					}
-					else if (exists_clear_way(state, state->game.monster_position.xy, state->game.lucia_position.xy) && norm(ray_to_monster) < 25.0f)
-					{
-						if (state->game.goal == GameGoal::fix_power)
-						{
-							Mix_FadeInMusic(state->game.music.chases[1], -1, 2000);
+							state->game.monster_chase_keytime = 1.0f;
 						}
 						else
 						{
-							Mix_FadeInMusic(state->game.music.chases[0], -1, 2000);
-						}
+							state->game.monster_chase_keytime = max(state->game.monster_chase_keytime - SECONDS_PER_UPDATE / 8.0f, 0.0f);
 
+							if (state->game.monster_chase_keytime == 0.0f)
+							{
+								Mix_FadeOutMusic(4000);
+							}
+						}
+					}
+					else if (exists_clear_way(state, state->game.monster_position.xy, state->game.lucia_position.xy) && norm(ray_to_monster) < 24.0f)
+					{
+						Mix_FadeInMusic(state->game.music.chases[0], -1, 2000);
 						Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.horror[0], 0);
-						state->game.monster_chasing_lucia = true;
+						state->game.monster_chase_keytime = 1.0f;
 					}
 
+
 					vi2 updated_monster_path_goal = state->game.monster_path_goal;
-					if (state->game.monster_chasing_lucia)
+					if (state->game.monster_chase_keytime)
 					{
 						updated_monster_path_goal = get_closest_open_path_coordinates(state, state->game.lucia_position.xy);
 					}
@@ -3168,7 +3168,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 							state->game.monster_velocity = dampen(state->game.monster_velocity, normalize(ray) * 5.0f, 3.0f, SECONDS_PER_UPDATE);
 						}
 					}
-					else if (state->game.monster_chasing_lucia)
+					else if (state->game.monster_chase_keytime)
 					{
 						vf2 ray = ray_to_closest(state->game.monster_position.xy, state->game.lucia_position.xy);
 						if (norm(ray) > 1.0f)
@@ -3182,7 +3182,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 							Mix_FadeOutMusic(2500);
 							Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.horror[1], 0);
 							state->game.monster_timeout       = 32.0f;
-							state->game.monster_chasing_lucia = false;
+							state->game.monster_chase_keytime = 0.0f;
 							state->game.blur_value            = 1.0f;
 							state->game.lucia_state           = LuciaState::haunted;
 							state->game.lucia_state_keytime   = 1.0f;
@@ -3202,7 +3202,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 					state->game.monster_position.z = cosf(state->time * 3.0f) * 0.15f + WALL_HEIGHT / 2.0f;
 
-					if (state->game.monster_chasing_lucia)
+					if (state->game.monster_chase_keytime)
 					{
 						vf2 ray      = ray_to_closest(state->game.monster_position.xy, state->game.lucia_position.xy);
 						f32 distance = norm(ray);
@@ -3347,9 +3347,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 				state->game.flashlight_activation = dampen(state->game.flashlight_activation, sinf(TAU / 4.0f * (1.0f - powf(1.0f - state->game.holding.flashlight->flashlight.power, 16.0f))), 25.0f, SECONDS_PER_UPDATE);
 
-				state->game.flashlight_ray.xy  = dampen(state->game.flashlight_ray.xy, polar(state->game.lucia_angle + sinf(state->game.flashlight_keytime * TAU * 15.0f) * 0.1f), 16.0f, SECONDS_PER_UPDATE);
-				state->game.flashlight_ray.z   = sinf(state->game.flashlight_keytime * TAU * 36.0f) * 0.05f;
-				state->game.flashlight_ray     = normalize(state->game.flashlight_ray);
+				state->game.flashlight_ray.z = sinf(state->game.flashlight_keytime * TAU * 36.0f) * 0.05f;
 			}
 			else
 			{
@@ -3428,6 +3426,9 @@ extern "C" PROTOTYPE_UPDATE(update)
 			state->game.radio_keytime = max(state->game.radio_keytime - SECONDS_PER_UPDATE / 30.0f, 0.0f);
 
 			state->game.interpolated_lucia_health = dampen(state->game.interpolated_lucia_health, state->game.lucia_health, 1.0f, SECONDS_PER_UPDATE);
+
+			state->game.flashlight_ray.xy = dampen(state->game.flashlight_ray.xy, polar(state->game.lucia_angle + sinf(state->game.flashlight_keytime * TAU * 15.0f) * 0.1f), 16.0f, SECONDS_PER_UPDATE);
+			state->game.flashlight_ray    = normalize(state->game.flashlight_ray);
 		} break;
 
 		case StateContext::end:
@@ -4462,8 +4463,8 @@ extern "C" PROTOTYPE_RENDER(render)
 				state->game.door_wall_side.coordinates.x * WALL_SPACING, state->game.door_wall_side.coordinates.y * WALL_SPACING,
 				state->game.monster_position.x, state->game.monster_position.y,
 				state->game.monster_timeout,
-				state->game.lucia_health,
-				state->game.heart_bpm
+				state->game.monster_roam_update_keytime,
+				state->game.monster_chase_keytime
 			);
 		} break;
 
