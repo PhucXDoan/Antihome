@@ -2,6 +2,8 @@
 // "A Fast Voxel Traversal Algorithm for Ray Tracing" https://www.flipcode.com/archives/A%20faster%20voxel%20traversal%20algorithm%20for%20ray%20tracing.pdf
 // "How to check if two given line segments intersect?" https://www.geeksforgeeks.org/check-if-two-given-line-segments-intersect/ (http://www.dcs.gla.ac.uk/~pat/52233/slides/Geometry1x1.pdf)
 
+#define DEBUG_SHOWCASE_MAP_GENERATION true
+
 #define STB_IMAGE_IMPLEMENTATION true
 #include <stb_image.h>
 #include "unified.h"
@@ -9,7 +11,12 @@
 #include "rng.cpp"
 #include "utilities.cpp"
 
+#if DEBUG_SHOWCASE_MAP_GENERATION
+global constexpr vi2 DISPLAY_RES = { 1620, 1080 };
+extern "C" PROTOTYPE_RENDER(render);
+#else
 global constexpr vi2 DISPLAY_RES = { 800, 600 };
+#endif
 
 global constexpr i32 COMPUTER_TASKBAR_HEIGHT     = 50;
 global constexpr i32 COMPUTER_TITLE_BAR_HEIGHT   = 25;
@@ -23,7 +30,7 @@ global constexpr f32 HORT_TO_VERT_K        = 0.927295218f * VIEW_RES.x;
 global constexpr f32 WALL_HEIGHT           = 2.7432f;
 global constexpr f32 WALL_THICKNESS        = 0.4f;
 global constexpr f32 LUCIA_HEIGHT          = 1.4986f;
-global constexpr i32 MAP_DIM               = 64;
+global constexpr i32 MAP_DIM               = 40;
 global constexpr f32 WALL_SPACING          = 3.0f;
 global constexpr i32 INVENTORY_DIM         = 30;
 global constexpr i32 INVENTORY_PADDING     = 5;
@@ -405,6 +412,14 @@ global constexpr strlit LUCIA_STATE_IMG_FILE_PATHS[LuciaState::CAPACITY] =
 
 struct State
 {
+	#if DEBUG_SHOWCASE_MAP_GENERATION
+	bool32      DEBUG_showcase_map_generation;
+	bool32      DEBUG_thread_terminate;
+	SDL_sem*    DEBUG_halted;
+	SDL_sem*    DEBUG_continue;
+	SDL_Thread* DEBUG_thread;
+	#endif
+
 	MemoryArena  context_arena;
 	MemoryArena  transient_arena;
 
@@ -571,6 +586,7 @@ struct State
 				Mix_Chunk* first_aid_kit;
 				Mix_Chunk* acid_burn;
 				Mix_Chunk* squelch;
+				Mix_Chunk* cowbell;
 				Mix_Chunk* horror       [2];
 				Mix_Chunk* heartbeats   [2];
 				Mix_Chunk* radio_clips  [ARRAY_CAPACITY(RADIO_WAV_FILE_PATHS)];
@@ -726,6 +742,7 @@ struct State
 		bool8  played_radio_clips[ARRAY_CAPACITY(RADIO_WAV_FILE_PATHS)];
 		f32    pills_effect_activations[4];
 		f32    interpolated_pills_effect_activations[ARRAY_CAPACITY(pills_effect_activations)];
+		f32    cowbell_keytime;
 	} game;
 
 	struct
@@ -1492,6 +1509,8 @@ internal vf3 shader(State* state, vf3 color, Material material, bool32 in_light,
 
 internal void boot_up_state(SDL_Renderer* renderer, State* state)
 {
+#if DEBUG_SHOWCASE_MAP_GENERATION
+#else
 	switch (state->context)
 	{
 		case StateContext::title_menu:
@@ -1571,6 +1590,7 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 			state->game.audio.first_aid_kit           = Mix_LoadWAV(DATA_DIR "audio/first_aid_kit.wav");
 			state->game.audio.acid_burn               = Mix_LoadWAV(DATA_DIR "audio/acid_burn.wav");
 			state->game.audio.squelch                 = Mix_LoadWAV(DATA_DIR "audio/squelch.wav");
+			state->game.audio.cowbell                 = Mix_LoadWAV(DATA_DIR "audio/cowbell.wav");
 			state->game.audio.horror[0]               = Mix_LoadWAV(DATA_DIR "audio/horror_0.wav");
 			state->game.audio.horror[1]               = Mix_LoadWAV(DATA_DIR "audio/horror_1.wav");
 			state->game.audio.heartbeats[0]           = Mix_LoadWAV(DATA_DIR "audio/heartbeat_0.wav");
@@ -1625,7 +1645,136 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 			#endif
 		};
 	}
+#endif
 }
+
+internal void generate_map(State* state)
+{
+#if DEBUG_SHOWCASE_MAP_GENERATION
+	SDL_SemWait(state->DEBUG_continue);
+	if (state->DEBUG_thread_terminate) { return; }
+	#define HALT SDL_SemPost(state->DEBUG_halted); SDL_SemWait(state->DEBUG_continue); if (state->DEBUG_thread_terminate) { return; }
+#else
+	#define HALT
+#endif
+
+	FOR_RANGE(MAP_DIM * MAP_DIM)
+	{
+		vi2 start_walk = { rng(&state->seed, 0, MAP_DIM), rng(&state->seed, 0, MAP_DIM) };
+
+		if
+		(
+			!+*get_wall_voxel(state, { start_walk.x, start_walk.y })
+			&& !+(*get_wall_voxel(state, { start_walk.x    , start_walk.y - 1 }) & WallVoxel::left  )
+			&& !+(*get_wall_voxel(state, { start_walk.x - 1, start_walk.y     }) & WallVoxel::bottom)
+		)
+		{
+			vi2 walk = { start_walk.x, start_walk.y };
+			FOR_RANGE(MAP_DIM / 2)
+			{
+				switch (static_cast<i32>(rng(&state->seed) * 4.0f))
+				{
+					case 0:
+					{
+						if (!+*get_wall_voxel(state, walk + vi2 { -1, 0 }) && !+(*get_wall_voxel(state, walk + vi2 { -1, -1 }) & WallVoxel::left) && !+(*get_wall_voxel(state, walk + vi2 { -2, 0 }) & WallVoxel::bottom))
+						{
+							walk.x = mod(walk.x - 1, MAP_DIM);
+							*get_wall_voxel(state, walk) |= WallVoxel::bottom;
+							HALT
+						}
+					} break;
+
+					case 1:
+					{
+						if (!+*get_wall_voxel(state, walk + vi2 { 1, 0 }) && !+(*get_wall_voxel(state, walk) & WallVoxel::bottom) && !+(*get_wall_voxel(state, walk + vi2 { 1, -1 }) & WallVoxel::left))
+						{
+							*get_wall_voxel(state, walk) |= WallVoxel::bottom;
+							walk.x = mod(walk.x + 1, MAP_DIM);
+							HALT
+						}
+					} break;
+
+					case 2:
+					{
+						if (!+*get_wall_voxel(state, walk + vi2 { 0, -1 }) && !+(*get_wall_voxel(state, walk + vi2 { -1, -1 }) & WallVoxel::bottom) && !+(*get_wall_voxel(state, walk + vi2 { 0, -2 }) & WallVoxel::left))
+						{
+							walk.y = mod(walk.y - 1, MAP_DIM);
+							*get_wall_voxel(state, walk) |= WallVoxel::left;
+							HALT
+						}
+					} break;
+
+					case 3:
+					{
+						if (!+*get_wall_voxel(state, walk + vi2 { 0, 1 }) && !+(*get_wall_voxel(state, walk) & WallVoxel::left) && !+(*get_wall_voxel(state, walk + vi2 { -1, 1 }) & WallVoxel::bottom))
+						{
+							*get_wall_voxel(state, walk) |= WallVoxel::left;
+							walk.y = mod(walk.y + 1, MAP_DIM);
+							HALT
+						}
+					} break;
+				}
+
+				if
+				(
+					!(!+*get_wall_voxel(state, walk + vi2 { -1,  0 }) && !+(*get_wall_voxel(state, walk + vi2 { -1, -1 }) & WallVoxel::left) && !+(*get_wall_voxel(state, walk + vi2 { -2, 0 }) & WallVoxel::bottom)) &&
+					!(!+*get_wall_voxel(state, walk + vi2 {  1,  0 }) && !+(*get_wall_voxel(state, walk) & WallVoxel::bottom) && !+(*get_wall_voxel(state, walk + vi2 { 1, -1 }) & WallVoxel::left)) &&
+					!(!+*get_wall_voxel(state, walk + vi2 {  0, -1 }) && !+(*get_wall_voxel(state, walk + vi2 { -1, -1 }) & WallVoxel::bottom) && !+(*get_wall_voxel(state, walk + vi2 { 0, -2 }) & WallVoxel::left)) &&
+					!(!+*get_wall_voxel(state, walk + vi2 {  0,  1 }) && !+(*get_wall_voxel(state, walk) & WallVoxel::left) && !+(*get_wall_voxel(state, walk + vi2 { -1, 1 }) & WallVoxel::bottom))
+				)
+				{
+					break;
+				}
+			}
+		}
+	}
+
+	FOR_RANGE(y, MAP_DIM)
+	{
+		FOR_RANGE(x, MAP_DIM)
+		{
+			if (*get_wall_voxel(state, { x, y }) == (WallVoxel::left | WallVoxel::bottom) && rng(&state->seed) < 0.5f)
+			{
+				*get_wall_voxel(state, { x, y }) = WallVoxel::back_slash;
+				HALT
+			}
+			else if (+(*get_wall_voxel(state, { x + 1, y }) & WallVoxel::left) && +(*get_wall_voxel(state, { x, y + 1 }) & WallVoxel::bottom) && rng(&state->seed) < 0.5f)
+			{
+				*get_wall_voxel(state, { x + 1, y     }) &= ~WallVoxel::left;
+				*get_wall_voxel(state, { x    , y + 1 }) &= ~WallVoxel::bottom;
+				*get_wall_voxel(state, { x    , y     }) |= WallVoxel::back_slash;
+				HALT
+			}
+			else if (+(*get_wall_voxel(state, { x, y }) & WallVoxel::bottom) && *get_wall_voxel(state, { x + 1, y }) == WallVoxel::left && rng(&state->seed) < 0.5f)
+			{
+				*get_wall_voxel(state, { x    , y }) &= ~WallVoxel::bottom;
+				*get_wall_voxel(state, { x + 1, y }) &= ~WallVoxel::left;
+				*get_wall_voxel(state, { x    , y }) |=  WallVoxel::forward_slash;
+				HALT
+			}
+			else if (+(*get_wall_voxel(state, { x, y }) & WallVoxel::left) && *get_wall_voxel(state, { x, y + 1 }) == WallVoxel::bottom && rng(&state->seed) < 0.5f)
+			{
+				*get_wall_voxel(state, { x, y     }) &= ~WallVoxel::left;
+				*get_wall_voxel(state, { x, y + 1 }) &= ~WallVoxel::bottom;
+				*get_wall_voxel(state, { x, y     }) |=  WallVoxel::forward_slash;
+				HALT
+			}
+		}
+	}
+
+#if DEBUG_SHOWCASE_MAP_GENERATION
+	SDL_SemPost(state->DEBUG_halted);
+	state->DEBUG_thread_terminate = true;
+#endif
+}
+
+#if DEBUG_SHOWCASE_MAP_GENERATION
+internal int DEBUG_showcase_map_generator_thread_worker(void* void_data)
+{
+	generate_map(reinterpret_cast<State*>(void_data));
+	return 0;
+}
+#endif
 
 internal void boot_down_state(State* state)
 {
@@ -1672,6 +1821,9 @@ extern "C" PROTOTYPE_INITIALIZE(initialize)
 	state->transient_arena.base = platform->memory          + sizeof(State) + state->context_arena.size;
 	state->transient_arena.used = 0;
 
+#if DEBUG_SHOWCASE_MAP_GENERATION
+	state->context = StateContext::game;
+#else
 	FOR_ELEMS(it, state->settings_slider_values)
 	{
 		*it =
@@ -1689,12 +1841,21 @@ extern "C" PROTOTYPE_INITIALIZE(initialize)
 
 	static_assert(+AudioChannel::RESERVED_START == 0);
 	Mix_ReserveChannels(+AudioChannel::RESERVED_COUNT);
+#endif
 }
 
 extern "C" PROTOTYPE_BOOT_UP(boot_up)
 {
 	ASSERT(sizeof(State) <= platform->memory_capacity);
 	State* state = reinterpret_cast<State*>(platform->memory);
+
+#if DEBUG_SHOWCASE_MAP_GENERATION
+	state->DEBUG_thread_terminate = false;
+	state->DEBUG_halted   = SDL_CreateSemaphore(0);
+	state->DEBUG_continue = SDL_CreateSemaphore(0);
+	state->DEBUG_thread   = SDL_CreateThread(DEBUG_showcase_map_generator_thread_worker, "DEBUG_worker", state);
+#else
+#endif
 
 	state->texture.display = SDL_CreateTexture(platform->renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET, DISPLAY_RES.x, DISPLAY_RES.y);
 
@@ -1716,6 +1877,15 @@ extern "C" PROTOTYPE_BOOT_DOWN(boot_down)
 {
 	ASSERT(sizeof(State) <= platform->memory_capacity);
 	State* state = reinterpret_cast<State*>(platform->memory);
+
+#if DEBUG_SHOWCASE_MAP_GENERATION
+	state->DEBUG_thread_terminate = true;
+	SDL_SemPost(state->DEBUG_continue);
+	SDL_WaitThread(state->DEBUG_thread, 0);
+	SDL_DestroySemaphore(state->DEBUG_halted);
+	SDL_DestroySemaphore(state->DEBUG_continue);
+#else
+#endif
 
 	FOR_ELEMS(it, state->textures) { SDL_DestroyTexture(*it); }
 
@@ -1746,6 +1916,8 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 	switch (state->context)
 	{
+#if DEBUG_SHOWCASE_MAP_GENERATION
+#else
 		case StateContext::title_menu:
 		{
 			aliasing tm = state->title_menu;
@@ -1787,101 +1959,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 												state->game.percieved_wall_height = WALL_HEIGHT;
 
-												FOR_RANGE(MAP_DIM * MAP_DIM)
-												{
-													vi2 start_walk = { rng(&state->seed, 0, MAP_DIM), rng(&state->seed, 0, MAP_DIM) };
-
-													if
-													(
-														!+*get_wall_voxel(state, { start_walk.x, start_walk.y })
-														&& !+(*get_wall_voxel(state, { start_walk.x    , start_walk.y - 1 }) & WallVoxel::left  )
-														&& !+(*get_wall_voxel(state, { start_walk.x - 1, start_walk.y     }) & WallVoxel::bottom)
-													)
-													{
-														vi2 walk = { start_walk.x, start_walk.y };
-														FOR_RANGE(MAP_DIM / 2)
-														{
-															switch (static_cast<i32>(rng(&state->seed) * 4.0f))
-															{
-																case 0:
-																{
-																	if (!+*get_wall_voxel(state, walk + vi2 { -1, 0 }) && !+(*get_wall_voxel(state, walk + vi2 { -1, -1 }) & WallVoxel::left) && !+(*get_wall_voxel(state, walk + vi2 { -2, 0 }) & WallVoxel::bottom))
-																	{
-																		walk.x = mod(walk.x - 1, MAP_DIM);
-																		*get_wall_voxel(state, walk) |= WallVoxel::bottom;
-																	}
-																} break;
-
-																case 1:
-																{
-																	if (!+*get_wall_voxel(state, walk + vi2 { 1, 0 }) && !+(*get_wall_voxel(state, walk) & WallVoxel::bottom) && !+(*get_wall_voxel(state, walk + vi2 { 1, -1 }) & WallVoxel::left))
-																	{
-																		*get_wall_voxel(state, walk) |= WallVoxel::bottom;
-																		walk.x = mod(walk.x + 1, MAP_DIM);
-																	}
-																} break;
-
-																case 2:
-																{
-																	if (!+*get_wall_voxel(state, walk + vi2 { 0, -1 }) && !+(*get_wall_voxel(state, walk + vi2 { -1, -1 }) & WallVoxel::bottom) && !+(*get_wall_voxel(state, walk + vi2 { 0, -2 }) & WallVoxel::left))
-																	{
-																		walk.y = mod(walk.y - 1, MAP_DIM);
-																		*get_wall_voxel(state, walk) |= WallVoxel::left;
-																	}
-																} break;
-
-																case 3:
-																{
-																	if (!+*get_wall_voxel(state, walk + vi2 { 0, 1 }) && !+(*get_wall_voxel(state, walk) & WallVoxel::left) && !+(*get_wall_voxel(state, walk + vi2 { -1, 1 }) & WallVoxel::bottom))
-																	{
-																		*get_wall_voxel(state, walk) |= WallVoxel::left;
-																		walk.y = mod(walk.y + 1, MAP_DIM);
-																	}
-																} break;
-															}
-
-															if
-															(
-																!(!+*get_wall_voxel(state, walk + vi2 { -1,  0 }) && !+(*get_wall_voxel(state, walk + vi2 { -1, -1 }) & WallVoxel::left) && !+(*get_wall_voxel(state, walk + vi2 { -2, 0 }) & WallVoxel::bottom)) &&
-																!(!+*get_wall_voxel(state, walk + vi2 {  1,  0 }) && !+(*get_wall_voxel(state, walk) & WallVoxel::bottom) && !+(*get_wall_voxel(state, walk + vi2 { 1, -1 }) & WallVoxel::left)) &&
-																!(!+*get_wall_voxel(state, walk + vi2 {  0, -1 }) && !+(*get_wall_voxel(state, walk + vi2 { -1, -1 }) & WallVoxel::bottom) && !+(*get_wall_voxel(state, walk + vi2 { 0, -2 }) & WallVoxel::left)) &&
-																!(!+*get_wall_voxel(state, walk + vi2 {  0,  1 }) && !+(*get_wall_voxel(state, walk) & WallVoxel::left) && !+(*get_wall_voxel(state, walk + vi2 { -1, 1 }) & WallVoxel::bottom))
-															)
-															{
-																break;
-															}
-														}
-													}
-												}
-
-												FOR_RANGE(y, MAP_DIM)
-												{
-													FOR_RANGE(x, MAP_DIM)
-													{
-														if (*get_wall_voxel(state, { x, y }) == (WallVoxel::left | WallVoxel::bottom) && rng(&state->seed) < 0.5f)
-														{
-															*get_wall_voxel(state, { x, y }) = WallVoxel::back_slash;
-														}
-														else if (+(*get_wall_voxel(state, { x + 1, y }) & WallVoxel::left) && +(*get_wall_voxel(state, { x, y + 1 }) & WallVoxel::bottom) && rng(&state->seed) < 0.5f)
-														{
-															*get_wall_voxel(state, { x + 1, y     }) &= ~WallVoxel::left;
-															*get_wall_voxel(state, { x    , y + 1 }) &= ~WallVoxel::bottom;
-															*get_wall_voxel(state, { x    , y     }) |= WallVoxel::back_slash;
-														}
-														else if (+(*get_wall_voxel(state, { x, y }) & WallVoxel::bottom) && *get_wall_voxel(state, { x + 1, y }) == WallVoxel::left && rng(&state->seed) < 0.5f)
-														{
-															*get_wall_voxel(state, { x    , y }) &= ~WallVoxel::bottom;
-															*get_wall_voxel(state, { x + 1, y }) &= ~WallVoxel::left;
-															*get_wall_voxel(state, { x    , y }) |=  WallVoxel::forward_slash;
-														}
-														else if (+(*get_wall_voxel(state, { x, y }) & WallVoxel::left) && *get_wall_voxel(state, { x, y + 1 }) == WallVoxel::bottom && rng(&state->seed) < 0.5f)
-														{
-															*get_wall_voxel(state, { x, y     }) &= ~WallVoxel::left;
-															*get_wall_voxel(state, { x, y + 1 }) &= ~WallVoxel::bottom;
-															*get_wall_voxel(state, { x, y     }) |=  WallVoxel::forward_slash;
-														}
-													}
-												}
+												generate_map(state);
 
 												{
 													memory_arena_checkpoint(&state->transient_arena);
@@ -2174,21 +2252,26 @@ extern "C" PROTOTYPE_UPDATE(update)
 				}
 			}
 		} break;
+#endif
 
 		case StateContext::game:
 		{
-			if (HOLDING(Input::down))
+#if DEBUG_SHOWCASE_MAP_GENERATION
+			if (!state->DEBUG_showcase_map_generation)
 			{
-				state->game.lucia_health -= 0.1f * SECONDS_PER_UPDATE;
-			}
-			if (HOLDING(Input::up))
-			{
-				state->game.lucia_health += 0.1f * SECONDS_PER_UPDATE;
+				state->DEBUG_showcase_map_generation = true;
+				platform->window_state = WindowState::fullscreen;
 			}
 
+			if (HOLDING(Input::space) && !state->DEBUG_thread_terminate)
+			{
+				SDL_SemPost(state->DEBUG_continue);
+				SDL_SemWait(state->DEBUG_halted);
+			}
+#else
 			DEBUG_once // @TEMP@
 			{
-				//state->game.lucia_position.xy = get_position_of_wall_side(state->game.door_wall_side, 1.0f);
+				state->game.lucia_position.xy = get_position_of_wall_side(state->game.door_wall_side, 1.0f);
 				//state->game.lucia_position.xy = get_position_of_wall_side(state->game.circuit_breaker_wall_side, 1.0f);
 				//state->game.lucia_position.xy = { 1.0f, 1.0f };
 				//state->game.lucia_position = { 64.637268f, 26.6f, 1.3239026f };
@@ -2197,10 +2280,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 				//state->game.monster_normal   = { -0.83331096f, 0.55280459f };
 				state->game.hud.inventory.array[0][0].type = ItemType::night_vision_goggles;
 				state->game.hud.inventory.array[0][0].night_vision_goggles.power = 1.0f;
-				state->game.hud.inventory.array[0][1].type = ItemType::pills;
-				state->game.hud.inventory.array[0][2].type = ItemType::pills;
-				state->game.hud.inventory.array[0][3].type = ItemType::pills;
-				state->game.hud.inventory.array[1][0].type = ItemType::pills;
+				state->game.hud.inventory.array[0][1].type = ItemType::cowbell;
 
 				//state->game.lucia_health = max(state->game.lucia_health - 0.4f, 0.0f);
 			}
@@ -2770,9 +2850,20 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 											i32 index = rng(&state->seed, 0, ARRAY_CAPACITY(state->game.pills_effect_activations));
 											state->game.pills_effect_activations[index] += 1.0f;
-											DEBUG_printf("%i\n", index);
 
 											state->game.hud.inventory.selected_item->type = ItemType::null;
+										} break;
+
+										case ItemType::cowbell:
+										{
+											Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.cowbell, 0);
+
+											if (state->game.goal != GameGoal::find_door && !state->game.monster_chase_keytime && !state->game.cowbell_keytime)
+											{
+												Mix_FadeInMusic(state->game.music.chases[1], -1, 2000);
+												state->game.cowbell_keytime = 1.0f;
+												state->game.monster_timeout = 0.0f;
+											}
 										} break;
 									}
 
@@ -3133,6 +3224,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 				if (state->game.monster_timeout == 0.0f)
 				{
 					vf2 ray_to_monster = ray_to_closest(state->game.monster_position.xy, state->game.lucia_position.xy);
+
 					if (state->game.monster_chase_keytime)
 					{
 						if (exists_clear_way(state, state->game.monster_position.xy, state->game.lucia_position.xy))
@@ -3154,11 +3246,12 @@ extern "C" PROTOTYPE_UPDATE(update)
 						Mix_FadeInMusic(state->game.music.chases[0], -1, 2000);
 						Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.horror[0], 0);
 						state->game.monster_chase_keytime = 1.0f;
+						state->game.cowbell_keytime       = 0.0f;
 					}
 
 
 					vi2 updated_monster_path_goal = state->game.monster_path_goal;
-					if (state->game.monster_chase_keytime)
+					if (state->game.monster_chase_keytime || state->game.cowbell_keytime)
 					{
 						updated_monster_path_goal = get_closest_open_path_coordinates(state, state->game.lucia_position.xy);
 					}
@@ -3169,7 +3262,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 						if (state->game.monster_roam_update_keytime <= 0.0f || norm(ray_to_closest(path_coordinates_to_position(state->game.monster_path_goal), state->game.lucia_position.xy)) > 8.0f)
 						{
 							state->game.monster_roam_update_keytime = 1.0f;
-							updated_monster_path_goal = get_closest_open_path_coordinates(state, state->game.lucia_position.xy + vf2 { rng(&state->seed, -16.0f, 16.0f), rng(&state->seed, -16.0f, 16.0f) });
+							updated_monster_path_goal = get_closest_open_path_coordinates(state, state->game.lucia_position.xy + vf2 { rng(&state->seed, -32.0f, 32.0f), rng(&state->seed, -64.0f, 64.0f) });
 						}
 					}
 
@@ -3220,7 +3313,14 @@ extern "C" PROTOTYPE_UPDATE(update)
 						}
 					}
 
+					#if 0
+					if (HOLDING(Input::down))
+					{
+						state->game.monster_velocity = move(state, &state->game.monster_position.xy, state->game.monster_velocity * SECONDS_PER_UPDATE) / SECONDS_PER_UPDATE;
+					}
+					#else
 					state->game.monster_velocity = move(state, &state->game.monster_position.xy, state->game.monster_velocity * SECONDS_PER_UPDATE) / SECONDS_PER_UPDATE;
+					#endif
 
 					state->game.monster_position.z = cosf(state->time * 3.0f) * 0.15f + state->game.percieved_wall_height / 2.0f;
 
@@ -3488,6 +3588,14 @@ extern "C" PROTOTYPE_UPDATE(update)
 			}
 
 			state->game.percieved_wall_height = dampen(state->game.percieved_wall_height, WALL_HEIGHT + state->game.interpolated_pills_effect_activations[1], 1.0f, SECONDS_PER_UPDATE);
+
+			f32 old_cowbell_keytime = state->game.cowbell_keytime;
+			state->game.cowbell_keytime = max(state->game.cowbell_keytime - SECONDS_PER_UPDATE / 16.0f, 0.0f);
+			if (old_cowbell_keytime && !state->game.cowbell_keytime)
+			{
+				Mix_FadeOutMusic(4000);
+			}
+#endif
 		} break;
 
 		case StateContext::end:
@@ -3744,6 +3852,40 @@ extern "C" PROTOTYPE_RENDER(render)
 
 		case StateContext::game:
 		{
+#if DEBUG_SHOWCASE_MAP_GENERATION
+			set_color(platform->renderer, vf3 { 0.05f, 0.1f, 0.15f });
+			SDL_RenderClear(platform->renderer);
+
+			lambda position_to_screen =
+				[](vf2 position)
+				{
+					constexpr f32 PIXELS_PER_METER = min(DISPLAY_RES.x, DISPLAY_RES.y) / ((MAP_DIM + 4.0f) * WALL_SPACING);
+					return vf2 { DISPLAY_RES.x / 2.0f + (position.x - MAP_DIM * WALL_SPACING / 2.0f) * PIXELS_PER_METER, DISPLAY_RES.y / 2.0f - (position.y - MAP_DIM * WALL_SPACING / 2.0f) * PIXELS_PER_METER };
+				};
+
+			FOR_RANGE(y, MAP_DIM)
+			{
+				FOR_RANGE(x, MAP_DIM)
+				{
+					set_color(platform->renderer, monochrome(0.4f));
+					render_filled_circle(platform->renderer, position_to_screen(vi2 { x, y } * WALL_SPACING), 2.5f);
+
+					FOR_ELEMS(it, WALL_VOXEL_DATA)
+					{
+						if (+(state->game.wall_voxels[y][x] & it->voxel))
+						{
+							set_color(platform->renderer, monochrome(0.8f));
+							render_line
+							(
+								platform->renderer,
+								position_to_screen((vi2 { x, y } + it->start) * WALL_SPACING),
+								position_to_screen((vi2 { x, y } + it->end  ) * WALL_SPACING)
+							);
+						}
+					}
+				}
+			}
+#else
 			DEBUG_profiling_start(FRAME);
 			DEFER { DEBUG_profiling_end_averaged_printf(FRAME, 64, "Frame : %f / %f (%fx of goal)\n", DEBUG_get_profiling(FRAME), 1.0f / 60.0f, DEBUG_get_profiling(FRAME) * 60.0f); };
 
@@ -4540,6 +4682,7 @@ extern "C" PROTOTYPE_RENDER(render)
 				state->game.monster_roam_update_keytime,
 				state->game.monster_chase_keytime
 			);
+#endif
 		} break;
 
 		case StateContext::end:
