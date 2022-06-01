@@ -5,7 +5,7 @@
 #include <SDL_Mixer.h>
 #include <SDL_image.h>
 
-global constexpr f32 SECONDS_PER_UPDATE = 1.0f / 60.0f;
+global constexpr f32 SECONDS_PER_UPDATE = 1.0f / 24.0f;
 
 enum_loose (Input, u32)
 {

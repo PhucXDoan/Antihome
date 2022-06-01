@@ -2,7 +2,8 @@
 // "A Fast Voxel Traversal Algorithm for Ray Tracing" https://www.flipcode.com/archives/A%20faster%20voxel%20traversal%20algorithm%20for%20ray%20tracing.pdf
 // "How to check if two given line segments intersect?" https://www.geeksforgeeks.org/check-if-two-given-line-segments-intersect/ (http://www.dcs.gla.ac.uk/~pat/52233/slides/Geometry1x1.pdf)
 
-#define DEBUG_SHOWCASE true
+#define DEBUG_SHOWCASE_MAP    false
+#define DEBUG_SHOWCASE_RENDER true
 
 #define STB_IMAGE_IMPLEMENTATION true
 #include <stb_image.h>
@@ -11,7 +12,7 @@
 #include "rng.cpp"
 #include "utilities.cpp"
 
-#if DEBUG_SHOWCASE
+#if DEBUG_SHOWCASE_MAP
 global constexpr vi2 DISPLAY_RES = { 1080, 720 };
 extern "C" PROTOTYPE_RENDER(render);
 #else
@@ -412,7 +413,7 @@ global constexpr strlit LUCIA_STATE_IMG_FILE_PATHS[LuciaState::CAPACITY] =
 
 struct State
 {
-	#if DEBUG_SHOWCASE
+	#if DEBUG_SHOWCASE_MAP
 	bool32      DEBUG_thread_terminate;
 	bool32      DEBUG_map_generated;
 	SDL_sem*    DEBUG_halted;
@@ -1509,7 +1510,7 @@ internal vf3 shader(State* state, vf3 color, Material material, bool32 in_light,
 
 internal void boot_up_state(SDL_Renderer* renderer, State* state)
 {
-#if DEBUG_SHOWCASE
+#if DEBUG_SHOWCASE_MAP
 #else
 	switch (state->context)
 	{
@@ -1650,7 +1651,7 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 
 internal void generate_map(State* state)
 {
-#if DEBUG_SHOWCASE
+#if DEBUG_SHOWCASE_MAP
 	SDL_SemWait(state->DEBUG_continue);
 	if (state->DEBUG_thread_terminate || state->DEBUG_map_generated) { return; }
 	#define HALT SDL_SemPost(state->DEBUG_halted); SDL_SemWait(state->DEBUG_continue); if (state->DEBUG_thread_terminate) { return; }
@@ -1762,14 +1763,169 @@ internal void generate_map(State* state)
 		}
 	}
 
-#if DEBUG_SHOWCASE
+#if DEBUG_SHOWCASE_MAP
 	state->DEBUG_thread_terminate = true;
 	state->DEBUG_map_generated    = true;
 	SDL_SemPost(state->DEBUG_halted);
 #endif
 }
 
-#if DEBUG_SHOWCASE
+internal void init_game(State* state)
+{
+	state->game.percieved_wall_height = WALL_HEIGHT;
+
+	generate_map(state);
+
+	{
+		memory_arena_checkpoint(&state->transient_arena);
+
+		struct WallSideNode
+		{
+			WallSide      wall_side;
+			WallSideNode* next_node;
+		};
+
+		WallSideNode* wall_side_node  = 0;
+		i32           wall_side_count = 0;
+
+		FOR_RANGE(y, MAP_DIM)
+		{
+			FOR_RANGE(x, MAP_DIM)
+			{
+				FOR_ELEMS(it, WALL_VOXEL_DATA)
+				{
+					if (+(state->game.wall_voxels[y][x] & it->voxel))
+					{
+						{
+							WallSideNode* node = memory_arena_allocate<WallSideNode>(&state->transient_arena);
+							node->wall_side.coordinates = { x, y };
+							node->wall_side.voxel       = it->voxel;
+							node->wall_side.normal      = it->normal;
+							node->next_node             = wall_side_node;
+							wall_side_node   = node;
+							wall_side_count += 1;
+						}
+
+						{
+							WallSideNode* node = memory_arena_allocate<WallSideNode>(&state->transient_arena);
+							node->wall_side.coordinates = { x, y };
+							node->wall_side.voxel       = it->voxel;
+							node->wall_side.normal      = -it->normal;
+							node->next_node             = wall_side_node;
+							wall_side_node   = node;
+							wall_side_count += 1;
+						}
+					}
+				}
+			}
+		}
+
+		{
+			WallSideNode* door_wall_side_node = wall_side_node;
+			for (i32 i = rng(&state->seed, 0, wall_side_count); i; i -= 1)
+			{
+				door_wall_side_node = door_wall_side_node->next_node;
+			}
+
+			state->game.door_wall_side = door_wall_side_node->wall_side;
+		}
+
+		{
+			WallSideNode* farthest_node     = 0;
+			f32           farthest_distance = NAN;
+			for (WallSideNode* node = wall_side_node; node; node = node->next_node)
+			{
+				f32 distance = norm(ray_to_closest(node->wall_side.coordinates * WALL_SPACING, state->game.door_wall_side.coordinates * WALL_SPACING));
+
+				if (farthest_node == 0 || farthest_distance < distance)
+				{
+					farthest_node     = node;
+					farthest_distance = distance;
+				}
+			}
+
+			state->game.circuit_breaker_wall_side = farthest_node->wall_side;
+		}
+
+		{
+			WallSideNode* farthest_node     = 0;
+			f32           farthest_distance = NAN;
+			for (WallSideNode* node = wall_side_node; node; node = node->next_node)
+			{
+				f32 distance =
+					min
+					(
+						norm(ray_to_closest(node->wall_side.coordinates * WALL_SPACING, state->game.door_wall_side.coordinates * WALL_SPACING)),
+						norm(ray_to_closest(node->wall_side.coordinates * WALL_SPACING, state->game.circuit_breaker_wall_side.coordinates * WALL_SPACING))
+					);
+
+				if (farthest_node == 0 || farthest_distance < distance)
+				{
+					farthest_node     = node;
+					farthest_distance = distance;
+				}
+			}
+
+			state->game.lucia_position.xy = rng_open_position(state, farthest_node->wall_side.coordinates);
+		}
+	}
+
+	state->game.lucia_position.z          = LUCIA_HEIGHT;
+	state->game.lucia_fov                 = TAU / 3.0f;
+	state->game.lucia_stamina             = 1.0f;
+	state->game.lucia_health              = 1.0f;
+	state->game.interpolated_lucia_health = 1.0f;
+
+	state->game.monster_timeout = 8.0f;
+
+	state->game.creepy_sound_countdown = rng(&state->seed, CREEPY_SOUND_MIN_TIME, CREEPY_SOUND_MAX_TIME);
+
+	for (ItemType type = ItemType::ITEM_START; type != ItemType::ITEM_END; type = static_cast<ItemType>(+type + 1))
+	{
+		spawn_item(state, type);
+	}
+
+	i32 leftover_count = ARRAY_CAPACITY(state->game.item_buffer) - state->game.item_count;
+	FOR_RANGE(leftover_count)
+	{
+		spawn_item(state);
+	}
+
+	state->game.hud.cursor = VIEW_RES / 2.0f;
+
+	FOR_RANGE(y, ARRAY_CAPACITY(state->game.hud.circuit_breaker.switches))
+	{
+		FOR_RANGE(x, ARRAY_CAPACITY(state->game.hud.circuit_breaker.switches[0]))
+		{
+			state->game.hud.circuit_breaker.switches[y][x].position =
+				(VIEW_RES - CIRCUIT_BREAKER_HUD_DIMENSIONS - CIRCUIT_BREAKER_SWITCH_DIMENSIONS) / 2.0f + CIRCUIT_BREAKER_MARGINS +
+					vf2
+					{
+						(CIRCUIT_BREAKER_VOLTAGE_DISPLAY_X - (VIEW_RES.x - CIRCUIT_BREAKER_HUD_DIMENSIONS.x) / 2.0f - 2.0f * CIRCUIT_BREAKER_MARGINS.x) / ARRAY_CAPACITY(state->game.hud.circuit_breaker.switches[0]) * (x + 0.5f),
+						(                                                  CIRCUIT_BREAKER_HUD_DIMENSIONS.y         - 2.0f * CIRCUIT_BREAKER_MARGINS.y) / ARRAY_CAPACITY(state->game.hud.circuit_breaker.switches   ) * (y + 0.5f)
+					};
+
+			state->game.hud.circuit_breaker.switches[y][x].voltage  = 1 + rng(&state->seed, 0, 6);
+			state->game.hud.circuit_breaker.max_voltage            += state->game.hud.circuit_breaker.switches[y][x].voltage;
+		}
+	}
+
+	for (i32 i = 0; i < ARRAY_CAPACITY(state->game.hud.circuit_breaker.flat_switches) / 2;)
+	{
+		i32 index = rng(&state->seed, 0, ARRAY_CAPACITY(state->game.hud.circuit_breaker.flat_switches));
+		if (!state->game.hud.circuit_breaker.flat_switches[index].active)
+		{
+			state->game.hud.circuit_breaker.flat_switches[index].active  = true;
+			state->game.hud.circuit_breaker.goal_voltage                += state->game.hud.circuit_breaker.flat_switches[index].voltage;
+			i += 1;
+		}
+	}
+
+	state->game.hud.circuit_breaker.active_voltage = state->game.hud.circuit_breaker.goal_voltage;
+}
+
+
+#if DEBUG_SHOWCASE_MAP
 internal int DEBUG_showcase_map_generator_thread_worker(void* void_data)
 {
 	generate_map(reinterpret_cast<State*>(void_data));
@@ -1812,8 +1968,6 @@ extern "C" PROTOTYPE_INITIALIZE(initialize)
 
 	*state = {};
 
-	state->seed = 3;
-
 	state->context_arena.size = static_cast<memsize>((platform->memory_capacity - sizeof(State)) * 0.75f);
 	state->context_arena.base = platform->memory + sizeof(State);
 	state->context_arena.used = 0;
@@ -1822,7 +1976,7 @@ extern "C" PROTOTYPE_INITIALIZE(initialize)
 	state->transient_arena.base = platform->memory          + sizeof(State) + state->context_arena.size;
 	state->transient_arena.used = 0;
 
-#if DEBUG_SHOWCASE
+#if DEBUG_SHOWCASE_MAP
 	state->context = StateContext::game;
 	state->game.lucia_position.xy   = rng_open_position(state);
 	state->game.monster_position.xy = rng_open_position(state);
@@ -1852,7 +2006,7 @@ extern "C" PROTOTYPE_BOOT_UP(boot_up)
 	ASSERT(sizeof(State) <= platform->memory_capacity);
 	State* state = reinterpret_cast<State*>(platform->memory);
 
-#if DEBUG_SHOWCASE
+#if DEBUG_SHOWCASE_MAP
 	state->DEBUG_thread_terminate = false;
 	state->DEBUG_halted   = SDL_CreateSemaphore(0);
 	state->DEBUG_continue = SDL_CreateSemaphore(0);
@@ -1881,7 +2035,7 @@ extern "C" PROTOTYPE_BOOT_DOWN(boot_down)
 	ASSERT(sizeof(State) <= platform->memory_capacity);
 	State* state = reinterpret_cast<State*>(platform->memory);
 
-#if DEBUG_SHOWCASE
+#if DEBUG_SHOWCASE_MAP
 	state->DEBUG_thread_terminate = true;
 	SDL_SemPost(state->DEBUG_continue);
 	SDL_WaitThread(state->DEBUG_thread, 0);
@@ -1891,8 +2045,8 @@ extern "C" PROTOTYPE_BOOT_DOWN(boot_down)
 #endif
 
 	FOR_ELEMS(it, state->textures) { SDL_DestroyTexture(*it); }
+	FOR_ELEMS(it, state->fonts   ) { FC_FreeFont(*it); }
 
-	FOR_ELEMS(it, state->fonts) { FC_FreeFont(*it); }
 	boot_down_state(state);
 }
 
@@ -1919,10 +2073,18 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 	switch (state->context)
 	{
-#if DEBUG_SHOWCASE
-#else
 		case StateContext::title_menu:
 		{
+#if DEBUG_SHOWCASE_MAP
+#elif DEBUG_SHOWCASE_RENDER
+			boot_down_state(state);
+			state->context_arena.used = 0;
+			state->context            = StateContext::game;
+			state->game               = {};
+			boot_up_state(platform->renderer, state);
+			state->context = StateContext::game;
+			init_game(state);
+#else
 			aliasing tm = state->title_menu;
 
 			if (PRESSED(Input::left_mouse))
@@ -1960,156 +2122,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 												state->game               = {};
 												boot_up_state(platform->renderer, state);
 
-												state->game.percieved_wall_height = WALL_HEIGHT;
-
-												generate_map(state);
-
-												{
-													memory_arena_checkpoint(&state->transient_arena);
-
-													struct WallSideNode
-													{
-														WallSide      wall_side;
-														WallSideNode* next_node;
-													};
-
-													WallSideNode* wall_side_node  = 0;
-													i32           wall_side_count = 0;
-
-													FOR_RANGE(y, MAP_DIM)
-													{
-														FOR_RANGE(x, MAP_DIM)
-														{
-															FOR_ELEMS(it, WALL_VOXEL_DATA)
-															{
-																if (+(state->game.wall_voxels[y][x] & it->voxel))
-																{
-																	{
-																		WallSideNode* node = memory_arena_allocate<WallSideNode>(&state->transient_arena);
-																		node->wall_side.coordinates = { x, y };
-																		node->wall_side.voxel       = it->voxel;
-																		node->wall_side.normal      = it->normal;
-																		node->next_node             = wall_side_node;
-																		wall_side_node   = node;
-																		wall_side_count += 1;
-																	}
-
-																	{
-																		WallSideNode* node = memory_arena_allocate<WallSideNode>(&state->transient_arena);
-																		node->wall_side.coordinates = { x, y };
-																		node->wall_side.voxel       = it->voxel;
-																		node->wall_side.normal      = -it->normal;
-																		node->next_node             = wall_side_node;
-																		wall_side_node   = node;
-																		wall_side_count += 1;
-																	}
-																}
-															}
-														}
-													}
-
-													{
-														WallSideNode* door_wall_side_node = wall_side_node;
-														for (i32 i = rng(&state->seed, 0, wall_side_count); i; i -= 1)
-														{
-															door_wall_side_node = door_wall_side_node->next_node;
-														}
-
-														state->game.door_wall_side = door_wall_side_node->wall_side;
-													}
-
-													{
-														WallSideNode* farthest_node     = 0;
-														f32           farthest_distance = NAN;
-														for (WallSideNode* node = wall_side_node; node; node = node->next_node)
-														{
-															f32 distance = norm(ray_to_closest(node->wall_side.coordinates * WALL_SPACING, state->game.door_wall_side.coordinates * WALL_SPACING));
-
-															if (farthest_node == 0 || farthest_distance < distance)
-															{
-																farthest_node     = node;
-																farthest_distance = distance;
-															}
-														}
-
-														state->game.circuit_breaker_wall_side = farthest_node->wall_side;
-													}
-
-													{
-														WallSideNode* farthest_node     = 0;
-														f32           farthest_distance = NAN;
-														for (WallSideNode* node = wall_side_node; node; node = node->next_node)
-														{
-															f32 distance =
-																min
-																(
-																	norm(ray_to_closest(node->wall_side.coordinates * WALL_SPACING, state->game.door_wall_side.coordinates * WALL_SPACING)),
-																	norm(ray_to_closest(node->wall_side.coordinates * WALL_SPACING, state->game.circuit_breaker_wall_side.coordinates * WALL_SPACING))
-																);
-
-															if (farthest_node == 0 || farthest_distance < distance)
-															{
-																farthest_node     = node;
-																farthest_distance = distance;
-															}
-														}
-
-														state->game.lucia_position.xy = rng_open_position(state, farthest_node->wall_side.coordinates);
-													}
-												}
-
-												state->game.lucia_position.z          = LUCIA_HEIGHT;
-												state->game.lucia_fov                 = TAU / 3.0f;
-												state->game.lucia_stamina             = 1.0f;
-												state->game.lucia_health              = 1.0f;
-												state->game.interpolated_lucia_health = 1.0f;
-
-												state->game.monster_timeout = 8.0f;
-
-												state->game.creepy_sound_countdown = rng(&state->seed, CREEPY_SOUND_MIN_TIME, CREEPY_SOUND_MAX_TIME);
-
-												for (ItemType type = ItemType::ITEM_START; type != ItemType::ITEM_END; type = static_cast<ItemType>(+type + 1))
-												{
-													spawn_item(state, type);
-												}
-
-												i32 leftover_count = ARRAY_CAPACITY(state->game.item_buffer) - state->game.item_count;
-												FOR_RANGE(leftover_count)
-												{
-													spawn_item(state);
-												}
-
-												state->game.hud.cursor = VIEW_RES / 2.0f;
-
-												FOR_RANGE(y, ARRAY_CAPACITY(state->game.hud.circuit_breaker.switches))
-												{
-													FOR_RANGE(x, ARRAY_CAPACITY(state->game.hud.circuit_breaker.switches[0]))
-													{
-														state->game.hud.circuit_breaker.switches[y][x].position =
-															(VIEW_RES - CIRCUIT_BREAKER_HUD_DIMENSIONS - CIRCUIT_BREAKER_SWITCH_DIMENSIONS) / 2.0f + CIRCUIT_BREAKER_MARGINS +
-																vf2
-																{
-																	(CIRCUIT_BREAKER_VOLTAGE_DISPLAY_X - (VIEW_RES.x - CIRCUIT_BREAKER_HUD_DIMENSIONS.x) / 2.0f - 2.0f * CIRCUIT_BREAKER_MARGINS.x) / ARRAY_CAPACITY(state->game.hud.circuit_breaker.switches[0]) * (x + 0.5f),
-																	(                                                  CIRCUIT_BREAKER_HUD_DIMENSIONS.y         - 2.0f * CIRCUIT_BREAKER_MARGINS.y) / ARRAY_CAPACITY(state->game.hud.circuit_breaker.switches   ) * (y + 0.5f)
-																};
-
-														state->game.hud.circuit_breaker.switches[y][x].voltage  = 1 + rng(&state->seed, 0, 6);
-														state->game.hud.circuit_breaker.max_voltage            += state->game.hud.circuit_breaker.switches[y][x].voltage;
-													}
-												}
-
-												for (i32 i = 0; i < ARRAY_CAPACITY(state->game.hud.circuit_breaker.flat_switches) / 2;)
-												{
-													i32 index = rng(&state->seed, 0, ARRAY_CAPACITY(state->game.hud.circuit_breaker.flat_switches));
-													if (!state->game.hud.circuit_breaker.flat_switches[index].active)
-													{
-														state->game.hud.circuit_breaker.flat_switches[index].active  = true;
-														state->game.hud.circuit_breaker.goal_voltage                += state->game.hud.circuit_breaker.flat_switches[index].voltage;
-														i += 1;
-													}
-												}
-
-												state->game.hud.circuit_breaker.active_voltage = state->game.hud.circuit_breaker.goal_voltage;
+												init_game(state);
 
 												return UpdateCode::resume;
 											} break;
@@ -2254,12 +2267,12 @@ extern "C" PROTOTYPE_UPDATE(update)
 						);
 				}
 			}
-		} break;
 #endif
+		} break;
 
 		case StateContext::game:
 		{
-#if DEBUG_SHOWCASE
+#if DEBUG_SHOWCASE_MAP
 			platform->window_state = WindowState::fullscreen;
 
 			if (HOLDING(Input::space) && (!state->DEBUG_thread_terminate && !state->DEBUG_map_generated))
@@ -2326,21 +2339,53 @@ extern "C" PROTOTYPE_UPDATE(update)
 				state->game.monster_velocity = move(state, &state->game.monster_position.xy, state->game.monster_velocity * SECONDS_PER_UPDATE);
 			}
 #else
-			DEBUG_once // @TEMP@
+#if DEBUG_SHOWCASE_RENDER
+			if (PRESSED(Input::enter))
 			{
+				goto REFILL;
+			}
+
+			DEBUG_once
+			{
+				REFILL:;
 				//state->game.lucia_position.xy = get_position_of_wall_side(state->game.door_wall_side, 1.0f);
 				//state->game.lucia_position.xy = get_position_of_wall_side(state->game.circuit_breaker_wall_side, 1.0f);
-				//state->game.lucia_position.xy = { 1.0f, 1.0f };
-				//state->game.lucia_position = { 64.637268f, 26.6f, 1.3239026f };
-				//state->game.lucia_angle    = 5.3498487f;
-				//state->game.monster_position = { 66.295441f, 25.49999f, 1.2878139f };
-				//state->game.monster_normal   = { -0.83331096f, 0.55280459f };
-				//state->game.hud.inventory.array[0][0].type = ItemType::night_vision_goggles;
-				//state->game.hud.inventory.array[0][0].night_vision_goggles.power = 1.0f;
-				//state->game.hud.inventory.array[0][1].type = ItemType::cowbell;
-
-				//state->game.lucia_health = max(state->game.lucia_health - 0.4f, 0.0f);
+				state->game.hud.inventory.array[0][0].type = ItemType::cheap_batteries;
+				state->game.hud.inventory.array[0][1].type = ItemType::military_grade_batteries;
+				state->game.hud.inventory.array[0][2].type = ItemType::military_grade_batteries;
+				state->game.hud.inventory.array[0][3].type = ItemType::eye_drops;
+				state->game.hud.inventory.array[1][0].type = ItemType::flashlight;
+				state->game.hud.inventory.array[1][1].type = ItemType::flashlight;
+				state->game.hud.inventory.array[1][2].type = ItemType::night_vision_goggles;
+				state->game.hud.inventory.array[1][3].type = ItemType::pills;
 			}
+
+			persist bool32 DEBUG_monster = false;
+
+			if (PRESSED(Input::left))
+			{
+				DEBUG_monster = !DEBUG_monster;
+
+				if (DEBUG_monster)
+				{
+					state->game.monster_position.xy = state->game.lucia_position.xy + polar(state->game.lucia_angle) * 4.0f;
+					state->game.monster_position.x = mod(state->game.monster_position.x, MAP_DIM * WALL_SPACING);
+					state->game.monster_position.y = mod(state->game.monster_position.y, MAP_DIM * WALL_SPACING);
+				}
+			}
+
+			if (PRESSED(Input::down))
+			{
+				if (state->game.goal == GameGoal::find_door)
+				{
+					state->game.goal = GameGoal::fix_power;
+				}
+				else
+				{
+					state->game.goal = GameGoal::find_door;
+				}
+			}
+#endif
 
 			Mix_VolumeChunk(state->game.audio.drone                                      , static_cast<i32>(MIX_MAX_VOLUME *         state->game.ceiling_lights_keytime  * (1.0f - state->game.exiting_keytime)));
 			Mix_VolumeChunk(state->game.audio.drone_low                                  , static_cast<i32>(MIX_MAX_VOLUME * (1.0f - state->game.ceiling_lights_keytime) * (1.0f - state->game.exiting_keytime)));
@@ -2407,6 +2452,8 @@ extern "C" PROTOTYPE_UPDATE(update)
 						state->game.lucia_velocity = dampen(state->game.lucia_velocity, { 0.0f, 0.0f }, FRICTION, SECONDS_PER_UPDATE);
 					}
 				}
+
+				state->game.lucia_fov = dampen(state->game.lucia_fov, clamp(state->game.lucia_fov * (1.0f + (1.0f - cosf(state->game.interpolated_pills_effect_activations[2] * 2.0f)) * 14.0f), 0.5f, 18.0f), 1.0f, SECONDS_PER_UPDATE);
 
 				state->game.lucia_head_bob_keytime = mod(state->game.lucia_head_bob_keytime + (0.05f + 0.3f * norm(state->game.lucia_velocity)) * SECONDS_PER_UPDATE, 1.0f);
 				state->game.lucia_velocity         = move(state, &state->game.lucia_position.xy, state->game.lucia_velocity * SECONDS_PER_UPDATE) / SECONDS_PER_UPDATE;
@@ -2658,6 +2705,20 @@ extern "C" PROTOTYPE_UPDATE(update)
 														}
 													}
 
+													if (!combined)
+													{
+														Item* eye_drops;
+														Item* paper;
+														if (check_combine(&eye_drops, ItemType::eye_drops, &paper, ItemType::paper, &dropped_on, state->game.hud.inventory.selected_item))
+														{
+															combined = true;
+
+															Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.acid_burn, 0);
+															state->game.notification_message = "(You dissolved the paper.)";
+															state->game.notification_keytime = 1.0f;
+														}
+													}
+
 													if (combined)
 													{
 														state->game.hud.inventory.selected_item->type = ItemType::null;
@@ -2665,7 +2726,27 @@ extern "C" PROTOTYPE_UPDATE(update)
 													}
 													else
 													{
-														state->game.notification_message = "\"I'm not sure how these fit.\"";
+														lambda combine_involved =
+															[&](ItemType a_type, ItemType b_type)
+															{
+																if (state->game.hud.inventory.selected_item->type == a_type && dropped_on.type == b_type)
+																{
+																	return true;
+																}
+																else if (state->game.hud.inventory.selected_item->type == b_type && dropped_on.type == a_type)
+																{
+																	return true;
+																}
+																else
+																{
+																	return false;
+																}
+															};
+
+														state->game.notification_message =
+															combine_involved(ItemType::night_vision_goggles, ItemType::cheap_batteries)
+																? "\"The batteries doesn't fit into the slots.\""
+																: "\"I'm not sure how these fit.\"";
 														state->game.notification_keytime = 1.0f;
 													}
 												}
@@ -3278,6 +3359,17 @@ extern "C" PROTOTYPE_UPDATE(update)
 					}
 				}
 
+
+#if DEBUG_SHOWCASE_RENDER
+				if (DEBUG_monster)
+				{
+					state->game.monster_timeout = 0.0f;
+				}
+				else
+				{
+					state->game.monster_timeout = 1.0f;
+				}
+#endif
 				if (state->game.monster_timeout == 0.0f)
 				{
 					vf2 ray_to_monster = ray_to_closest(state->game.monster_position.xy, state->game.lucia_position.xy);
@@ -3370,14 +3462,14 @@ extern "C" PROTOTYPE_UPDATE(update)
 						}
 					}
 
-					#if 0
-					if (HOLDING(Input::down))
+#if DEBUG_SHOWCASE_RENDER
+					if (HOLDING(Input::right))
 					{
 						state->game.monster_velocity = move(state, &state->game.monster_position.xy, state->game.monster_velocity * SECONDS_PER_UPDATE) / SECONDS_PER_UPDATE;
 					}
-					#else
+#else
 					state->game.monster_velocity = move(state, &state->game.monster_position.xy, state->game.monster_velocity * SECONDS_PER_UPDATE) / SECONDS_PER_UPDATE;
-					#endif
+#endif
 
 					state->game.monster_position.z = cosf(state->time * 3.0f) * 0.15f + state->game.percieved_wall_height / 2.0f;
 
@@ -3515,9 +3607,9 @@ extern "C" PROTOTYPE_UPDATE(update)
 			state->game.blur_value        = max(state->game.blur_value - SECONDS_PER_UPDATE / 8.0f, lerp(0.0f, 0.2f, square(1.0f - state->game.lucia_health)) + pill_dosage_total / 16.0f);
 			state->game.interpolated_blur = dampen(state->game.interpolated_blur, state->game.blur_value, 4.0f, SECONDS_PER_UPDATE);
 
-			if (pill_dosage_total > 3.0f)
+			if (pill_dosage_total > 1.5f)
 			{
-				state->game.lucia_health = dampen(state->game.lucia_health, 0.0f, 0.05f, SECONDS_PER_UPDATE);
+				state->game.lucia_health = dampen(state->game.lucia_health, 0.0f, 0.075f, SECONDS_PER_UPDATE);
 			}
 
 			// @TODO@ Frame-independent.
@@ -3909,7 +4001,7 @@ extern "C" PROTOTYPE_RENDER(render)
 
 		case StateContext::game:
 		{
-#if DEBUG_SHOWCASE
+#if DEBUG_SHOWCASE_MAP
 			set_color(platform->renderer, vf3 { 0.05f, 0.1f, 0.15f });
 			SDL_RenderClear(platform->renderer);
 
@@ -4378,6 +4470,14 @@ extern "C" PROTOTYPE_RENDER(render)
 			__m128 m_night_vision_goggles_b                 = _mm_set_ps1(0.0f);
 			__m128 m_brightness                             = _mm_set_ps1(state->settings.brightness + 128.0f * square(state->game.flash_stun_activation));
 
+			f32 interpolated_pill_dosage_total = 0.0f;
+			FOR_ELEMS(it, state->game.interpolated_pills_effect_activations)
+			{
+				interpolated_pill_dosage_total += *it;
+			}
+
+			__m128 m_high = _mm_add_ps(m_one, square(_mm_set_ps1(interpolated_pill_dosage_total)));
+
 			FOR_RANGE(y, VIEW_RES.y)
 			{
 				__m128 m_night_vision_goggles_scan_line = _mm_set_ps1(fabsf(0.5f - y % 3 / 3.0f));
@@ -4418,6 +4518,8 @@ extern "C" PROTOTYPE_RENDER(render)
 					m_r = _mm_mul_ps(lerp(m_r, _mm_mul_ps(m_avg_rgb, _mm_mul_ps(m_night_vision_goggles_r, m_t)), m_night_vision_goggles_activation), m_brightness);
 					m_g = _mm_mul_ps(lerp(m_g, _mm_mul_ps(m_avg_rgb, _mm_mul_ps(m_night_vision_goggles_g, m_t)), m_night_vision_goggles_activation), m_brightness);
 					m_b = _mm_mul_ps(lerp(m_b, _mm_mul_ps(m_avg_rgb, _mm_mul_ps(m_night_vision_goggles_b, m_t)), m_night_vision_goggles_activation), m_brightness);
+
+					m_r = _mm_mul_ps(m_r, m_high);
 
 					mi_rgba =
 						_mm_or_epi32
