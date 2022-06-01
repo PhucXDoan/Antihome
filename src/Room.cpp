@@ -2,7 +2,7 @@
 // "A Fast Voxel Traversal Algorithm for Ray Tracing" https://www.flipcode.com/archives/A%20faster%20voxel%20traversal%20algorithm%20for%20ray%20tracing.pdf
 // "How to check if two given line segments intersect?" https://www.geeksforgeeks.org/check-if-two-given-line-segments-intersect/ (http://www.dcs.gla.ac.uk/~pat/52233/slides/Geometry1x1.pdf)
 
-#define DEBUG_SHOWCASE_MAP_GENERATION true
+#define DEBUG_SHOWCASE true
 
 #define STB_IMAGE_IMPLEMENTATION true
 #include <stb_image.h>
@@ -11,8 +11,8 @@
 #include "rng.cpp"
 #include "utilities.cpp"
 
-#if DEBUG_SHOWCASE_MAP_GENERATION
-global constexpr vi2 DISPLAY_RES = { 1620, 1080 };
+#if DEBUG_SHOWCASE
+global constexpr vi2 DISPLAY_RES = { 1080, 720 };
 extern "C" PROTOTYPE_RENDER(render);
 #else
 global constexpr vi2 DISPLAY_RES = { 800, 600 };
@@ -412,9 +412,9 @@ global constexpr strlit LUCIA_STATE_IMG_FILE_PATHS[LuciaState::CAPACITY] =
 
 struct State
 {
-	#if DEBUG_SHOWCASE_MAP_GENERATION
-	bool32      DEBUG_showcase_map_generation;
+	#if DEBUG_SHOWCASE
 	bool32      DEBUG_thread_terminate;
+	bool32      DEBUG_map_generated;
 	SDL_sem*    DEBUG_halted;
 	SDL_sem*    DEBUG_continue;
 	SDL_Thread* DEBUG_thread;
@@ -1509,7 +1509,7 @@ internal vf3 shader(State* state, vf3 color, Material material, bool32 in_light,
 
 internal void boot_up_state(SDL_Renderer* renderer, State* state)
 {
-#if DEBUG_SHOWCASE_MAP_GENERATION
+#if DEBUG_SHOWCASE
 #else
 	switch (state->context)
 	{
@@ -1650,9 +1650,9 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 
 internal void generate_map(State* state)
 {
-#if DEBUG_SHOWCASE_MAP_GENERATION
+#if DEBUG_SHOWCASE
 	SDL_SemWait(state->DEBUG_continue);
-	if (state->DEBUG_thread_terminate) { return; }
+	if (state->DEBUG_thread_terminate || state->DEBUG_map_generated) { return; }
 	#define HALT SDL_SemPost(state->DEBUG_halted); SDL_SemWait(state->DEBUG_continue); if (state->DEBUG_thread_terminate) { return; }
 #else
 	#define HALT
@@ -1762,13 +1762,14 @@ internal void generate_map(State* state)
 		}
 	}
 
-#if DEBUG_SHOWCASE_MAP_GENERATION
-	SDL_SemPost(state->DEBUG_halted);
+#if DEBUG_SHOWCASE
 	state->DEBUG_thread_terminate = true;
+	state->DEBUG_map_generated    = true;
+	SDL_SemPost(state->DEBUG_halted);
 #endif
 }
 
-#if DEBUG_SHOWCASE_MAP_GENERATION
+#if DEBUG_SHOWCASE
 internal int DEBUG_showcase_map_generator_thread_worker(void* void_data)
 {
 	generate_map(reinterpret_cast<State*>(void_data));
@@ -1821,8 +1822,10 @@ extern "C" PROTOTYPE_INITIALIZE(initialize)
 	state->transient_arena.base = platform->memory          + sizeof(State) + state->context_arena.size;
 	state->transient_arena.used = 0;
 
-#if DEBUG_SHOWCASE_MAP_GENERATION
+#if DEBUG_SHOWCASE
 	state->context = StateContext::game;
+	state->game.lucia_position.xy   = rng_open_position(state);
+	state->game.monster_position.xy = rng_open_position(state);
 #else
 	FOR_ELEMS(it, state->settings_slider_values)
 	{
@@ -1849,7 +1852,7 @@ extern "C" PROTOTYPE_BOOT_UP(boot_up)
 	ASSERT(sizeof(State) <= platform->memory_capacity);
 	State* state = reinterpret_cast<State*>(platform->memory);
 
-#if DEBUG_SHOWCASE_MAP_GENERATION
+#if DEBUG_SHOWCASE
 	state->DEBUG_thread_terminate = false;
 	state->DEBUG_halted   = SDL_CreateSemaphore(0);
 	state->DEBUG_continue = SDL_CreateSemaphore(0);
@@ -1878,7 +1881,7 @@ extern "C" PROTOTYPE_BOOT_DOWN(boot_down)
 	ASSERT(sizeof(State) <= platform->memory_capacity);
 	State* state = reinterpret_cast<State*>(platform->memory);
 
-#if DEBUG_SHOWCASE_MAP_GENERATION
+#if DEBUG_SHOWCASE
 	state->DEBUG_thread_terminate = true;
 	SDL_SemPost(state->DEBUG_continue);
 	SDL_WaitThread(state->DEBUG_thread, 0);
@@ -1916,7 +1919,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 	switch (state->context)
 	{
-#if DEBUG_SHOWCASE_MAP_GENERATION
+#if DEBUG_SHOWCASE
 #else
 		case StateContext::title_menu:
 		{
@@ -2256,31 +2259,85 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 		case StateContext::game:
 		{
-#if DEBUG_SHOWCASE_MAP_GENERATION
-			if (!state->DEBUG_showcase_map_generation)
-			{
-				state->DEBUG_showcase_map_generation = true;
-				platform->window_state = WindowState::fullscreen;
-			}
+#if DEBUG_SHOWCASE
+			platform->window_state = WindowState::fullscreen;
 
-			if (HOLDING(Input::space) && !state->DEBUG_thread_terminate)
+			if (HOLDING(Input::space) && (!state->DEBUG_thread_terminate && !state->DEBUG_map_generated))
 			{
 				SDL_SemPost(state->DEBUG_continue);
 				SDL_SemWait(state->DEBUG_halted);
 			}
+			if (state->DEBUG_map_generated)
+			{
+				persist vi2 DEBUG_prev_goal = { 0, 0 };
+				vi2 DEBUG_new_goal = get_closest_open_path_coordinates(state, state->game.lucia_position.xy);
+				if (DEBUG_prev_goal != DEBUG_new_goal)
+				{
+					DEBUG_prev_goal = DEBUG_new_goal;
+
+					while (state->game.monster_path)
+					{
+						state->game.monster_path = deallocate_path_coordinates_node(state, state->game.monster_path);
+					}
+
+					state->game.monster_path = path_find(state, get_closest_open_path_coordinates(state, state->game.monster_position.xy), DEBUG_new_goal);
+				}
+
+				state->game.lucia_velocity = { 0.0f, 0.0f };
+				if (HOLDING(Input::a))
+				{
+					state->game.lucia_velocity.x -= 1.0f;
+				}
+				if (HOLDING(Input::d))
+				{
+					state->game.lucia_velocity.x += 1.0f;
+				}
+				if (HOLDING(Input::s))
+				{
+					state->game.lucia_velocity.y -= 1.0f;
+				}
+				if (HOLDING(Input::w))
+				{
+					state->game.lucia_velocity.y += 1.0f;
+				}
+				if (+state->game.lucia_velocity)
+				{
+					state->game.lucia_velocity = normalize(state->game.lucia_velocity) * 8.0f;
+				}
+				if (PRESSED(Input::enter))
+				{
+					state->game.lucia_position.xy = rng_open_position(state);
+				}
+				state->game.lucia_velocity = move(state, &state->game.lucia_position.xy, state->game.lucia_velocity * SECONDS_PER_UPDATE);
+
+				if (state->game.monster_path)
+				{
+					vf2 ray = ray_to_closest(state->game.monster_position.xy, path_coordinates_to_position(state->game.monster_path->coordinates));
+					if (norm(ray) < WALL_SPACING / 2.0f)
+					{
+						state->game.monster_path = deallocate_path_coordinates_node(state, state->game.monster_path);
+					}
+					else
+					{
+						state->game.monster_velocity = normalize(ray) * 4.0f;
+					}
+				}
+
+				state->game.monster_velocity = move(state, &state->game.monster_position.xy, state->game.monster_velocity * SECONDS_PER_UPDATE);
+			}
 #else
 			DEBUG_once // @TEMP@
 			{
-				state->game.lucia_position.xy = get_position_of_wall_side(state->game.door_wall_side, 1.0f);
+				//state->game.lucia_position.xy = get_position_of_wall_side(state->game.door_wall_side, 1.0f);
 				//state->game.lucia_position.xy = get_position_of_wall_side(state->game.circuit_breaker_wall_side, 1.0f);
 				//state->game.lucia_position.xy = { 1.0f, 1.0f };
 				//state->game.lucia_position = { 64.637268f, 26.6f, 1.3239026f };
 				//state->game.lucia_angle    = 5.3498487f;
 				//state->game.monster_position = { 66.295441f, 25.49999f, 1.2878139f };
 				//state->game.monster_normal   = { -0.83331096f, 0.55280459f };
-				state->game.hud.inventory.array[0][0].type = ItemType::night_vision_goggles;
-				state->game.hud.inventory.array[0][0].night_vision_goggles.power = 1.0f;
-				state->game.hud.inventory.array[0][1].type = ItemType::cowbell;
+				//state->game.hud.inventory.array[0][0].type = ItemType::night_vision_goggles;
+				//state->game.hud.inventory.array[0][0].night_vision_goggles.power = 1.0f;
+				//state->game.hud.inventory.array[0][1].type = ItemType::cowbell;
 
 				//state->game.lucia_health = max(state->game.lucia_health - 0.4f, 0.0f);
 			}
@@ -3852,7 +3909,7 @@ extern "C" PROTOTYPE_RENDER(render)
 
 		case StateContext::game:
 		{
-#if DEBUG_SHOWCASE_MAP_GENERATION
+#if DEBUG_SHOWCASE
 			set_color(platform->renderer, vf3 { 0.05f, 0.1f, 0.15f });
 			SDL_RenderClear(platform->renderer);
 
@@ -3885,6 +3942,20 @@ extern "C" PROTOTYPE_RENDER(render)
 					}
 				}
 			}
+
+			set_color(platform->renderer, vf3 { 0.6f, 0.2f, 0.2f });
+			for (PathCoordinatesNode* node = state->game.monster_path; node && node->next_node; node = node->next_node)
+			{
+				if (norm(path_coordinates_to_position(node->coordinates) - path_coordinates_to_position(node->next_node->coordinates)) < 16.0f)
+				{
+					render_line(platform->renderer, position_to_screen(path_coordinates_to_position(node->coordinates)), position_to_screen(path_coordinates_to_position(node->next_node->coordinates)));
+				}
+			}
+
+			set_color(platform->renderer, vf3 { 0.2f, 0.8f, 0.2f });
+			render_filled_circle(platform->renderer, position_to_screen(state->game.lucia_position.xy), 5.0f);
+			set_color(platform->renderer, vf3 { 0.8f, 0.2f, 0.2f });
+			render_filled_circle(platform->renderer, position_to_screen(state->game.monster_position.xy), 5.0f);
 #else
 			DEBUG_profiling_start(FRAME);
 			DEFER { DEBUG_profiling_end_averaged_printf(FRAME, 64, "Frame : %f / %f (%fx of goal)\n", DEBUG_get_profiling(FRAME), 1.0f / 60.0f, DEBUG_get_profiling(FRAME) * 60.0f); };
