@@ -372,7 +372,7 @@ enum struct Orientation : u8
 
 bool32 is_point_on_line_segment(vf2 p, vf2 q, vf2 r)
 {
-	return q.x <= max(p.x, r.x) && q.x >= min(p.x, r.x) && q.y <= max(p.y, r.y) && q.y >= min(p.y, r.y);
+	return q.x <= fmaxf(p.x, r.x) && q.x >= fminf(p.x, r.x) && q.y <= fmaxf(p.y, r.y) && q.y >= fminf(p.y, r.y);
 }
 
 internal Orientation orientation_of(vf2 p, vf2 q, vf2 r)
@@ -535,12 +535,12 @@ internal CollisionData collide_circle(vf2 position, vf2 ray, vf2 center, f32 rad
 		}
 		else if (sign(k0) == sign(k1))
 		{
-			if (min(k0, k1) <= 1.0f)
+			if (fminf(k0, k1) <= 1.0f)
 			{
 				CollisionData data;
 				data.exists       = true;
 				data.inside       = false;
-				data.displacement = min(k0, k1) * ray;
+				data.displacement = fminf(k0, k1) * ray;
 				data.normal       = normalize(position + data.displacement - center);
 				return data;
 			}

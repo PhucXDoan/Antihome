@@ -147,7 +147,7 @@ do\
 
 #else
 #define DEBUG_printf(FSTR, ...)
-#define DEBUG_once
+#define DEBUG_once                                                  if (true); else
 #define DEBUG_profiling_start(NAME)
 #define DEBUG_profiling_end(NAME)
 #define DEBUG_profiling_end_averaged(NAME, COUNT)

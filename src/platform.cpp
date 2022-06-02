@@ -79,7 +79,7 @@ int main(int, char**)
 
 	Platform platform = {};
 
-	platform.window = SDL_CreateWindow("Room", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, INITIAL_WINDOW_DIM.x, INITIAL_WINDOW_DIM.y, 0);
+	platform.window = SDL_CreateWindow("Room", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, INITIAL_WINDOW_DIM.x, INITIAL_WINDOW_DIM.y, SDL_WINDOW_INPUT_GRABBED | SDL_WINDOW_INPUT_FOCUS | SDL_WINDOW_MOUSE_FOCUS | SDL_WINDOW_MOUSE_CAPTURE);
 	DEFER { SDL_DestroyWindow(platform.window); };
 	if (!platform.window)
 	{
@@ -104,7 +104,9 @@ int main(int, char**)
 		exit(-1);
 	}
 
-	platform.window_state = WindowState::windowed;
+
+	platform.window_state = WindowState::fullscreen;
+	SDL_SetWindowFullscreen(platform.window, SDL_WINDOW_FULLSCREEN_DESKTOP);
 	SDL_GetWindowSize(platform.window, &platform.window_dimensions.x, &platform.window_dimensions.y);
 
 	platform.memory_capacity = MEBIBYTES_OF(1);
@@ -137,6 +139,8 @@ int main(int, char**)
 		SDL_GetMouseState(&cursor_x, &cursor_y);
 		platform.cursor = { static_cast<f32>(cursor_x), platform.window_dimensions.y - 1.0f - cursor_y };
 	}
+
+	SDL_SetRelativeMouseMode(SDL_TRUE);
 
 	u64 performance_count = SDL_GetPerformanceCounter();
 	f32 frame_time        = 0.0f;
@@ -224,6 +228,7 @@ int main(int, char**)
 			}
 		}
 
+#if DEBUG
 		if (fetch_dll_modification_time() != dll_modification_time)
 		{
 			for (struct stat stat_; stat(EXE_DIR "LOCK.tmp", &stat_) == 0;);
@@ -233,6 +238,7 @@ int main(int, char**)
 			boot_up(&platform);
 			frame_time = 0.0f;
 		}
+#endif
 
 		if (frame_time >= SECONDS_PER_UPDATE)
 		{
@@ -273,7 +279,9 @@ int main(int, char**)
 					it->curr = 0;
 				}
 
-				frame_time -= SECONDS_PER_UPDATE;
+				// @TODO@ Without asset streaming, skipping frames will occur often.
+				// frame_time -= SECONDS_PER_UPDATE;
+				frame_time = 0.0f;
 			}
 			while (frame_time >= SECONDS_PER_UPDATE);
 

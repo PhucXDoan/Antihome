@@ -17,14 +17,19 @@ IF NOT EXIST W:\build\ (
 )
 
 pushd W:\build\
-set DEBUG=1
+REM COMMENT THIS OUT TO RELEASE! BATCH IS HORRIBLE.
+REM set DEBUG=1
 if DEFINED DEBUG (
 	echo "Debug build"
 	del *.pdb > NUL 2> NUL
 	echo "LOCK" > LOCK.tmp
-	cl -nologo -DDATA_DIR="\"W:/data/\"" -DEXE_DIR="\"W:/build/\"" -DDEBUG=1 -Od -Oi -Z7 -std:c++17 -MTd -GR- -EHsc -EHa- %WARNINGS% %INCLUDES% -LD         W:\src\Room.cpp     /link -DEBUG:FULL -opt:ref -incremental:no -subsystem:windows %LIBRARIES% -PDB:Room_%RANDOM%.pdb -EXPORT:initialize -EXPORT:boot_down -EXPORT:boot_up -EXPORT:update -EXPORT:render
-	cl -nologo -DDATA_DIR="\"W:/data/\"" -DEXE_DIR="\"W:/build/\"" -DDEBUG=1 -Od -Oi -Z7 -std:c++17 -MTd -GR- -EHsc -EHa- %WARNINGS% %INCLUDES% -FeRoom.exe W:\src\platform.cpp /link -DEBUG:FULL -opt:ref -incremental:no -subsystem:windows %LIBRARIES%
+	cl -nologo -DDATA_DIR="\"W:/data/\"" -DEXE_DIR="\"W:/build/\"" -DDEBUG=1 -O2 -Oi -Z7 -std:c++17 -MTd -GR- -EHsc -EHa- %WARNINGS% %INCLUDES% -LD         W:\src\Room.cpp     /link -DEBUG:FULL -opt:ref -incremental:no -subsystem:windows %LIBRARIES% -PDB:Room_%RANDOM%.pdb -EXPORT:initialize -EXPORT:boot_down -EXPORT:boot_up -EXPORT:update -EXPORT:render
+	cl -nologo -DDATA_DIR="\"W:/data/\"" -DEXE_DIR="\"W:/build/\"" -DDEBUG=1 -O2 -Oi -Z7 -std:c++17 -MTd -GR- -EHsc -EHa- %WARNINGS% %INCLUDES% -FeRoom.exe W:\src\platform.cpp /link -DEBUG:FULL -opt:ref -incremental:no -subsystem:windows %LIBRARIES%
 	sleep 0.1
 	del LOCK.tmp
+) else (
+	echo "Release build"
+	cl -nologo -DDATA_DIR="\"./data/\"" -DEXE_DIR="\"./\"" -O2 -Oi -std:c++17 -MTd -GR- -EHsc -EHa- %WARNINGS% %INCLUDES% -LD         W:\src\Room.cpp     /link -incremental:no -subsystem:windows %LIBRARIES% -PDB:Room_%RANDOM%.pdb -EXPORT:initialize -EXPORT:boot_down -EXPORT:boot_up -EXPORT:update -EXPORT:render
+	cl -nologo -DDATA_DIR="\"./data/\"" -DEXE_DIR="\"./\"" -O2 -Oi -std:c++17 -MTd -GR- -EHsc -EHa- %WARNINGS% %INCLUDES% -FeRoom.exe W:\src\platform.cpp /link -incremental:no -subsystem:windows %LIBRARIES%
 )
 popd
