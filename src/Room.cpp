@@ -3,7 +3,14 @@
 // "How to check if two given line segments intersect?" https://www.geeksforgeeks.org/check-if-two-given-line-segments-intersect/ (http://www.dcs.gla.ac.uk/~pat/52233/slides/Geometry1x1.pdf)
 
 #define DEBUG_SHOWCASE_MAP    false
-#define DEBUG_SHOWCASE_RENDER false
+#define DEBUG_SHOWCASE_RENDER true
+
+#define DEBUG_DISABLE_FLOOR_CEILING false
+#define DEBUG_DISABLE_SPRITES       false
+#define DEBUG_DISABLE_SAMPLING      false
+#define DEBUG_DISABLE_MIPMAPPING    false
+#define DEBUG_DISABLE_SHADER        false
+#define DEBUG_DISABLE_POSTPROCESSOR false
 
 #define STB_IMAGE_IMPLEMENTATION true
 #include <time.h>
@@ -14,10 +21,12 @@
 #include "utilities.cpp"
 
 #if DEBUG_SHOWCASE_MAP
-global constexpr vi2 DISPLAY_RES = { 1080, 720 };
+global constexpr vi2 DISPLAY_RES = { 540, 360 };
+global constexpr i32 MAP_DIM     = 30;
 extern "C" PROTOTYPE_RENDER(render);
 #else
 global constexpr vi2 DISPLAY_RES = { 800, 600 };
+global constexpr i32 MAP_DIM     = 40;
 #endif
 
 global constexpr i32 COMPUTER_TASKBAR_HEIGHT     = 50;
@@ -32,7 +41,6 @@ global constexpr f32 HORT_TO_VERT_K        = 0.927295218f * VIEW_RES.x;
 global constexpr f32 WALL_HEIGHT           = 2.7432f;
 global constexpr f32 WALL_THICKNESS        = 0.4f;
 global constexpr f32 LUCIA_HEIGHT          = 1.4986f;
-global constexpr i32 MAP_DIM               = 40;
 global constexpr f32 WALL_SPACING          = 3.0f;
 global constexpr i32 INVENTORY_DIM         = 30;
 global constexpr i32 INVENTORY_PADDING     = 5;
@@ -123,17 +131,33 @@ global constexpr strlit RADIO_WAV_FILE_PATHS[] =
 		DATA_DIR "audio/radio_6.wav",
 		DATA_DIR "audio/radio_7.wav",
 		DATA_DIR "audio/radio_8.wav",
-		DATA_DIR "audio/radio_9.wav"
+		DATA_DIR "audio/radio_9.wav",
+		DATA_DIR "audio/radio_10.wav"
 	};
 
 global constexpr struct { f32 min_scalar; f32 max_scalar; strlit file_path; } PAPER_DATA[] =
 	{
-		{ 0.20f, 0.8f, DATA_DIR "papers/terry_entry_0.png" },
-		{ 0.20f, 0.8f, DATA_DIR "papers/terry_entry_1.png" },
-		{ 0.20f, 0.8f, DATA_DIR "papers/terry_entry_2.png" },
-		{ 0.20f, 0.8f, DATA_DIR "papers/terry_entry_3.png" },
-		{ 0.20f, 0.8f, DATA_DIR "papers/terry_entry_4.png" },
-		{ 0.15f, 0.7f, DATA_DIR "papers/he_misses_us.jpg"  }
+		{ 0.8f, 1.9f, DATA_DIR "papers/terry.png"   },
+		{ 0.6f, 1.7f, DATA_DIR "papers/1048_1.jpg"  },
+		{ 0.6f, 1.7f, DATA_DIR "papers/1048_2.jpg"  },
+		{ 0.6f, 1.7f, DATA_DIR "papers/1048_3.jpg"  },
+		{ 0.6f, 1.7f, DATA_DIR "papers/1048_4.jpg"  },
+		{ 0.6f, 1.7f, DATA_DIR "papers/1048_5.jpg"  },
+		{ 0.6f, 1.7f, DATA_DIR "papers/1048_6.jpg"  },
+		{ 0.6f, 1.7f, DATA_DIR "papers/1048_7.jpg"  },
+		{ 0.6f, 1.7f, DATA_DIR "papers/1048_8.jpg"  },
+		{ 0.6f, 1.7f, DATA_DIR "papers/1048_9.jpg"  },
+		{ 0.6f, 1.7f, DATA_DIR "papers/1048_10.jpg" },
+		{ 0.6f, 1.7f, DATA_DIR "papers/1048_11.jpg" },
+		{ 0.6f, 1.7f, DATA_DIR "papers/1048_12.jpg" },
+		{ 0.6f, 1.7f, DATA_DIR "papers/1048_13.jpg" },
+		{ 0.6f, 1.7f, DATA_DIR "papers/1048_14.jpg" },
+		{ 0.6f, 1.7f, DATA_DIR "papers/1048_15.jpg" },
+		{ 0.6f, 1.7f, DATA_DIR "papers/1048_16.jpg" },
+		{ 0.6f, 1.7f, DATA_DIR "papers/1048_17.jpg" },
+		{ 0.6f, 1.7f, DATA_DIR "papers/1048_18.jpg" },
+		{ 0.6f, 1.7f, DATA_DIR "papers/1048_19.jpg" },
+		{ 0.6f, 1.7f, DATA_DIR "papers/1048_20.jpg" }
 	};
 
 global constexpr strlit BLOOD_DROPS[] =
@@ -300,6 +324,7 @@ enum_loose (WindowSliderFamily, i8)
 	enum_start_region(SETTINGS)
 		settings_master_volume,
 		settings_brightness,
+		settings_fps,
 	enum_end_region(SETTINGS)
 
 	enum_start_region(POWER)
@@ -350,8 +375,9 @@ global constexpr struct
 			{},
 			+WindowSliderFamily::SETTINGS_COUNT,
 			{
-				{ "Master volume", 0.0f , 1.0f, { 0.4f, 0.75f }, 0.5f },
-				{ "Brightness"   , 0.25f, 1.0f, { 0.4f, 0.60f }, 0.5f }
+				{ "Master volume", 0.0f ,  1.0f, { 0.4f, 0.75f }, 0.5f },
+				{ "Brightness"   , 0.25f,  1.0f, { 0.4f, 0.60f }, 0.5f },
+				{ "FPS"          , 24.0f, 60.0f, { 0.4f, 0.45f }, 0.5f }
 			}
 		},
 		{
@@ -422,6 +448,10 @@ struct State
 	SDL_Thread* DEBUG_thread;
 	#endif
 
+	#if DEBUG_SHOWCASE_RENDER
+	bool32 DEBUG_time_stop = false;
+	#endif
+
 	MemoryArena  context_arena;
 	MemoryArena  transient_arena;
 
@@ -456,6 +486,7 @@ struct State
 		{
 			f32 master_volume;
 			f32 brightness;
+			f32 fps;
 		} settings;
 
 		f32 settings_slider_values[WindowSliderFamily::SETTINGS_COUNT];
@@ -1454,12 +1485,16 @@ enum struct Material : u8
 
 internal vf3 shader(State* state, vf3 color, Material material, bool32 in_light, vf3 ray, vf3 normal, f32 distance)
 {
+#if DEBUG_DISABLE_SHADER
+	return color;
+#else
+
 	constexpr f32 FLASHLIGHT_INNER_CUTOFF = 0.95f;
 	constexpr f32 FLASHLIGHT_OUTER_CUTOFF = 0.93f;
 
 	constexpr vf3 AMBIENT_COLOR = { 1.0f, 1.0f, 1.0f };
 	f32 ambient_light =
-		0.5f / (square(distance) / 9.0f / (square(state->game.night_vision_goggles_activation) * 16.0f + 1.0f + (material == Material::item ? 4.0f : 0.0f) + state->game.interpolated_eye_drops_activation * 3.0f) + 1.0f)
+		0.5f / (square(distance) / 9.0f / (square(state->game.night_vision_goggles_activation) * 32.0f + 1.0f + (material == Material::item ? 4.0f : 0.0f) + state->game.interpolated_eye_drops_activation * 3.0f) + 1.0f)
 			+ lerp(0.6f, 1.3f, (state->game.lucia_position.z + ray.z * distance) / state->game.percieved_wall_height) * (0.5f - 4.0f * cube(0.5f - state->game.ceiling_lights_keytime));
 
 	if (material == Material::item)
@@ -1509,6 +1544,7 @@ internal vf3 shader(State* state, vf3 color, Material material, bool32 in_light,
 			clamp((color.y * (AMBIENT_COLOR.y * ambient_light + FLASHLIGHT_COLOR.y * flashlight_light + FIRE_COLOR.y * fire_light)), 0.0f, square(1.0f - state->game.lucia_dying_keytime)),
 			clamp((color.z * (AMBIENT_COLOR.z * ambient_light + FLASHLIGHT_COLOR.z * flashlight_light + FIRE_COLOR.z * fire_light)), 0.0f, square(1.0f - state->game.lucia_dying_keytime))
 		};
+#endif
 }
 
 internal void boot_up_state(SDL_Renderer* renderer, State* state)
@@ -1993,7 +2029,7 @@ extern "C" PROTOTYPE_INITIALIZE(initialize)
 #else
 	FOR_ELEMS(it, state->settings_slider_values)
 	{
-		*it = 1.0f;
+		*it = WINDOW_DATA[+WindowType::settings - +WindowType::TYPE_START].slider_buffer[it_index].max_value;
 	}
 
 	state->title_menu.cursor = DISPLAY_RES / 2.0f;
@@ -2056,7 +2092,18 @@ extern "C" PROTOTYPE_UPDATE(update)
 {
 	State* state = reinterpret_cast<State*>(platform->memory);
 
-	state->time                 += SECONDS_PER_UPDATE;
+#if DEBUG_SHOWCASE_RENDER
+	if (PRESSED(Input::backspace))
+	{
+		state->DEBUG_time_stop = !state->DEBUG_time_stop;
+	}
+	if (state->DEBUG_time_stop)
+	{
+		return UpdateCode::resume;
+	}
+#endif
+
+	state->time                 += platform->seconds_per_update;
 	state->transient_arena.used  = 0;
 
 	if (HOLDING(Input::alt) && PRESSED(Input::enter))
@@ -2197,8 +2244,8 @@ extern "C" PROTOTYPE_UPDATE(update)
 				tm.cursor_dragging_slider = WindowSliderFamily::null;
 			}
 
-			tm.cursor_velocity  = dampen(tm.cursor_velocity, 0.8f * platform->cursor_delta / SECONDS_PER_UPDATE, 64.0f, SECONDS_PER_UPDATE);
-			tm.cursor          += tm.cursor_velocity * SECONDS_PER_UPDATE;
+			tm.cursor_velocity  = dampen(tm.cursor_velocity, 0.8f * platform->cursor_delta / platform->seconds_per_update, 64.0f, platform->seconds_per_update);
+			tm.cursor          += tm.cursor_velocity * platform->seconds_per_update;
 
 			constexpr f32 CURSOR_PADDING = 2.0f;
 			vf2 min_region = vx2(CURSOR_PADDING);
@@ -2233,8 +2280,8 @@ extern "C" PROTOTYPE_UPDATE(update)
 				}
 				else
 				{
-					tm.window_velocity  = dampen(tm.window_velocity, { 0.0f, 0.0f }, 32.0f, SECONDS_PER_UPDATE);
-					tm.window_position += tm.window_velocity * SECONDS_PER_UPDATE;
+					tm.window_velocity  = dampen(tm.window_velocity, { 0.0f, 0.0f }, 32.0f, platform->seconds_per_update);
+					tm.window_position += tm.window_velocity * platform->seconds_per_update;
 
 					if (tm.window_position.x < 2.0f * COMPUTER_TITLE_BAR_HEIGHT - window_data.dimensions.x || tm.window_position.x > DISPLAY_RES.x - COMPUTER_TITLE_BAR_HEIGHT)
 					{
@@ -2269,6 +2316,8 @@ extern "C" PROTOTYPE_UPDATE(update)
 						);
 				}
 			}
+
+			platform->seconds_per_update = 1.0f / state->settings.fps;
 #endif
 		} break;
 
@@ -2277,13 +2326,16 @@ extern "C" PROTOTYPE_UPDATE(update)
 			DEBUG_once
 			{
 				//state->game.lucia_position.xy = get_position_of_wall_side(state->game.circuit_breaker_wall_side, 1.0f);
-				state->game.lucia_position.xy = get_position_of_wall_side(state->game.door_wall_side, 8.0f);
+				//state->game.lucia_position.xy = get_position_of_wall_side(state->game.door_wall_side, 8.0f);
 			}
 #if DEBUG_SHOWCASE_MAP
 			platform->window_state = WindowState::fullscreen;
 
-			if (HOLDING(Input::space) && (!state->DEBUG_thread_terminate && !state->DEBUG_map_generated))
+			persist f32 DEBUG_repeat_time = 0.0f;
+			DEBUG_repeat_time += platform->seconds_per_update;
+			if (HOLDING(Input::space) && DEBUG_repeat_time > 0.05f && (!state->DEBUG_thread_terminate && !state->DEBUG_map_generated))
 			{
+				DEBUG_repeat_time = 0.0f;
 				SDL_SemPost(state->DEBUG_continue);
 				SDL_SemWait(state->DEBUG_halted);
 			}
@@ -2328,7 +2380,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 				{
 					state->game.lucia_position.xy = rng_open_position(state);
 				}
-				state->game.lucia_velocity = move(state, &state->game.lucia_position.xy, state->game.lucia_velocity * SECONDS_PER_UPDATE);
+				state->game.lucia_velocity = move(state, &state->game.lucia_position.xy, state->game.lucia_velocity * platform->seconds_per_update);
 
 				if (state->game.monster_path)
 				{
@@ -2343,7 +2395,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 					}
 				}
 
-				state->game.monster_velocity = move(state, &state->game.monster_position.xy, state->game.monster_velocity * SECONDS_PER_UPDATE);
+				state->game.monster_velocity = move(state, &state->game.monster_position.xy, state->game.monster_velocity * platform->seconds_per_update);
 			}
 #else
 #if DEBUG_SHOWCASE_RENDER
@@ -2404,7 +2456,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 			if (state->game.lucia_health > 0.0f)
 			{
-				state->game.entering_keytime = clamp(state->game.entering_keytime + SECONDS_PER_UPDATE / 1.0f, 0.0f, 1.0f);
+				state->game.entering_keytime = clamp(state->game.entering_keytime + platform->seconds_per_update / 1.0f, 0.0f, 1.0f);
 
 				vf2 wasd = { 0.0f, 0.0f };
 
@@ -2418,28 +2470,28 @@ extern "C" PROTOTYPE_UPDATE(update)
 					if (+wasd)
 					{
 						constexpr f32 MIN_PORTION = 0.1f;
-						state->game.lucia_velocity += 38.0f * rotate(normalize(wasd), state->game.lucia_angle) * (1.0f + MIN_PORTION - powf(1.0f - state->game.lucia_stamina, 8)) / (1.0f + MIN_PORTION) * SECONDS_PER_UPDATE;
+						state->game.lucia_velocity += 38.0f * rotate(normalize(wasd), state->game.lucia_angle) * (1.0f + MIN_PORTION - powf(1.0f - state->game.lucia_stamina, 8)) / (1.0f + MIN_PORTION) * platform->seconds_per_update;
 					}
 				}
 
 				if (+wasd && HOLDING(Input::shift) && !state->game.lucia_out_of_breath)
 				{
-					state->game.lucia_velocity        = dampen(state->game.lucia_velocity, { 0.0f, 0.0f }, FRICTION * 0.7f, SECONDS_PER_UPDATE);
-					state->game.lucia_stamina         = clamp(state->game.lucia_stamina - SECONDS_PER_UPDATE / 60.0f * (1.0f + (1.0f - square(1.0f - 2.0f * state->game.lucia_sprint_keytime)) * 4.0f), 0.0f, 1.0f);
-					state->game.lucia_sprint_keytime  = clamp(state->game.lucia_sprint_keytime + SECONDS_PER_UPDATE / 1.5f, 0.0f, 1.0f);
+					state->game.lucia_velocity        = dampen(state->game.lucia_velocity, { 0.0f, 0.0f }, FRICTION * 0.7f, platform->seconds_per_update);
+					state->game.lucia_stamina         = clamp(state->game.lucia_stamina - platform->seconds_per_update / 60.0f * (1.0f + (1.0f - square(1.0f - 2.0f * state->game.lucia_sprint_keytime)) * 4.0f), 0.0f, 1.0f);
+					state->game.lucia_sprint_keytime  = clamp(state->game.lucia_sprint_keytime + platform->seconds_per_update / 1.5f, 0.0f, 1.0f);
 					if (state->game.lucia_stamina == 0.0f)
 					{
 						state->game.lucia_out_of_breath = true;
 					}
 					else
 					{
-						state->game.lucia_fov = dampen(state->game.lucia_fov, TAU * 0.35f, 1.5f, SECONDS_PER_UPDATE);
+						state->game.lucia_fov = dampen(state->game.lucia_fov, TAU * 0.35f, 1.5f, platform->seconds_per_update);
 					}
 				}
 				else
 				{
-					state->game.lucia_stamina         = clamp(state->game.lucia_stamina + SECONDS_PER_UPDATE / 10.0f * square(1.0f - state->game.lucia_sprint_keytime) * (state->game.lucia_out_of_breath ? 0.5f : 1.0f), 0.0f, 1.0f);
-					state->game.lucia_sprint_keytime  = clamp(state->game.lucia_sprint_keytime - SECONDS_PER_UPDATE / 1.0f, 0.0f, 1.0f);
+					state->game.lucia_stamina         = clamp(state->game.lucia_stamina + platform->seconds_per_update / 10.0f * square(1.0f - state->game.lucia_sprint_keytime) * (state->game.lucia_out_of_breath ? 0.5f : 1.0f), 0.0f, 1.0f);
+					state->game.lucia_sprint_keytime  = clamp(state->game.lucia_sprint_keytime - platform->seconds_per_update / 1.0f, 0.0f, 1.0f);
 
 					if (state->game.lucia_out_of_breath)
 					{
@@ -2449,23 +2501,23 @@ extern "C" PROTOTYPE_UPDATE(update)
 						}
 						else
 						{
-							state->game.lucia_fov      = dampen(state->game.lucia_fov, TAU * 0.2f, 1.0f, SECONDS_PER_UPDATE);
-							state->game.lucia_velocity = dampen(state->game.lucia_velocity, { 0.0f, 0.0f }, FRICTION * 1.5f, SECONDS_PER_UPDATE);
+							state->game.lucia_fov      = dampen(state->game.lucia_fov, TAU * 0.2f, 1.0f, platform->seconds_per_update);
+							state->game.lucia_velocity = dampen(state->game.lucia_velocity, { 0.0f, 0.0f }, FRICTION * 1.5f, platform->seconds_per_update);
 						}
 					}
 					else
 					{
-						state->game.lucia_fov      = dampen(state->game.lucia_fov, TAU * 0.25f, 4.0f, SECONDS_PER_UPDATE);
-						state->game.lucia_velocity = dampen(state->game.lucia_velocity, { 0.0f, 0.0f }, FRICTION, SECONDS_PER_UPDATE);
+						state->game.lucia_fov      = dampen(state->game.lucia_fov, TAU * 0.25f, 4.0f, platform->seconds_per_update);
+						state->game.lucia_velocity = dampen(state->game.lucia_velocity, { 0.0f, 0.0f }, FRICTION, platform->seconds_per_update);
 					}
 				}
 
-				state->game.lucia_fov = dampen(state->game.lucia_fov, clamp(state->game.lucia_fov * (1.0f + (1.0f - cosf(state->game.interpolated_pills_effect_activations[2] * 2.0f)) * 14.0f), 0.5f, 18.0f), 1.0f, SECONDS_PER_UPDATE);
+				state->game.lucia_fov = dampen(state->game.lucia_fov, clamp(state->game.lucia_fov * (1.0f + (1.0f - cosf(state->game.interpolated_pills_effect_activations[2] * 2.0f)) * 14.0f), 0.5f, 18.0f), 1.0f, platform->seconds_per_update);
 
-				state->game.lucia_head_bob_keytime = mod(state->game.lucia_head_bob_keytime + (0.05f + 0.3f * norm(state->game.lucia_velocity)) * SECONDS_PER_UPDATE, 1.0f);
+				state->game.lucia_head_bob_keytime = mod(state->game.lucia_head_bob_keytime + (0.05f + 0.3f * norm(state->game.lucia_velocity)) * platform->seconds_per_update, 1.0f);
 				// @TODO@ Doesn't feel as good when velocity is updated after collision. Should be better.
-				//state->game.lucia_velocity         = move(state, &state->game.lucia_position.xy, state->game.lucia_velocity * SECONDS_PER_UPDATE) / SECONDS_PER_UPDATE;
-				move(state, &state->game.lucia_position.xy, state->game.lucia_velocity * SECONDS_PER_UPDATE);
+				//state->game.lucia_velocity         = move(state, &state->game.lucia_position.xy, state->game.lucia_velocity * platform->seconds_per_update) / platform->seconds_per_update;
+				move(state, &state->game.lucia_position.xy, state->game.lucia_velocity * platform->seconds_per_update);
 
 				f32 old_z = state->game.lucia_position.z;
 				state->game.lucia_position.z = LUCIA_HEIGHT + 0.1f * (cosf(state->game.lucia_head_bob_keytime * TAU) - 1.0f);
@@ -2484,10 +2536,10 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 				FOR_ELEMS(it, state->game.item_buffer, state->game.item_count)
 				{
-					it->velocity = dampen(it->velocity, { 0.0f, 0.0f }, FRICTION, SECONDS_PER_UPDATE);
+					it->velocity = dampen(it->velocity, { 0.0f, 0.0f }, FRICTION, platform->seconds_per_update);
 					if (+it->velocity)
 					{
-						it->velocity = move(state, &it->position.xy, it->velocity * SECONDS_PER_UPDATE) / SECONDS_PER_UPDATE;
+						it->velocity = move(state, &it->position.xy, it->velocity * platform->seconds_per_update) / platform->seconds_per_update;
 					}
 					it->position.z = lerp(0.15f, state->game.lucia_position.z, clamp(1.0f - norm_sq(ray_to_closest(state->game.lucia_position.xy, it->position.xy)) / 36.0f, 0.0f, 1.0f)) + sinf(state->time * 3.0f) * 0.025f;
 
@@ -2495,7 +2547,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 					f32 distance = norm(ray);
 					if (distance > 0.001f)
 					{
-						it->normal = dampen(it->normal, ray / distance, 2.0f, SECONDS_PER_UPDATE);
+						it->normal = dampen(it->normal, ray / distance, 2.0f, platform->seconds_per_update);
 					}
 				}
 
@@ -2520,8 +2572,8 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 				if (state->game.hud.type != HudType::null)
 				{
-					state->game.hud.cursor_velocity  = dampen(state->game.hud.cursor_velocity, 0.3f * platform->cursor_delta / SECONDS_PER_UPDATE, 64.0f, SECONDS_PER_UPDATE);
-					state->game.hud.cursor          += state->game.hud.cursor_velocity * SECONDS_PER_UPDATE;
+					state->game.hud.cursor_velocity  = dampen(state->game.hud.cursor_velocity, 0.3f * platform->cursor_delta / platform->seconds_per_update, 64.0f, platform->seconds_per_update);
+					state->game.hud.cursor          += state->game.hud.cursor_velocity * platform->seconds_per_update;
 					if (state->game.hud.cursor.x < 0.0f || state->game.hud.cursor.x > VIEW_RES.x)
 					{
 						state->game.hud.cursor.x          = clamp(state->game.hud.cursor.x, 0.0f, static_cast<f32>(VIEW_RES.x));
@@ -2789,7 +2841,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 										*dropped = *state->game.hud.inventory.selected_item;
 										dropped->velocity    = polar(state->game.lucia_angle + (0.5f - state->game.hud.cursor.x / VIEW_RES.x) * state->game.lucia_fov) * rng(&state->seed, 12.0f, 16.0f);
 										dropped->position    = state->game.lucia_position;
-										dropped->velocity    = move(state, &dropped->position.xy, dropped->velocity * SECONDS_PER_UPDATE) / SECONDS_PER_UPDATE;
+										dropped->velocity    = move(state, &dropped->position.xy, dropped->velocity * platform->seconds_per_update) / platform->seconds_per_update;
 										dropped->normal      = polar(-state->game.lucia_angle);
 
 										state->game.hud.inventory.selected_item->type = ItemType::null;
@@ -2798,6 +2850,16 @@ extern "C" PROTOTYPE_UPDATE(update)
 										{
 											if (*it == state->game.hud.inventory.selected_item)
 											{
+												if (*it == state->game.holding.radio)
+												{
+													if (state->game.radio_keytime)
+													{
+														FOR_ELEMS(audio, state->game.audio.radio_clips)
+														{
+															Mix_VolumeChunk(*audio, 0);
+														}
+													}
+												}
 												*it = 0;
 												break;
 											}
@@ -3016,7 +3078,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 											Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.gulp, 0);
 											if (rng(&state->seed) < 0.2f)
 											{
-												if (rng(&state->seed) < 0.5f)
+												if (state->game.goal != GameGoal::find_door || rng(&state->seed) < 0.5f)
 												{
 													state->game.lucia_position.xy = get_position_of_wall_side(state->game.door_wall_side);
 												}
@@ -3092,12 +3154,12 @@ extern "C" PROTOTYPE_UPDATE(update)
 							}
 							else
 							{
-								state->game.hud.paper.velocity         = dampen(state->game.hud.paper.velocity, { 0.0f, 0.0f }, 8.0f, SECONDS_PER_UPDATE);
+								state->game.hud.paper.velocity         = dampen(state->game.hud.paper.velocity, { 0.0f, 0.0f }, 8.0f, platform->seconds_per_update);
 								state->game.hud.paper.scalar_velocity += 3.0f * platform->scroll;
 							}
 
-							state->game.hud.paper.scalar_velocity = dampen(state->game.hud.paper.scalar_velocity, 0.0f, 16.0f, SECONDS_PER_UPDATE);
-							state->game.hud.paper.scalar         += state->game.hud.paper.scalar_velocity * state->game.hud.paper.scalar * SECONDS_PER_UPDATE;
+							state->game.hud.paper.scalar_velocity = dampen(state->game.hud.paper.scalar_velocity, 0.0f, 16.0f, platform->seconds_per_update);
+							state->game.hud.paper.scalar         += state->game.hud.paper.scalar_velocity * state->game.hud.paper.scalar * platform->seconds_per_update;
 
 							if (PAPER_DATA[state->game.hud.paper.index].min_scalar > state->game.hud.paper.scalar || state->game.hud.paper.scalar > PAPER_DATA[state->game.hud.paper.index].max_scalar)
 							{
@@ -3105,7 +3167,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 								state->game.hud.paper.scalar          = clamp(state->game.hud.paper.scalar, PAPER_DATA[state->game.hud.paper.index].min_scalar, PAPER_DATA[state->game.hud.paper.index].max_scalar);
 							}
 
-							state->game.hud.paper.delta_position += state->game.hud.paper.velocity / state->game.hud.paper.scalar * SECONDS_PER_UPDATE;
+							state->game.hud.paper.delta_position += state->game.hud.paper.velocity / state->game.hud.paper.scalar * platform->seconds_per_update;
 
 							constexpr f32 PAPER_MARGIN = 25.0f;
 							vf2 region =
@@ -3328,17 +3390,17 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 				if (state->game.hud.type == HudType::null)
 				{
-					state->game.lucia_angle_velocity = dampen(state->game.lucia_angle_velocity, -0.005f * platform->cursor_delta.x / SECONDS_PER_UPDATE, 16.0f, SECONDS_PER_UPDATE);
+					state->game.lucia_angle_velocity = dampen(state->game.lucia_angle_velocity, -0.005f * platform->cursor_delta.x / platform->seconds_per_update, 16.0f, platform->seconds_per_update);
 				}
 				else
 				{
-					state->game.lucia_angle_velocity = dampen(state->game.lucia_angle_velocity, 0.0f, 16.0f, SECONDS_PER_UPDATE);
+					state->game.lucia_angle_velocity = dampen(state->game.lucia_angle_velocity, 0.0f, 16.0f, platform->seconds_per_update);
 				}
 
-				state->game.lucia_angle = mod(state->game.lucia_angle + state->game.lucia_angle_velocity * SECONDS_PER_UPDATE, TAU);
+				state->game.lucia_angle = mod(state->game.lucia_angle + state->game.lucia_angle_velocity * platform->seconds_per_update, TAU);
 
-				state->game.hud.circuit_breaker.interpolated_voltage_velocity  = dampen(state->game.hud.circuit_breaker.interpolated_voltage_velocity, 32.0f * (state->game.hud.circuit_breaker.active_voltage - state->game.hud.circuit_breaker.interpolated_voltage), 16.0f, SECONDS_PER_UPDATE);
-				state->game.hud.circuit_breaker.interpolated_voltage          += state->game.hud.circuit_breaker.interpolated_voltage_velocity * SECONDS_PER_UPDATE;
+				state->game.hud.circuit_breaker.interpolated_voltage_velocity  = dampen(state->game.hud.circuit_breaker.interpolated_voltage_velocity, 32.0f * (state->game.hud.circuit_breaker.active_voltage - state->game.hud.circuit_breaker.interpolated_voltage), 16.0f, platform->seconds_per_update);
+				state->game.hud.circuit_breaker.interpolated_voltage          += state->game.hud.circuit_breaker.interpolated_voltage_velocity * platform->seconds_per_update;
 
 				if (state->game.hud.circuit_breaker.interpolated_voltage < 0.0f)
 				{
@@ -3350,7 +3412,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 				{
 					case GameGoal::find_door:
 					{
-						state->game.ceiling_lights_keytime = clamp(state->game.ceiling_lights_keytime + SECONDS_PER_UPDATE / 2.0f, 0.0f, 1.0f);
+						state->game.ceiling_lights_keytime = clamp(state->game.ceiling_lights_keytime + platform->seconds_per_update / 2.0f, 0.0f, 1.0f);
 
 						vf2 door_position = get_position_of_wall_side(state->game.door_wall_side);
 						if (norm(ray_to_closest(state->game.lucia_position.xy, door_position)) < 4.0f && exists_clear_way(state, state->game.lucia_position.xy, door_position))
@@ -3371,25 +3433,25 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 					case GameGoal::fix_power:
 					{
-						state->game.creepy_sound_countdown -= SECONDS_PER_UPDATE;
+						state->game.creepy_sound_countdown -= platform->seconds_per_update;
 						if (state->game.creepy_sound_countdown <= 0.0f)
 						{
 							Mix_PlayChannel(+AudioChannel::unreserved, state->game.audio.creepy_sounds[rng(&state->seed, 0, ARRAY_CAPACITY(state->game.audio.creepy_sounds))], 0);
 							state->game.creepy_sound_countdown = rng(&state->seed, CREEPY_SOUND_MIN_TIME, CREEPY_SOUND_MAX_TIME);
 						}
 
-						state->game.ceiling_lights_keytime = clamp(state->game.ceiling_lights_keytime - SECONDS_PER_UPDATE / 1.0f, 0.0f, 1.0f);
+						state->game.ceiling_lights_keytime = clamp(state->game.ceiling_lights_keytime - platform->seconds_per_update / 1.0f, 0.0f, 1.0f);
 					} break;
 
 					case GameGoal::escape:
 					{
-						state->game.ceiling_lights_keytime = clamp(state->game.ceiling_lights_keytime + SECONDS_PER_UPDATE / 2.0f, 0.0f, 1.0f);
+						state->game.ceiling_lights_keytime = clamp(state->game.ceiling_lights_keytime + platform->seconds_per_update / 2.0f, 0.0f, 1.0f);
 					} break;
 				}
 
 				if (state->game.goal != GameGoal::find_door && state->game.monster_timeout > 0.0f)
 				{
-					state->game.monster_timeout = fmaxf(state->game.monster_timeout - SECONDS_PER_UPDATE, 0.0f);
+					state->game.monster_timeout = fmaxf(state->game.monster_timeout - platform->seconds_per_update, 0.0f);
 
 					if (state->game.monster_timeout == 0.0f)
 					{
@@ -3420,6 +3482,12 @@ extern "C" PROTOTYPE_UPDATE(update)
 				else
 				{
 					state->game.monster_timeout = 1.0f;
+
+					if (state->game.monster_chase_keytime)
+					{
+						Mix_FadeOutMusic(4000);
+						state->game.monster_chase_keytime = 0.0f;
+					}
 				}
 #endif
 				if (state->game.monster_timeout == 0.0f)
@@ -3434,7 +3502,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 						}
 						else
 						{
-							state->game.monster_chase_keytime = fmaxf(state->game.monster_chase_keytime - SECONDS_PER_UPDATE / 8.0f, 0.0f);
+							state->game.monster_chase_keytime = fmaxf(state->game.monster_chase_keytime - platform->seconds_per_update / 8.0f, 0.0f);
 
 							if (state->game.monster_chase_keytime == 0.0f)
 							{
@@ -3458,7 +3526,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 					}
 					else
 					{
-						state->game.monster_roam_update_keytime -= SECONDS_PER_UPDATE / 16.0f;
+						state->game.monster_roam_update_keytime -= platform->seconds_per_update / 16.0f;
 
 						if (state->game.monster_roam_update_keytime <= 0.0f || norm(ray_to_closest(path_coordinates_to_position(state->game.monster_path_goal), state->game.lucia_position.xy)) > 8.0f)
 						{
@@ -3487,7 +3555,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 						}
 						else
 						{
-							state->game.monster_velocity = dampen(state->game.monster_velocity, normalize(ray) * 5.0f, 3.0f, SECONDS_PER_UPDATE);
+							state->game.monster_velocity = dampen(state->game.monster_velocity, normalize(ray) * 5.0f, 3.0f, platform->seconds_per_update);
 						}
 					}
 					else if (state->game.monster_chase_keytime)
@@ -3495,7 +3563,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 						vf2 ray = ray_to_closest(state->game.monster_position.xy, state->game.lucia_position.xy);
 						if (norm(ray) > 1.0f)
 						{
-							state->game.monster_velocity = dampen(state->game.monster_velocity, normalize(ray) * 4.0f, 4.0f, SECONDS_PER_UPDATE);
+							state->game.monster_velocity = dampen(state->game.monster_velocity, normalize(ray) * 4.0f, 4.0f, platform->seconds_per_update);
 						}
 						else
 						{
@@ -3518,10 +3586,10 @@ extern "C" PROTOTYPE_UPDATE(update)
 #if DEBUG_SHOWCASE_RENDER
 					if (HOLDING(Input::right))
 					{
-						state->game.monster_velocity = move(state, &state->game.monster_position.xy, state->game.monster_velocity * SECONDS_PER_UPDATE) / SECONDS_PER_UPDATE;
+						state->game.monster_velocity = move(state, &state->game.monster_position.xy, state->game.monster_velocity * platform->seconds_per_update) / platform->seconds_per_update;
 					}
 #else
-					state->game.monster_velocity = move(state, &state->game.monster_position.xy, state->game.monster_velocity * SECONDS_PER_UPDATE) / SECONDS_PER_UPDATE;
+					state->game.monster_velocity = move(state, &state->game.monster_position.xy, state->game.monster_velocity * platform->seconds_per_update) / platform->seconds_per_update;
 #endif
 
 					state->game.monster_position.z = cosf(state->time * 3.0f) * 0.15f + state->game.percieved_wall_height / 2.0f;
@@ -3532,7 +3600,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 						f32 distance = norm(ray);
 						if (distance >= 0.001f)
 						{
-							state->game.monster_normal = normalize(dampen(state->game.monster_normal, ray / distance, 8.0f, SECONDS_PER_UPDATE));
+							state->game.monster_normal = normalize(dampen(state->game.monster_normal, ray / distance, 8.0f, platform->seconds_per_update));
 						}
 					}
 					else
@@ -3540,20 +3608,20 @@ extern "C" PROTOTYPE_UPDATE(update)
 						f32 distance = norm(state->game.monster_velocity);
 						if (distance > 0.001f)
 						{
-							state->game.monster_normal = normalize(dampen(state->game.monster_normal, state->game.monster_velocity / distance, 8.0f, SECONDS_PER_UPDATE));
+							state->game.monster_normal = normalize(dampen(state->game.monster_normal, state->game.monster_velocity / distance, 8.0f, platform->seconds_per_update));
 						}
 					}
 				}
 
 				if (state->game.holding.flashlight)
 				{
-					state->game.flashlight_keytime += 0.00005f + 0.005f * norm(state->game.lucia_velocity) * SECONDS_PER_UPDATE;
+					state->game.flashlight_keytime += 0.00005f + 0.005f * norm(state->game.lucia_velocity) * platform->seconds_per_update;
 					if (state->game.flashlight_keytime > 1.0f)
 					{
 						state->game.flashlight_keytime -= 1.0f;
 					}
 
-					state->game.holding.flashlight->flashlight.power = clamp(state->game.holding.flashlight->flashlight.power - SECONDS_PER_UPDATE / 150.0f, 0.0f, 1.0f);
+					state->game.holding.flashlight->flashlight.power = clamp(state->game.holding.flashlight->flashlight.power - platform->seconds_per_update / 150.0f, 0.0f, 1.0f);
 
 					if (state->game.holding.flashlight->flashlight.power == 0.0f)
 					{
@@ -3570,8 +3638,8 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 				if (state->game.holding.night_vision_goggles)
 				{
-					state->game.holding.night_vision_goggles->night_vision_goggles.power = clamp(state->game.holding.night_vision_goggles->night_vision_goggles.power - SECONDS_PER_UPDATE / 90.0f, 0.0f, 1.0f);
-					state->game.night_vision_goggles_activation                          = dampen(state->game.night_vision_goggles_activation, 1.0f, 4.0f, SECONDS_PER_UPDATE);
+					state->game.holding.night_vision_goggles->night_vision_goggles.power = clamp(state->game.holding.night_vision_goggles->night_vision_goggles.power - platform->seconds_per_update / 90.0f, 0.0f, 1.0f);
+					state->game.night_vision_goggles_activation                          = dampen(state->game.night_vision_goggles_activation, 1.0f, 4.0f, platform->seconds_per_update);
 
 					if (state->game.holding.night_vision_goggles->night_vision_goggles.power == 0.0f)
 					{
@@ -3587,8 +3655,8 @@ extern "C" PROTOTYPE_UPDATE(update)
 				}
 
 				state->game.heart_bpm               = 63.5f + 80.0f * (1.0f - state->game.lucia_stamina) + 30.0f * clamp(1.0f - state->game.lucia_health, 0.0f, 1.0f);
-				state->game.heart_pulse_keytime    += state->game.heart_bpm / 60.0f * SECONDS_PER_UPDATE;
-				state->game.heart_pulse_time_since += SECONDS_PER_UPDATE;
+				state->game.heart_pulse_keytime    += state->game.heart_bpm / 60.0f * platform->seconds_per_update;
+				state->game.heart_pulse_time_since += platform->seconds_per_update;
 
 				if (state->game.heart_pulse_keytime >= 1.0f)
 				{
@@ -3600,7 +3668,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 					state->game.heartbeat_sfx_index = (state->game.heartbeat_sfx_index + 1) % ARRAY_CAPACITY(state->game.audio.heartbeats);
 				}
 
-				state->game.notification_keytime = clamp(state->game.notification_keytime - SECONDS_PER_UPDATE / 8.0f, 0.0f, 1.0f);
+				state->game.notification_keytime = clamp(state->game.notification_keytime - platform->seconds_per_update / 8.0f, 0.0f, 1.0f);
 
 				if (HOLDING(Input::space))
 				{
@@ -3608,7 +3676,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 				}
 				else
 				{
-					state->game.lucia_blink_countdown_keytime = fmaxf(state->game.lucia_blink_countdown_keytime - SECONDS_PER_UPDATE / (30.0f * (1.0f + state->game.eye_drops_activation)), 0.0f);
+					state->game.lucia_blink_countdown_keytime = fmaxf(state->game.lucia_blink_countdown_keytime - platform->seconds_per_update / (30.0f * (1.0f + state->game.eye_drops_activation)), 0.0f);
 				}
 
 				if (state->game.lucia_blink_countdown_keytime == 0.0f)
@@ -3617,14 +3685,14 @@ extern "C" PROTOTYPE_UPDATE(update)
 					state->game.lucia_blink_keytime           = 1.0f;
 				}
 
-				state->game.lucia_blink_keytime    = fmaxf(state->game.lucia_blink_keytime - SECONDS_PER_UPDATE / 0.25f, 0.0f);
-				state->game.lucia_blink_activation = dampen(state->game.lucia_blink_activation, (state->game.lucia_blink_keytime ? 1.0f : 0.0f), 8.0f, SECONDS_PER_UPDATE);
+				state->game.lucia_blink_keytime    = fmaxf(state->game.lucia_blink_keytime - platform->seconds_per_update / 0.25f, 0.0f);
+				state->game.lucia_blink_activation = dampen(state->game.lucia_blink_activation, (state->game.lucia_blink_keytime ? 1.0f : 0.0f), 8.0f, platform->seconds_per_update);
 			}
 
 			// @NOTE@ Lucia dying.
 			if (state->game.lucia_health <= 0.0f)
 			{
-				state->game.lucia_dying_keytime += SECONDS_PER_UPDATE / DEATH_DURATION;
+				state->game.lucia_dying_keytime += platform->seconds_per_update / DEATH_DURATION;
 
 				state->game.blur_value          = 2.0f;
 				state->game.heart_bpm           = 0.0f;
@@ -3632,14 +3700,14 @@ extern "C" PROTOTYPE_UPDATE(update)
 				state->game.hand_on_state       = HandOnState::null;
 				state->game.hud.type            = HudType::null;
 
-				state->game.lucia_angle_velocity = dampen(state->game.lucia_angle_velocity, 0.0f, 16.0f, SECONDS_PER_UPDATE);
-				state->game.lucia_angle          = mod(state->game.lucia_angle + state->game.lucia_angle_velocity * SECONDS_PER_UPDATE, TAU);
+				state->game.lucia_angle_velocity = dampen(state->game.lucia_angle_velocity, 0.0f, 16.0f, platform->seconds_per_update);
+				state->game.lucia_angle          = mod(state->game.lucia_angle + state->game.lucia_angle_velocity * platform->seconds_per_update, TAU);
 
 				state->game.lucia_velocity    *= 0.9f;
-				state->game.lucia_velocity     = move(state, &state->game.lucia_position.xy, state->game.lucia_velocity * SECONDS_PER_UPDATE) / SECONDS_PER_UPDATE;
-				state->game.lucia_position.z   = dampen(state->game.lucia_position.z, 0.1f, 1.0f, SECONDS_PER_UPDATE);
+				state->game.lucia_velocity     = move(state, &state->game.lucia_position.xy, state->game.lucia_velocity * platform->seconds_per_update) / platform->seconds_per_update;
+				state->game.lucia_position.z   = dampen(state->game.lucia_position.z, 0.1f, 1.0f, platform->seconds_per_update);
 
-				state->game.notification_keytime = clamp(state->game.notification_keytime - SECONDS_PER_UPDATE / 2.0f, 0.0f, 1.0f);
+				state->game.notification_keytime = clamp(state->game.notification_keytime - platform->seconds_per_update / 2.0f, 0.0f, 1.0f);
 
 				if (state->game.lucia_dying_keytime >= 1.0f)
 				{
@@ -3647,9 +3715,9 @@ extern "C" PROTOTYPE_UPDATE(update)
 				}
 			}
 
-			state->game.eye_drops_activation              = fmaxf(state->game.eye_drops_activation - SECONDS_PER_UPDATE / 45.0f, 0.0f);
-			state->game.interpolated_eye_drops_activation = dampen(state->game.interpolated_eye_drops_activation, state->game.eye_drops_activation, 4.0f, SECONDS_PER_UPDATE);
-			state->game.flash_stun_activation             = dampen(state->game.flash_stun_activation, 0.0f, 16.0f, SECONDS_PER_UPDATE);
+			state->game.eye_drops_activation              = fmaxf(state->game.eye_drops_activation - platform->seconds_per_update / 45.0f, 0.0f);
+			state->game.interpolated_eye_drops_activation = dampen(state->game.interpolated_eye_drops_activation, state->game.eye_drops_activation, 4.0f, platform->seconds_per_update);
+			state->game.flash_stun_activation             = dampen(state->game.flash_stun_activation, 0.0f, 16.0f, platform->seconds_per_update);
 
 			bool32 was_overdosing    = state->game.overdosing;
 			f32    pill_dosage_total = 0.0f;
@@ -3661,7 +3729,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 			if (pill_dosage_total > 2.5f)
 			{
 				state->game.overdosing = true;
-				state->game.lucia_health = dampen(state->game.lucia_health, 0.0f, 0.075f, SECONDS_PER_UPDATE);
+				state->game.lucia_health = dampen(state->game.lucia_health, 0.0f, 0.075f, platform->seconds_per_update);
 
 				if (!was_overdosing)
 				{
@@ -3674,11 +3742,11 @@ extern "C" PROTOTYPE_UPDATE(update)
 				state->game.overdosing = false;
 			}
 
-			state->game.blur_value        = fmaxf(state->game.blur_value - SECONDS_PER_UPDATE / 8.0f, lerp(0.0f, 0.2f, square(1.0f - state->game.lucia_health)) + pill_dosage_total / 16.0f);
-			state->game.interpolated_blur = dampen(state->game.interpolated_blur, state->game.blur_value, 4.0f, SECONDS_PER_UPDATE);
+			state->game.blur_value        = fmaxf(state->game.blur_value - platform->seconds_per_update / 8.0f, lerp(0.0f, 0.2f, square(1.0f - state->game.lucia_health)) + pill_dosage_total / 16.0f);
+			state->game.interpolated_blur = dampen(state->game.interpolated_blur, state->game.blur_value, 4.0f, platform->seconds_per_update);
 
 			// @TODO@ Frame-independent.
-			state->game.heart_rate_display_update_keytime += SECONDS_PER_UPDATE / 0.025f;
+			state->game.heart_rate_display_update_keytime += platform->seconds_per_update / 0.025f;
 			while (state->game.heart_rate_display_update_keytime >= 1.0f)
 			{
 				state->game.heart_rate_display_update_keytime                               -= 1.0f;
@@ -3688,7 +3756,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 			if (state->game.holding.radio)
 			{
-				state->game.holding.radio->radio.power = fmaxf(state->game.holding.radio->radio.power - SECONDS_PER_UPDATE / 120.0f, 0.0f);
+				state->game.holding.radio->radio.power = fmaxf(state->game.holding.radio->radio.power - platform->seconds_per_update / 120.0f, 0.0f);
 
 				if (state->game.holding.radio->radio.power == 0.0f)
 				{
@@ -3710,22 +3778,22 @@ extern "C" PROTOTYPE_UPDATE(update)
 			{
 				battery_display_level = state->game.holding.flashlight->flashlight.power;
 
-				state->game.flashlight_activation = dampen(state->game.flashlight_activation, sinf(TAU / 4.0f * (1.0f - powf(1.0f - state->game.holding.flashlight->flashlight.power, 16.0f))), 25.0f, SECONDS_PER_UPDATE);
+				state->game.flashlight_activation = dampen(state->game.flashlight_activation, sinf(TAU / 4.0f * (1.0f - powf(1.0f - state->game.holding.flashlight->flashlight.power, 16.0f))), 25.0f, platform->seconds_per_update);
 
 				state->game.flashlight_ray.z = sinf(state->game.flashlight_keytime * TAU * 36.0f) * 0.05f;
 			}
 			else
 			{
-				state->game.flashlight_activation = dampen(state->game.flashlight_activation, 0.0f, 8.0f, SECONDS_PER_UPDATE);
+				state->game.flashlight_activation = dampen(state->game.flashlight_activation, 0.0f, 8.0f, platform->seconds_per_update);
 			}
 
 			if (state->game.holding.night_vision_goggles)
 			{
 				battery_display_level  = state->game.holding.night_vision_goggles->night_vision_goggles.power;
 
-				state->game.night_vision_goggles_scan_line_keytime = mod(state->game.night_vision_goggles_scan_line_keytime + SECONDS_PER_UPDATE / 0.15f, 1.0f);
+				state->game.night_vision_goggles_scan_line_keytime = mod(state->game.night_vision_goggles_scan_line_keytime + platform->seconds_per_update / 0.15f, 1.0f);
 
-				state->game.blur_value = fmaxf(state->game.blur_value, 0.15f);
+				state->game.blur_value = fmaxf(state->game.blur_value, 0.075f);
 
 				state->game.night_vision_goggles_interpolated_ray_to_circuit_breaker =
 					dampen
@@ -3733,7 +3801,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 						state->game.night_vision_goggles_interpolated_ray_to_circuit_breaker,
 						ray_to_closest(state->game.lucia_position.xy, get_position_of_wall_side(state->game.circuit_breaker_wall_side, 1.0f)),
 						8.0f,
-						SECONDS_PER_UPDATE
+						platform->seconds_per_update
 					);
 
 				state->game.night_vision_goggles_interpolated_ray_to_door =
@@ -3742,31 +3810,31 @@ extern "C" PROTOTYPE_UPDATE(update)
 						state->game.night_vision_goggles_interpolated_ray_to_door,
 						ray_to_closest(state->game.lucia_position.xy, get_position_of_wall_side(state->game.door_wall_side, 1.0f)),
 						8.0f,
-						SECONDS_PER_UPDATE
+						platform->seconds_per_update
 					);
 			}
 			else
 			{
-				state->game.night_vision_goggles_activation = dampen(state->game.night_vision_goggles_activation, 0.0f, 8.0f, SECONDS_PER_UPDATE);
+				state->game.night_vision_goggles_activation = dampen(state->game.night_vision_goggles_activation, 0.0f, 8.0f, platform->seconds_per_update);
 			}
 
 			if (battery_display_level)
 			{
-				state->game.hud.status.battery_display_keytime = fminf(1.0f, state->game.hud.status.battery_display_keytime + SECONDS_PER_UPDATE / 0.25f);
-				state->game.hud.status.battery_level_keytime   = dampen(state->game.hud.status.battery_level_keytime, battery_display_level, 8.0f, SECONDS_PER_UPDATE);
+				state->game.hud.status.battery_display_keytime = fminf(1.0f, state->game.hud.status.battery_display_keytime + platform->seconds_per_update / 0.25f);
+				state->game.hud.status.battery_level_keytime   = dampen(state->game.hud.status.battery_level_keytime, battery_display_level, 8.0f, platform->seconds_per_update);
 			}
 			else
 			{
-				state->game.hud.status.battery_display_keytime = fmaxf(0.0f, state->game.hud.status.battery_display_keytime - SECONDS_PER_UPDATE / 0.25f);
-				state->game.hud.status.battery_level_keytime   = dampen(state->game.hud.status.battery_level_keytime, 0.0f, 8.0f, SECONDS_PER_UPDATE);
+				state->game.hud.status.battery_display_keytime = fmaxf(0.0f, state->game.hud.status.battery_display_keytime - platform->seconds_per_update / 0.25f);
+				state->game.hud.status.battery_level_keytime   = dampen(state->game.hud.status.battery_level_keytime, 0.0f, 8.0f, platform->seconds_per_update);
 			}
 
 			FOR_ELEMS(it, state->game.animated_sprites)
 			{
-				age_animated_sprite(it, SECONDS_PER_UPDATE);
+				age_animated_sprite(it, platform->seconds_per_update);
 			}
 
-			state->game.lucia_state_keytime  = fmaxf(state->game.lucia_state_keytime - SECONDS_PER_UPDATE / 1.5f, 0.0f);
+			state->game.lucia_state_keytime  = fmaxf(state->game.lucia_state_keytime - platform->seconds_per_update / 1.5f, 0.0f);
 
 			if (state->game.lucia_state_keytime == 0.0f)
 			{
@@ -3788,23 +3856,23 @@ extern "C" PROTOTYPE_UPDATE(update)
 				}
 			}
 
-			state->game.radio_keytime = fmaxf(state->game.radio_keytime - SECONDS_PER_UPDATE / 30.0f, 0.0f);
+			state->game.radio_keytime = fmaxf(state->game.radio_keytime - platform->seconds_per_update / 30.0f, 0.0f);
 
-			state->game.interpolated_lucia_health = dampen(state->game.interpolated_lucia_health, state->game.lucia_health, 1.0f, SECONDS_PER_UPDATE);
+			state->game.interpolated_lucia_health = dampen(state->game.interpolated_lucia_health, state->game.lucia_health, 1.0f, platform->seconds_per_update);
 
-			state->game.flashlight_ray.xy = dampen(state->game.flashlight_ray.xy, polar(state->game.lucia_angle + sinf(state->game.flashlight_keytime * TAU * 15.0f) * 0.1f), 16.0f, SECONDS_PER_UPDATE);
+			state->game.flashlight_ray.xy = dampen(state->game.flashlight_ray.xy, polar(state->game.lucia_angle + sinf(state->game.flashlight_keytime * TAU * 15.0f) * 0.1f), 16.0f, platform->seconds_per_update);
 			state->game.flashlight_ray    = normalize(state->game.flashlight_ray);
 
 			FOR_ELEMS(it, state->game.interpolated_pills_effect_activations)
 			{
-				*it = dampen(*it, state->game.pills_effect_activations[it_index] * (sinf(state->time / 8.0f) + 1.0f) / 2.0f, 0.1f, SECONDS_PER_UPDATE);
-				state->game.pills_effect_activations[it_index] = fmaxf(state->game.pills_effect_activations[it_index] - SECONDS_PER_UPDATE / 60.0f, 0.0f);
+				*it = dampen(*it, state->game.pills_effect_activations[it_index] * (sinf(state->time / 8.0f) + 1.0f) / 2.0f, 0.1f, platform->seconds_per_update);
+				state->game.pills_effect_activations[it_index] = fmaxf(state->game.pills_effect_activations[it_index] - platform->seconds_per_update / 60.0f, 0.0f);
 			}
 
-			state->game.percieved_wall_height = dampen(state->game.percieved_wall_height, WALL_HEIGHT + state->game.interpolated_pills_effect_activations[1], 1.0f, SECONDS_PER_UPDATE);
+			state->game.percieved_wall_height = dampen(state->game.percieved_wall_height, WALL_HEIGHT + state->game.interpolated_pills_effect_activations[1], 1.0f, platform->seconds_per_update);
 
 			f32 old_cowbell_keytime = state->game.cowbell_keytime;
-			state->game.cowbell_keytime = fmaxf(state->game.cowbell_keytime - SECONDS_PER_UPDATE / 16.0f, 0.0f);
+			state->game.cowbell_keytime = fmaxf(state->game.cowbell_keytime - platform->seconds_per_update / 16.0f, 0.0f);
 			if (old_cowbell_keytime && !state->game.cowbell_keytime)
 			{
 				Mix_FadeOutMusic(4000);
@@ -3816,7 +3884,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 		{
 			if (state->end.is_exiting)
 			{
-				state->end.exiting_keytime += SECONDS_PER_UPDATE / 1.0f;
+				state->end.exiting_keytime += platform->seconds_per_update / 1.0f;
 				if (state->end.exiting_keytime >= 1.0f)
 				{
 					return UpdateCode::terminate;
@@ -3824,7 +3892,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 			}
 			else
 			{
-				state->end.entering_keytime = clamp(state->end.entering_keytime + SECONDS_PER_UPDATE / 2.0f, 0.0f, 1.0f);
+				state->end.entering_keytime = clamp(state->end.entering_keytime + platform->seconds_per_update / 2.0f, 0.0f, 1.0f);
 
 				if (state->end.entering_keytime == 1.0f)
 				{
@@ -3844,6 +3912,13 @@ extern "C" PROTOTYPE_UPDATE(update)
 extern "C" PROTOTYPE_RENDER(render)
 {
 	State* state = reinterpret_cast<State*>(platform->memory);
+
+#if DEBUG_SHOWCASE_RENDER
+	if (state->DEBUG_time_stop)
+	{
+		return;
+	}
+#endif
 
 	state->transient_arena.used = 0;
 
@@ -4072,28 +4147,34 @@ extern "C" PROTOTYPE_RENDER(render)
 		case StateContext::game:
 		{
 #if DEBUG_SHOWCASE_MAP
-			set_color(platform->renderer, vf3 { 0.05f, 0.1f, 0.15f });
+			set_color(platform->renderer, monochrome(1.0f));
 			SDL_RenderClear(platform->renderer);
 
 			lambda position_to_screen =
 				[](vf2 position)
 				{
-					constexpr f32 PIXELS_PER_METER = fminf(DISPLAY_RES.x, DISPLAY_RES.y) / ((MAP_DIM + 4.0f) * WALL_SPACING);
+					const f32 PIXELS_PER_METER = fminf(static_cast<f32>(DISPLAY_RES.x), static_cast<f32>(DISPLAY_RES.y)) / ((MAP_DIM + 4.0f) * WALL_SPACING);
 					return vf2 { DISPLAY_RES.x / 2.0f + (position.x - MAP_DIM * WALL_SPACING / 2.0f) * PIXELS_PER_METER, DISPLAY_RES.y / 2.0f - (position.y - MAP_DIM * WALL_SPACING / 2.0f) * PIXELS_PER_METER };
 				};
 
+			set_color(platform->renderer, monochrome(0.8f));
 			FOR_RANGE(y, MAP_DIM)
 			{
 				FOR_RANGE(x, MAP_DIM)
 				{
-					set_color(platform->renderer, monochrome(0.4f));
-					render_filled_circle(platform->renderer, position_to_screen(vi2 { x, y } * WALL_SPACING), 2.5f);
+					render_filled_circle(platform->renderer, position_to_screen(vi2 { x, y } * WALL_SPACING), 2.0f);
+				}
+			}
 
+			set_color(platform->renderer, monochrome(0.0f));
+			FOR_RANGE(y, MAP_DIM)
+			{
+				FOR_RANGE(x, MAP_DIM)
+				{
 					FOR_ELEMS(it, WALL_VOXEL_DATA)
 					{
 						if (+(state->game.wall_voxels[y][x] & it->voxel))
 						{
-							set_color(platform->renderer, monochrome(0.8f));
 							render_line
 							(
 								platform->renderer,
@@ -4105,7 +4186,8 @@ extern "C" PROTOTYPE_RENDER(render)
 				}
 			}
 
-			set_color(platform->renderer, vf3 { 0.6f, 0.2f, 0.2f });
+
+			set_color(platform->renderer, vf3 { 1.0f, 0.0f, 0.0f });
 			for (PathCoordinatesNode* node = state->game.monster_path; node && node->next_node; node = node->next_node)
 			{
 				if (norm(path_coordinates_to_position(node->coordinates) - path_coordinates_to_position(node->next_node->coordinates)) < 16.0f)
@@ -4114,22 +4196,23 @@ extern "C" PROTOTYPE_RENDER(render)
 				}
 			}
 
-			set_color(platform->renderer, vf3 { 0.2f, 0.8f, 0.2f });
-			render_filled_circle(platform->renderer, position_to_screen(state->game.lucia_position.xy), 5.0f);
-			set_color(platform->renderer, vf3 { 0.8f, 0.2f, 0.2f });
-			render_filled_circle(platform->renderer, position_to_screen(state->game.monster_position.xy), 5.0f);
+			set_color(platform->renderer, vf3 { 0.0f, 1.0f, 0.0f });
+			render_filled_circle(platform->renderer, position_to_screen(state->game.lucia_position.xy), 4.0f);
+			set_color(platform->renderer, vf3 { 1.0f, 0.0f, 0.0f });
+			render_filled_circle(platform->renderer, position_to_screen(state->game.monster_position.xy), 4.0f);
 #else
-			DEBUG_profiling_start(FRAME);
-			DEFER { DEBUG_profiling_end_averaged_printf(FRAME, 64, "Frame : %f / %f (%fx of goal)\n", DEBUG_get_profiling(FRAME), 1.0f / 60.0f, DEBUG_get_profiling(FRAME) * 60.0f); };
-
 			set_color(platform->renderer, monochrome(0.0f));
 			SDL_RenderClear(platform->renderer);
 
 			u32* new_view_pixels    = memory_arena_allocate<u32>(&state->transient_arena, VIEW_RES.x * VIEW_RES.y);
 			u32* current_view_pixel = new_view_pixels;
 
+			DEBUG_PROFILER_create_group(RENDERING, RAY_CASTING, COLORING, POST_PROCESSING);
+
 			FOR_RANGE(x, VIEW_RES.x)
 			{
+				DEBUG_PROFILER_start(RENDERING, RAY_CASTING);
+
 				vf2 ray_horizontal = polar(state->game.lucia_angle + (0.5f - static_cast<f32>(x) / VIEW_RES.x) * state->game.lucia_fov);
 
 				WallSide ray_casted_wall_side       = {};
@@ -4372,6 +4455,8 @@ extern "C" PROTOTYPE_RENDER(render)
 
 				memory_arena_checkpoint(&state->transient_arena);
 
+#if DEBUG_DISABLE_SPRITES
+#else
 				if (state->game.monster_timeout == 0.0f)
 				{
 					scan(Material::monster, get_image_of_frame(&state->game.animated_sprite.monster), state->game.monster_position, state->game.monster_normal, { 1.0f, 1.0f });
@@ -4396,6 +4481,10 @@ extern "C" PROTOTYPE_RENDER(render)
 				{
 					scan(Material::item, state->game.texture_sprite.default_items[+it->type - +ItemType::ITEM_START].image, it->position, it->normal, { 0.5f, 0.5f });
 				}
+#endif
+
+				DEBUG_PROFILER_end(RENDERING, RAY_CASTING);
+				DEBUG_PROFILER_start(RENDERING, COLORING);
 
 				FOR_RANGE(y, VIEW_RES.y)
 				{
@@ -4409,7 +4498,11 @@ extern "C" PROTOTYPE_RENDER(render)
 							scan_pixel = sample_at(&node->image, { node->portion, (static_cast<f32>(y) - node->starting_y) / (node->ending_y - node->starting_y) });
 							if (scan_pixel.w)
 							{
+#if DEBUG_DISABLE_SAMPLING
+								*current_view_pixel = pack_color(monochrome(clamp(2.0f / (node->distance + 0.1f) * square(dot(node->normal, ray.xy)), 0.0f, 1.0f)));
+#else
 								*current_view_pixel = pack_color(shader(state, scan_pixel.xyz, node->material, node->in_light, ray, vx3(node->normal, 0.0f), node->distance));
+#endif
 								goto NEXT_Y;
 							}
 						}
@@ -4420,6 +4513,9 @@ extern "C" PROTOTYPE_RENDER(render)
 						f32 y_portion          = static_cast<f32>(y - wall_starting_y) / (wall_ending_y - wall_starting_y);
 						f32 distance           = sqrtf(square(wall_distance) + square(y_portion * state->game.percieved_wall_height - state->game.lucia_position.z));
 
+#if DEBUG_DISABLE_SAMPLING
+						*current_view_pixel = pack_color(monochrome(clamp(4.0f / (distance + 0.1f) + square(dot(ray_casted_wall_side.normal, ray.xy)), 0.0f, 1.0f)));
+#else
 						vf4 wall_overlay_color = { NAN, NAN, NAN, 0.0f };
 						if (wall_overlay && IN_RANGE(y_portion, wall_overlay_uv_position.y, wall_overlay_uv_position.y + wall_overlay_uv_dimensions.y))
 						{
@@ -4458,9 +4554,13 @@ extern "C" PROTOTYPE_RENDER(render)
 									distance
 								)
 							);
+#endif
 					}
 					else if (fabs(ray.z) > 0.0001f)
 					{
+#if DEBUG_DISABLE_FLOOR_CEILING
+						*current_view_pixel = 0;
+#else
 						vf2      uv;
 						f32      distance;
 						vf3      normal;
@@ -4494,6 +4594,9 @@ extern "C" PROTOTYPE_RENDER(render)
 							uv.y = mod(uv.y / ceiling_dim + sinf(state->time / 8.0f) * state->game.interpolated_pills_effect_activations[2] * 16.0f / (distance + 3.0f), 1.0f);
 						}
 
+#if DEBUG_DISABLE_SAMPLING
+						*current_view_pixel = pack_color(monochrome(clamp(2.0f / (distance + 0.1f) + square(ray.z), 0.0f, 1.0f)));
+#else
 						vf3 floor_ceiling_color =
 							sample_at
 							(
@@ -4516,29 +4619,35 @@ extern "C" PROTOTYPE_RENDER(render)
 									distance
 								)
 							);
+#endif
+#endif
 					}
 
 					NEXT_Y:;
 					current_view_pixel += 1;
 				}
+
+				DEBUG_PROFILER_end(RENDERING, COLORING);
 			}
 
 			u32* view_texture_pixels;
 			i32  view_pitch_;
 			SDL_LockTexture(state->game.texture.view, 0, reinterpret_cast<void**>(&view_texture_pixels), &view_pitch_);
 
+			DEBUG_PROFILER_start(RENDERING, POST_PROCESSING);
+
 			__m128 m_blur =
 				state->game.interpolated_blur > 0.001f
-					? _mm_set_ps1(1.0f - expf(-SECONDS_PER_UPDATE / state->game.interpolated_blur))
+					? _mm_set_ps1(1.0f - expf(-platform->seconds_per_update / state->game.interpolated_blur))
 					: m_one;
 
 			__m128 m_max_x = _mm_set_ps1(static_cast<f32>(VIEW_RES.x));
 
 			__m128 m_night_vision_goggles_activation        = _mm_set_ps1(state->game.night_vision_goggles_activation);
 			__m128 m_night_vision_goggles_scan_line_keytime = _mm_set_ps1(state->game.night_vision_goggles_scan_line_keytime);
-			__m128 m_night_vision_goggles_low_scan          = _mm_set_ps1(0.95f);
+			__m128 m_night_vision_goggles_low_scan          = _mm_set_ps1(1.2f);
 			__m128 m_night_vision_goggles_r                 = _mm_set_ps1(0.0f);
-			__m128 m_night_vision_goggles_g                 = _mm_set_ps1(2.5f);
+			__m128 m_night_vision_goggles_g                 = _mm_set_ps1(2.4f);
 			__m128 m_night_vision_goggles_b                 = _mm_set_ps1(0.0f);
 			__m128 m_flash                                  = _mm_set_ps1(1.0f + 128.0f * square(state->game.flash_stun_activation));
 
@@ -4548,7 +4657,7 @@ extern "C" PROTOTYPE_RENDER(render)
 				interpolated_pill_dosage_total += *it;
 			}
 
-			__m128 m_high = _mm_add_ps(m_one, square(_mm_set_ps1(interpolated_pill_dosage_total)));
+			__m128 m_high = _mm_add_ps(m_one, _mm_set_ps1(square(fminf(interpolated_pill_dosage_total, 0.25f))));
 
 			FOR_RANGE(y, VIEW_RES.y)
 			{
@@ -4575,6 +4684,11 @@ extern "C" PROTOTYPE_RENDER(render)
 					__m128 m_new_g = _mm_div_ps(_mm_cvtepi32_ps(_mm_and_epi32(_mm_bsrli_si128(mi_rgba, 2), mi_byte_mask)), m_max_rgb);
 					__m128 m_new_b = _mm_div_ps(_mm_cvtepi32_ps(_mm_and_epi32(_mm_bsrli_si128(mi_rgba, 1), mi_byte_mask)), m_max_rgb);
 
+					#if DEBUG_DISABLE_POSTPROCESSOR
+					__m128 m_r = m_new_r;
+					__m128 m_g = m_new_g;
+					__m128 m_b = m_new_b;
+					#else
 					__m128 m_r = _mm_add_ps(_mm_mul_ps(m_old_r, _mm_sub_ps(m_one, m_blur)), _mm_mul_ps(m_new_r, m_blur));
 					__m128 m_g = _mm_add_ps(_mm_mul_ps(m_old_g, _mm_sub_ps(m_one, m_blur)), _mm_mul_ps(m_new_g, m_blur));
 					__m128 m_b = _mm_add_ps(_mm_mul_ps(m_old_b, _mm_sub_ps(m_one, m_blur)), _mm_mul_ps(m_new_b, m_blur));
@@ -4593,15 +4707,20 @@ extern "C" PROTOTYPE_RENDER(render)
 
 					m_r = _mm_mul_ps(m_r, m_high);
 
+					m_r = _mm_mul_ps(clamp(m_r, m_zero, m_one), m_blink);
+					m_g = _mm_mul_ps(clamp(m_g, m_zero, m_one), m_blink);
+					m_b = _mm_mul_ps(clamp(m_b, m_zero, m_one), m_blink);
+					#endif
+
 					mi_rgba =
 						_mm_or_epi32
 						(
 							_mm_or_epi32
 							(
-								_mm_bslli_si128(_mm_cvtps_epi32(_mm_mul_ps(_mm_min_ps(_mm_max_ps(m_r, m_zero), m_one), _mm_mul_ps(m_blink, m_max_rgb))), 3),
-								_mm_bslli_si128(_mm_cvtps_epi32(_mm_mul_ps(_mm_min_ps(_mm_max_ps(m_g, m_zero), m_one), _mm_mul_ps(m_blink, m_max_rgb))), 2)
+								_mm_bslli_si128(_mm_cvtps_epi32(_mm_mul_ps(m_r, m_max_rgb)), 3),
+								_mm_bslli_si128(_mm_cvtps_epi32(_mm_mul_ps(m_g, m_max_rgb)), 2)
 							),
-							_mm_bslli_si128(_mm_cvtps_epi32(_mm_mul_ps(_mm_min_ps(_mm_max_ps(m_b, m_zero), m_one), _mm_mul_ps(m_blink, m_max_rgb))), 1)
+							_mm_bslli_si128(_mm_cvtps_epi32(_mm_mul_ps(m_b, m_max_rgb)), 1)
 						);
 
 					_mm_maskmoveu_si128(mi_rgba, _mm_castps_si128(_mm_cmplt_ps(m_x, m_max_x)), reinterpret_cast<char*>(view_texture_pixels + y * VIEW_RES.x + x));
@@ -4609,6 +4728,10 @@ extern "C" PROTOTYPE_RENDER(render)
 					m_x = _mm_add_ps(m_x, m_four);
 				}
 			}
+
+			DEBUG_PROFILER_end(RENDERING, POST_PROCESSING);
+
+			DEBUG_PROFILER_flush_group(RENDERING, 32);
 
 			SDL_UnlockTexture(state->game.texture.view);
 			render_texture(platform->renderer, state->game.texture.view, { 0.0f, 0.0f }, { static_cast<f32>(VIEW_RES.x) / SCREEN_RES.x * DISPLAY_RES.x, static_cast<f32>(VIEW_RES.y) / SCREEN_RES.y * DISPLAY_RES.y });
@@ -4868,7 +4991,7 @@ extern "C" PROTOTYPE_RENDER(render)
 						0.5f,
 						FC_ALIGN_CENTER,
 						clamp(32.0f / (distance + 1.0f), 0.75f, 2.0f),
-						{ 0.0f, 0.8f, 0.0f, clamp(32.0f / (distance + 1.0f), 0.0f, state->game.night_vision_goggles_activation * square(1.0f - state->game.lucia_blink_activation)) },
+						{ 0.0f, 0.8f, 0.0f, clamp(32.0f / (distance + 1.0f), 0.0f, state->game.night_vision_goggles_activation * square(1.0f - state->game.lucia_blink_activation)) / 4.0f },
 						"%s\n%.2fm",
 						name, distance
 					);
@@ -4913,23 +5036,23 @@ extern "C" PROTOTYPE_RENDER(render)
 			}
 
 #if DEBUG
-			render_text
-			(
-				platform->renderer,
-				state->font.minor,
-				{ 0.0f, 0.0f },
-				0.0f,
-				FC_ALIGN_LEFT,
-				1.0f,
-				{ 1.0f, 1.0f, 1.0f, 1.0f },
-				"%.2f %.2f\n%.2f %.2f\n%.2f %.2f\n%.2f\n%.2f\n%.2f",
-				state->game.lucia_position.x, state->game.lucia_position.y,
-				state->game.door_wall_side.coordinates.x * WALL_SPACING, state->game.door_wall_side.coordinates.y * WALL_SPACING,
-				state->game.monster_position.x, state->game.monster_position.y,
-				state->game.monster_timeout,
-				state->game.monster_roam_update_keytime,
-				state->game.monster_chase_keytime
-			);
+			//render_text
+			//(
+			//	platform->renderer,
+			//	state->font.minor,
+			//	{ 0.0f, 0.0f },
+			//	0.0f,
+			//	FC_ALIGN_LEFT,
+			//	1.0f,
+			//	{ 1.0f, 1.0f, 1.0f, 1.0f },
+			//	"%.2f %.2f\n%.2f %.2f\n%.2f %.2f\n%.2f\n%.2f\n%.2f",
+			//	state->game.lucia_position.x, state->game.lucia_position.y,
+			//	state->game.door_wall_side.coordinates.x * WALL_SPACING, state->game.door_wall_side.coordinates.y * WALL_SPACING,
+			//	state->game.monster_position.x, state->game.monster_position.y,
+			//	state->game.monster_timeout,
+			//	state->game.monster_roam_update_keytime,
+			//	state->game.monster_chase_keytime
+			//);
 #endif
 #endif
 		} break;
@@ -4956,4 +5079,6 @@ extern "C" PROTOTYPE_RENDER(render)
 	SDL_SetRenderTarget(platform->renderer, 0);
 	vf2 display_dimensions = DISPLAY_RES * fminf(static_cast<f32>(platform->window_dimensions.x) / DISPLAY_RES.x, static_cast<f32>(platform->window_dimensions.y) / DISPLAY_RES.y);
 	render_texture(platform->renderer, state->texture.display, (platform->window_dimensions - display_dimensions) / 2.0f, display_dimensions);
+
+	SDL_RenderPresent(platform->renderer);
 }

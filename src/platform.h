@@ -5,8 +5,6 @@
 #include <SDL_Mixer.h>
 #include <SDL_image.h>
 
-global constexpr f32 SECONDS_PER_UPDATE = 1.0f / 60.0f;
-
 enum_loose (Input, u32)
 {
 	a,
@@ -73,6 +71,7 @@ struct Platform
 	vf2           cursor_delta;
 	vf2           cursor;
 	f32           scroll;
+	f32           seconds_per_update;
 };
 
 #define PROTOTYPE_INITIALIZE(NAME) void NAME(Platform* platform)

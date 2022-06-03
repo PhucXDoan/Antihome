@@ -104,9 +104,12 @@ int main(int, char**)
 		exit(-1);
 	}
 
-
+	#if DEBUG
+	#else
 	platform.window_state = WindowState::fullscreen;
 	SDL_SetWindowFullscreen(platform.window, SDL_WINDOW_FULLSCREEN_DESKTOP);
+	#endif
+
 	SDL_GetWindowSize(platform.window, &platform.window_dimensions.x, &platform.window_dimensions.y);
 
 	platform.memory_capacity = MEBIBYTES_OF(1);
@@ -119,6 +122,8 @@ int main(int, char**)
 		SDL_GetMouseState(&cursor_x, &cursor_y);
 		platform.cursor = { cursor_x - platform.cursor.x, platform.window_dimensions.y - 1.0f - cursor_y - platform.cursor.y };
 	}
+
+	platform.seconds_per_update = 1.0f / 60.0f;
 
 	reload_dll();
 	DEFER { SDL_UnloadObject(dll); };
@@ -240,7 +245,7 @@ int main(int, char**)
 		}
 #endif
 
-		if (frame_time >= SECONDS_PER_UPDATE)
+		if (frame_time >= platform.seconds_per_update)
 		{
 			WindowState prev_window_state = platform.window_state;
 
@@ -273,6 +278,8 @@ int main(int, char**)
 					goto TERMINATE;
 				}
 
+				platform.seconds_per_update = clamp(platform.seconds_per_update, 1.0f / 60.0f, 1.0f / 24.0f);
+
 				FOR_ELEMS(it, platform.inputs)
 				{
 					it->prev = it->curr % 2;
@@ -280,10 +287,10 @@ int main(int, char**)
 				}
 
 				// @TODO@ Without asset streaming, skipping frames will occur often.
-				// frame_time -= SECONDS_PER_UPDATE;
+				// frame_time -= platform.seconds_per_update;
 				frame_time = 0.0f;
 			}
-			while (frame_time >= SECONDS_PER_UPDATE);
+			while (frame_time >= platform.seconds_per_update);
 
 			FOR_ELEMS(it, platform.inputs)
 			{
@@ -319,7 +326,6 @@ int main(int, char**)
 			}
 
 			render(&platform);
-			SDL_RenderPresent(platform.renderer);
 
 			FOR_ELEMS(it, platform.inputs)
 			{

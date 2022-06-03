@@ -306,6 +306,10 @@ internal vf4 sample_at(Image* image, vf2 uv)
 
 internal vf3 sample_at(Mipmap* mipmap, f32 level, vf2 uv)
 {
+#if DEBUG_DISABLE_MIPMAPPING
+	level = 0.0f;
+#endif
+
 	ASSERT(0.0f <= uv.x && uv.x <= 1.0f);
 	ASSERT(0.0f <= uv.y && uv.y <= 1.0f);
 
