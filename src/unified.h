@@ -151,10 +151,10 @@ do\
 #else
 #define DEBUG_printf(FSTR, ...)
 #define DEBUG_once                                                  if (true); else
-#define DEBUG_profiling_start(NAME)
-#define DEBUG_profiling_end(NAME)
-#define DEBUG_profiling_end_averaged(NAME, COUNT)
-#define DEBUG_profiling_end_averaged_printf(NAME, COUNT, FSTR, ...)
+#define DEBUG_PROFILER_create_group(...)
+#define DEBUG_PROFILER_flush_group(...)
+#define DEBUG_PROFILER_start(...)
+#define DEBUG_PROFILER_end(...)
 #endif
 
 #define DEFER auto MACRO_CONCAT_(DEFER_, __LINE__) = DEFER_EMPTY_ {} + [&]()

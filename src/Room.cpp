@@ -2,6 +2,7 @@
 // "A Fast Voxel Traversal Algorithm for Ray Tracing" https://www.flipcode.com/archives/A%20faster%20voxel%20traversal%20algorithm%20for%20ray%20tracing.pdf
 // "How to check if two given line segments intersect?" https://www.geeksforgeeks.org/check-if-two-given-line-segments-intersect/ (http://www.dcs.gla.ac.uk/~pat/52233/slides/Geometry1x1.pdf)
 
+#if DEBUG
 #define DEBUG_SHOWCASE_MAP    false
 #define DEBUG_SHOWCASE_RENDER true
 
@@ -11,6 +12,7 @@
 #define DEBUG_DISABLE_MIPMAPPING    false
 #define DEBUG_DISABLE_SHADER        false
 #define DEBUG_DISABLE_POSTPROCESSOR false
+#endif
 
 #define STB_IMAGE_IMPLEMENTATION true
 #include <time.h>
@@ -2323,11 +2325,6 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 		case StateContext::game:
 		{
-			DEBUG_once
-			{
-				//state->game.lucia_position.xy = get_position_of_wall_side(state->game.circuit_breaker_wall_side, 1.0f);
-				//state->game.lucia_position.xy = get_position_of_wall_side(state->game.door_wall_side, 8.0f);
-			}
 #if DEBUG_SHOWCASE_MAP
 			platform->window_state = WindowState::fullscreen;
 
@@ -2406,9 +2403,12 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 			DEBUG_once
 			{
-				REFILL:;
-				//state->game.lucia_position.xy = get_position_of_wall_side(state->game.door_wall_side, 1.0f);
 				//state->game.lucia_position.xy = get_position_of_wall_side(state->game.circuit_breaker_wall_side, 1.0f);
+				//state->game.lucia_position.xy = get_position_of_wall_side(state->game.door_wall_side, 8.0f);
+			}
+			DEBUG_once
+			{
+				REFILL:;
 				state->game.hud.inventory.array[0][0].type = ItemType::cheap_batteries;
 				state->game.hud.inventory.array[0][1].type = ItemType::military_grade_batteries;
 				state->game.hud.inventory.array[0][2].type = ItemType::military_grade_batteries;
@@ -2512,7 +2512,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 					}
 				}
 
-				state->game.lucia_fov = dampen(state->game.lucia_fov, clamp(state->game.lucia_fov * (1.0f + (1.0f - cosf(state->game.interpolated_pills_effect_activations[2] * 2.0f)) * 14.0f), 0.5f, 18.0f), 1.0f, platform->seconds_per_update);
+				state->game.lucia_fov = dampen(state->game.lucia_fov, clamp(state->game.lucia_fov * (1.0f + (1.0f - cosf(state->game.interpolated_pills_effect_activations[0] + state->game.interpolated_pills_effect_activations[1] + state->game.interpolated_pills_effect_activations[2] * 2.0f)) * 14.0f), 0.5f, 18.0f), 1.0f, platform->seconds_per_update);
 
 				state->game.lucia_head_bob_keytime = mod(state->game.lucia_head_bob_keytime + (0.05f + 0.3f * norm(state->game.lucia_velocity)) * platform->seconds_per_update, 1.0f);
 				// @TODO@ Doesn't feel as good when velocity is updated after collision. Should be better.
@@ -3089,6 +3089,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 
 												state->game.blur_value                    += 1.0f;
 												state->game.lucia_blink_countdown_keytime  = 0.0f;
+												state->game.monster_chase_keytime          = 0.0f;
 											}
 
 											constexpr strlit MESSAGES[] =
@@ -4657,7 +4658,7 @@ extern "C" PROTOTYPE_RENDER(render)
 				interpolated_pill_dosage_total += *it;
 			}
 
-			__m128 m_high = _mm_add_ps(m_one, _mm_set_ps1(square(fminf(interpolated_pill_dosage_total, 0.25f))));
+			__m128 m_high = _mm_add_ps(m_one, _mm_set_ps1(square(fminf(interpolated_pill_dosage_total, 0.15f))));
 
 			FOR_RANGE(y, VIEW_RES.y)
 			{
@@ -4694,7 +4695,7 @@ extern "C" PROTOTYPE_RENDER(render)
 					__m128 m_b = _mm_add_ps(_mm_mul_ps(m_old_b, _mm_sub_ps(m_one, m_blur)), _mm_mul_ps(m_new_b, m_blur));
 
 					__m128 m_night_vision_non_green_channel = _mm_sub_ps(m_one, m_night_vision_goggles_activation);
-					__m128 m_scan_line_delta                = _mm_mul_ps(_mm_sub_ps(_mm_div_ps(m_x, m_max_x), m_night_vision_goggles_scan_line_keytime), m_four);
+					__m128 m_scan_line_delta                = _mm_mul_ps(_mm_sub_ps(_mm_div_ps(m_x, m_max_x), m_night_vision_goggles_scan_line_keytime), m_eight);
 					m_scan_line_delta = _mm_min_ps(_mm_max_ps(_mm_mul_ps(m_scan_line_delta, m_scan_line_delta), m_zero), m_one);
 
 					__m128 m_avg_rgb = _mm_div_ps(_mm_add_ps(_mm_add_ps(m_r, m_g), m_b), m_three);

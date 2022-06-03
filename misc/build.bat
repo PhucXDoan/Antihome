@@ -18,7 +18,7 @@ IF NOT EXIST W:\build\ (
 
 pushd W:\build\
 REM COMMENT THIS OUT TO RELEASE! BATCH IS HORRIBLE.
-set DEBUG=1
+REM set DEBUG=1
 if DEFINED DEBUG (
 	echo "Debug build"
 	del *.pdb > NUL 2> NUL

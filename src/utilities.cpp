@@ -10,6 +10,7 @@ global const __m128  m_zero       = _mm_set_ps1(0.0f);
 global const __m128  m_one        = _mm_set_ps1(1.0f);
 global const __m128  m_three      = _mm_set_ps1(3.0f);
 global const __m128  m_four       = _mm_set_ps1(4.0f);
+global const __m128  m_eight      = _mm_set_ps1(8.0f);
 global const __m128  m_inf        = _mm_set_ps1(INFINITY);
 global const __m128  m_max_rgb    = _mm_set_ps1(255.0f);
 global const __m128i mi_byte_mask = _mm_set_epi32(0xFF, 0xFF, 0xFF, 0xFF);
