@@ -1,6 +1,6 @@
 # Room
 
-Lucia was rummaging through a dumpster behind a Thai restraunt, soon falling into some empty, damp place.
+Lucia was rummaging through a dumpster behind a Thai restaurant, soon falling into some empty, damp place.
 
 <img src="./misc/gifs/room_pan.gif"></img>
 
