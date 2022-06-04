@@ -2128,7 +2128,8 @@ internal void generate_map(State* state)
 
 internal void init_game(State* state)
 {
-	state->game.percieved_wall_height = WALL_HEIGHT;
+	state->game.render_thread_view_pixels = memory_arena_allocate<u32>(&state->context_arena, VIEW_RES.x * VIEW_RES.y);
+	state->game.percieved_wall_height     = WALL_HEIGHT;
 
 	generate_map(state);
 
@@ -2318,7 +2319,6 @@ internal void boot_up_state(SDL_Renderer* renderer, State* state)
 		case StateContext::game:
 		{
 			state->game.render_thread_fired       = false;
-			state->game.render_thread_view_pixels = memory_arena_allocate<u32>(&state->context_arena, VIEW_RES.x * VIEW_RES.y);
 			state->game.render_thread_clock_in    = SDL_CreateSemaphore(0);
 			state->game.render_thread_clock_out   = SDL_CreateSemaphore(0);
 			FOR_ELEMS(it, state->game.render_thread_datas)
@@ -2889,14 +2889,14 @@ extern "C" PROTOTYPE_UPDATE(update)
 			DEBUG_once
 			{
 				REFILL:;
-				state->game.hud.inventory.array[0][0].type = ItemType::cheap_batteries;
-				state->game.hud.inventory.array[0][1].type = ItemType::military_grade_batteries;
-				state->game.hud.inventory.array[0][2].type = ItemType::military_grade_batteries;
-				state->game.hud.inventory.array[0][3].type = ItemType::eye_drops;
-				state->game.hud.inventory.array[1][0].type = ItemType::flashlight;
-				state->game.hud.inventory.array[1][1].type = ItemType::flashlight;
-				state->game.hud.inventory.array[1][2].type = ItemType::night_vision_goggles;
-				state->game.hud.inventory.array[1][3].type = ItemType::pills;
+				//state->game.hud.inventory.array[0][0].type = ItemType::cheap_batteries;
+				//state->game.hud.inventory.array[0][1].type = ItemType::military_grade_batteries;
+				//state->game.hud.inventory.array[0][2].type = ItemType::military_grade_batteries;
+				//state->game.hud.inventory.array[0][3].type = ItemType::eye_drops;
+				//state->game.hud.inventory.array[1][0].type = ItemType::flashlight;
+				//state->game.hud.inventory.array[1][1].type = ItemType::flashlight;
+				//state->game.hud.inventory.array[1][2].type = ItemType::night_vision_goggles;
+				//state->game.hud.inventory.array[1][3].type = ItemType::pills;
 			}
 
 			persist bool32 DEBUG_monster = false;
