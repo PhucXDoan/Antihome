@@ -119,21 +119,35 @@ persist   LARGE_INTEGER MACRO_CONCAT_(GROUP_NAME, _LI_0)[GROUP_NAME::CAPACITY] =
 persist   LARGE_INTEGER MACRO_CONCAT_(GROUP_NAME, _LI_1)[GROUP_NAME::CAPACITY] = {};\
 persist   u64           MACRO_CONCAT_(GROUP_NAME, _DATA)[GROUP_NAME::CAPACITY] = {}
 
-#define DEBUG_PROFILER_flush_group(GROUP_NAME, COUNT)\
+#define DEBUG_PROFILER_flush_group(GROUP_NAME, COUNT, GOAL)\
 persist u64 MACRO_CONCAT_(GROUP_NAME, _COUNTER) = 0;\
 MACRO_CONCAT_(GROUP_NAME, _COUNTER) += 1;\
 if (MACRO_CONCAT_(GROUP_NAME, _COUNTER) >= (COUNT))\
 {\
 	MACRO_CONCAT_(GROUP_NAME, _COUNTER) = 0;\
 	u64 MACRO_CONCAT_(GROUP_NAME, _TOTAL) = 0;\
+	LARGE_INTEGER MACRO_CONCAT_(GROUP_NAME, _FREQUENCY);\
+	QueryPerformanceFrequency(&MACRO_CONCAT_(GROUP_NAME, _FREQUENCY));\
 	FOR_RANGE(MACRO_CONCAT_(GROUP_NAME, _INDEX), static_cast<u8>(GROUP_NAME::CAPACITY))\
 	{\
 		MACRO_CONCAT_(GROUP_NAME, _TOTAL) += MACRO_CONCAT_(GROUP_NAME, _DATA)[MACRO_CONCAT_(GROUP_NAME, _INDEX)];\
 	}\
-	DEBUG_printf(#GROUP_NAME " TOTAL\n\t%llu\n", MACRO_CONCAT_(GROUP_NAME, _TOTAL));\
+	DEBUG_printf\
+	(\
+		#GROUP_NAME " TOTAL\n\t(%fs) (%.2f%%) %llu\n",\
+		MACRO_CONCAT_(GROUP_NAME, _TOTAL) / static_cast<f64>((COUNT) * MACRO_CONCAT_(GROUP_NAME, _FREQUENCY).QuadPart),\
+		MACRO_CONCAT_(GROUP_NAME, _TOTAL) / static_cast<f64>((COUNT) * MACRO_CONCAT_(GROUP_NAME, _FREQUENCY).QuadPart) / (GOAL) * 100.0,\
+		MACRO_CONCAT_(GROUP_NAME, _TOTAL)\
+	);\
 	FOR_RANGE(MACRO_CONCAT_(GROUP_NAME, _INDEX), static_cast<u8>(GROUP_NAME::CAPACITY))\
 	{\
-		DEBUG_printf("%s\n\t(%.3f) %llu\n", MACRO_CONCAT_(GROUP_NAME, _STRS)[MACRO_CONCAT_(GROUP_NAME, _INDEX)], MACRO_CONCAT_(GROUP_NAME, _DATA)[MACRO_CONCAT_(GROUP_NAME, _INDEX)] / static_cast<f64>(MACRO_CONCAT_(GROUP_NAME, _TOTAL)), MACRO_CONCAT_(GROUP_NAME, _DATA)[MACRO_CONCAT_(GROUP_NAME, _INDEX)]);\
+		DEBUG_printf\
+		(\
+			"%s\n\t(%.3f) %llu\n",\
+			MACRO_CONCAT_(GROUP_NAME, _STRS)[MACRO_CONCAT_(GROUP_NAME, _INDEX)],\
+			MACRO_CONCAT_(GROUP_NAME, _DATA)[MACRO_CONCAT_(GROUP_NAME, _INDEX)] / static_cast<f64>(MACRO_CONCAT_(GROUP_NAME, _TOTAL)),\
+			MACRO_CONCAT_(GROUP_NAME, _DATA)[MACRO_CONCAT_(GROUP_NAME, _INDEX)]\
+		);\
 		MACRO_CONCAT_(GROUP_NAME, _DATA)[MACRO_CONCAT_(GROUP_NAME, _INDEX)] = 0;\
 	}\
 	DEBUG_printf("\n");\
@@ -223,6 +237,17 @@ internal TYPE* memory_arena_allocate_zero(MemoryArena* arena, memsize count = 1)
 	memset(allocation, static_cast<unsigned char>(0), sizeof(TYPE) * count);
 	arena->used += sizeof(TYPE) * count;
 	return reinterpret_cast<TYPE*>(allocation);
+}
+
+internal MemoryArena memory_arena_reserve(MemoryArena* arena, memsize size)
+{
+	ASSERT(arena->used + size <= arena->size);
+	MemoryArena reservation;
+	reservation.size = size;
+	reservation.base = arena->base + arena->used;
+	reservation.used = 0;
+	arena->used += size;
+	return reservation;
 }
 
 //

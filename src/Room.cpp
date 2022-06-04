@@ -440,6 +440,15 @@ global constexpr strlit LUCIA_STATE_IMG_FILE_PATHS[LuciaState::CAPACITY] =
 		DATA_DIR "hud/lucia_healed.png"
 	};
 
+struct State;
+struct RenderThreadData
+{
+	i32         index;
+	SDL_Thread* thread;
+	MemoryArena arena;
+	State*      state;
+};
+
 struct State
 {
 	#if DEBUG_SHOWCASE_MAP
@@ -521,14 +530,14 @@ struct State
 			Mix_Chunk* audios[sizeof(audio) / sizeof(Mix_Chunk*)];
 		};
 
-		vf2              cursor_velocity;
-		vf2              cursor;
-		bool32           cursor_dragging_window;
-		vf2              cursor_rel_holding_position;
+		vf2                cursor_velocity;
+		vf2                cursor;
+		bool32             cursor_dragging_window;
+		vf2                cursor_rel_holding_position;
 		WindowSliderFamily cursor_dragging_slider;
-		WindowType       window_type;
-		vf2              window_velocity;
-		vf2              window_position;
+		WindowType         window_type;
+		vf2                window_velocity;
+		vf2                window_position;
 	} title_menu;
 
 	struct Game
@@ -643,6 +652,12 @@ struct State
 
 			Mix_Music* musics[sizeof(music) / sizeof(Mix_Music*)];
 		};
+
+		u32*                 render_thread_view_pixels;
+		bool32               render_thread_fired;
+		SDL_sem*             render_thread_clock_in;
+		SDL_sem*             render_thread_clock_out;
+		RenderThreadData     render_thread_datas[2];
 
 		GameGoal             goal;
 
@@ -1549,146 +1564,445 @@ internal vf3 shader(State* state, vf3 color, Material material, bool32 in_light,
 #endif
 }
 
-internal void boot_up_state(SDL_Renderer* renderer, State* state)
+internal void render_vertical_scan_line(u32* vertical_scan_line, State* state, MemoryArena arena, i32 x)
 {
-#if DEBUG_SHOWCASE_MAP
-#else
-	switch (state->context)
+	u32* current_pixel  = vertical_scan_line;
+	vf2  ray_horizontal = polar(state->game.lucia_angle + (0.5f - static_cast<f32>(x) / VIEW_RES.x) * state->game.lucia_fov);
+
+	WallSide ray_casted_wall_side       = {};
+	f32      wall_distance              = NAN;
+	f32      wall_portion               = NAN;
+	i32      wall_starting_y            = 0;
+	i32      wall_ending_y              = 0;
+	Image*   wall_overlay               = 0;
+	vf2      wall_overlay_uv_position   = { NAN, NAN };
+	vf2      wall_overlay_uv_dimensions = { NAN, NAN };
+	bool32   wall_in_light              = true;
+
 	{
-		case StateContext::title_menu:
+		vi2 step    = { sign(ray_horizontal.x), sign(ray_horizontal.y) };
+		vf2 t_delta = vf2 { step.x / ray_horizontal.x, step.y / ray_horizontal.y } * WALL_SPACING;
+		vf2 t_max   =
+			{
+				(floorf(state->game.lucia_position.x / WALL_SPACING + (ray_horizontal.x >= 0.0f)) * WALL_SPACING - state->game.lucia_position.x) / ray_horizontal.x,
+				(floorf(state->game.lucia_position.y / WALL_SPACING + (ray_horizontal.y >= 0.0f)) * WALL_SPACING - state->game.lucia_position.y) / ray_horizontal.y
+			};
+
+		ray_casted_wall_side.coordinates =
+			{
+				static_cast<i32>(floorf(state->game.lucia_position.x / WALL_SPACING)),
+				static_cast<i32>(floorf(state->game.lucia_position.y / WALL_SPACING))
+			};
+
+		FOR_RANGE(MAP_DIM * MAP_DIM)
 		{
-			state->title_menu.texture.desktop      = IMG_LoadTexture(renderer, DATA_DIR "computer/desktop.png");
-			state->title_menu.texture.cursor       = IMG_LoadTexture(renderer, DATA_DIR "computer/cursor.png");
-			state->title_menu.texture.window_close = IMG_LoadTexture(renderer, DATA_DIR "computer/window_close.png");
-
-			FOR_ELEMS(it, WINDOW_ICON_DATA)
+			FOR_ELEMS(voxel_data, WALL_VOXEL_DATA)
 			{
-				state->title_menu.texture.icons[it_index] = IMG_LoadTexture(renderer, it->img_file_path);
+				if (+(*get_wall_voxel(state, ray_casted_wall_side.coordinates) & voxel_data->voxel))
+				{
+					f32 distance;
+					f32 portion;
+					if
+					(
+						ray_cast_line
+						(
+							&distance,
+							&portion,
+							state->game.lucia_position.xy,
+							ray_horizontal,
+							(ray_casted_wall_side.coordinates + voxel_data->start) * WALL_SPACING,
+							(ray_casted_wall_side.coordinates + voxel_data->end  ) * WALL_SPACING
+						)
+						&& 0.0f <= portion && portion <= 1.0f
+						&& (!+ray_casted_wall_side.voxel || distance < wall_distance)
+					)
+					{
+						ray_casted_wall_side.normal = voxel_data->normal;
+						ray_casted_wall_side.voxel  = voxel_data->voxel;
+						wall_distance               = distance;
+						wall_portion                = portion;
+
+						if (dot(ray_horizontal, voxel_data->normal) > 0.0f)
+						{
+							ray_casted_wall_side.normal *= -1.0f;
+							wall_portion                 = 1.0f - wall_portion;
+						}
+					}
+				}
 			}
 
-			state->title_menu.audio.ambience = Mix_LoadWAV(DATA_DIR "audio/computer.wav");
+			if (+ray_casted_wall_side.voxel)
+			{
+				ray_casted_wall_side.coordinates.x = mod(ray_casted_wall_side.coordinates.x, MAP_DIM);
+				ray_casted_wall_side.coordinates.y = mod(ray_casted_wall_side.coordinates.y, MAP_DIM);
 
-			#if DEBUG
-			FOR_ELEMS(it, state->title_menu.textures) { ASSERT(*it); }
-			FOR_ELEMS(it, state->title_menu.audios  ) { ASSERT(*it); }
-			#endif
+				wall_starting_y = static_cast<i32>(VIEW_RES.y / 2.0f - HORT_TO_VERT_K / state->game.lucia_fov * state->game.lucia_position.z / (wall_distance + lerp(0.01f, 1.0f, state->game.interpolated_pills_effect_activations[0])));
+				wall_ending_y   = static_cast<i32>(VIEW_RES.y / 2.0f + HORT_TO_VERT_K / state->game.lucia_fov * (state->game.percieved_wall_height - state->game.lucia_position.z) / (wall_distance + lerp(0.01f, 3.0f, state->game.interpolated_pills_effect_activations[0])));
 
-			Mix_PlayChannel(+AudioChannel::r0, state->title_menu.audio.ambience, -1);
-		} break;
+				if (equal_wall_sides(ray_casted_wall_side, state->game.door_wall_side))
+				{
+					wall_overlay = &state->game.image.door;
 
-		case StateContext::game:
+					if (+(state->game.door_wall_side.voxel & (WallVoxel::back_slash | WallVoxel::forward_slash)))
+					{
+						wall_overlay_uv_position   = { 0.5f - 0.5f / 2.0f / SQRT2, 0.0f };
+						wall_overlay_uv_dimensions = { 0.5f / SQRT2, 0.85f };
+					}
+					else
+					{
+						wall_overlay_uv_position   = { 0.25f, 0.0f };
+						wall_overlay_uv_dimensions = { 0.5f, 0.85f };
+					}
+				}
+				else if (equal_wall_sides(ray_casted_wall_side, state->game.circuit_breaker_wall_side))
+				{
+					wall_overlay = &state->game.image.circuit_breaker;
+
+					if (+(state->game.door_wall_side.voxel & (WallVoxel::back_slash | WallVoxel::forward_slash)))
+					{
+						wall_overlay_uv_position   = { 0.5f - 0.30f / 2.0f / SQRT2, 0.25f };
+						wall_overlay_uv_dimensions = { 0.30f / SQRT2, 0.50f };
+					}
+					else
+					{
+						wall_overlay_uv_position   = { 0.35f, 0.25f };
+						wall_overlay_uv_dimensions = { 0.30f, 0.50f };
+					}
+				}
+				else if (rng(static_cast<i32>((ray_casted_wall_side.coordinates.x + ray_casted_wall_side.coordinates.y) * 317.14f + ray_casted_wall_side.coordinates.y * 17102.012f + 962.0f)) < 0.1f)
+				{
+					f32 direction =
+						dot
+						(
+							rotate90(ray_casted_wall_side.normal),
+							normalize(ray_to_closest(get_position_of_wall_side(ray_casted_wall_side, 0.0f), get_position_of_wall_side(state->game.door_wall_side, 0.0f)))
+						);
+
+					constexpr f32 THRESHOLD = 0.7f;
+
+					if (direction < -THRESHOLD)
+					{
+						wall_overlay = &state->game.image.wall_left_arrow;
+					}
+					else if (direction > THRESHOLD)
+					{
+						wall_overlay = &state->game.image.wall_right_arrow;
+					}
+
+					wall_overlay_uv_position   = { 0.0f, 0.0f };
+					wall_overlay_uv_dimensions = { 1.0f, 1.0f };
+				}
+
+				if (wall_overlay && !IN_RANGE(wall_portion, wall_overlay_uv_position.x, wall_overlay_uv_position.x + wall_overlay_uv_dimensions.x))
+				{
+					wall_overlay = 0;
+				}
+
+				wall_in_light =
+					state->game.monster_timeout == 0.0f
+						&& dot(ray_to_closest(state->game.lucia_position.xy + ray_horizontal * wall_distance, state->game.monster_position.xy), ray_casted_wall_side.normal) > 0.0f
+						&& exists_clear_way(state, state->game.monster_position.xy, state->game.lucia_position.xy + ray_horizontal * wall_distance * 0.99f);
+
+				break;
+			}
+
+			if (t_max.x < t_max.y)
+			{
+				t_max.x                            += t_delta.x;
+				ray_casted_wall_side.coordinates.x += step.x;
+			}
+			else
+			{
+				t_max.y                            += t_delta.y;
+				ray_casted_wall_side.coordinates.y += step.y;
+			}
+		}
+	}
+
+	struct RenderScanNode
+	{
+		Material        material;
+		bool8           in_light;
+		i16             starting_y;
+		i16             ending_y;
+		Image           image;
+		vf2             normal;
+		f32             distance;
+		f32             portion;
+		RenderScanNode* next_node;
+	};
+
+	RenderScanNode* render_scan_node = 0;
+
+	__m128 m_delta_checks_x;
+	__m128 m_delta_checks_y;
+	{
+		vf2 lucia_position_uv = state->game.lucia_position.xy / (MAP_DIM * WALL_SPACING);
+
+		m_delta_checks_x = _mm_mul_ps(_mm_set_ps(0.0f, 1.0f, 0.0f, 1.0f), _mm_set_ps1((2.0f * roundf(lucia_position_uv.x) - 1.0f) * MAP_DIM * WALL_SPACING));
+		m_delta_checks_y = _mm_mul_ps(_mm_set_ps(0.0f, 0.0f, 1.0f, 1.0f), _mm_set_ps1((2.0f * roundf(lucia_position_uv.y) - 1.0f) * MAP_DIM * WALL_SPACING));
+
+		if (fabs(lucia_position_uv.x - roundf(lucia_position_uv.x)) > fabs(lucia_position_uv.y - roundf(lucia_position_uv.y)))
 		{
-			state->game.image.door             = init_image(DATA_DIR "overlays/door.png");
-			state->game.image.circuit_breaker  = init_image(DATA_DIR "overlays/circuit_breaker.png");
-			state->game.image.wall_left_arrow  = init_image(DATA_DIR "overlays/streak_left_0.png");
-			state->game.image.wall_right_arrow = init_image(DATA_DIR "overlays/streak_right_0.png");
+			m_delta_checks_x = _mm_shuffle_ps(m_delta_checks_x, m_delta_checks_x, _MM_SHUFFLE(3, 1, 2, 0));
+			m_delta_checks_y = _mm_shuffle_ps(m_delta_checks_y, m_delta_checks_y, _MM_SHUFFLE(3, 1, 2, 0));
+		}
+	}
 
-			state->game.texture_sprite.hand                    = init_texture_sprite(renderer, DATA_DIR "hand.png");
-			state->game.texture_sprite.flashlight_on           = init_texture_sprite(renderer, DATA_DIR "items/flashlight_on.png");
-			state->game.texture_sprite.night_vision_goggles_on = init_texture_sprite(renderer, DATA_DIR "items/night_vision_goggles_on.png");
-			FOR_ELEMS(it, state->game.texture_sprite.default_items)
-			{
-				*it = init_texture_sprite(renderer, ITEM_DATA[it_index].img_file_path);
-			}
-			FOR_ELEMS(it, state->game.texture_sprite.papers)
-			{
-				*it = init_texture_sprite(renderer, PAPER_DATA[it_index].file_path);
-			}
+	constexpr f32 SHADER_INV_EPSILON = 0.9f;
 
-			state->game.animated_sprite.monster = init_animated_sprite(DATA_DIR "eye.png", { 1, 1 }, 0.0f);
-			state->game.animated_sprite.fire    = init_animated_sprite(DATA_DIR "fire.png", { 10, 6 }, 60.0f);
+	__m128 m_lucia_x    = _mm_set_ps1(state->game.lucia_position.x);
+	__m128 m_lucia_y    = _mm_set_ps1(state->game.lucia_position.y);
+	__m128 m_ray_x      = _mm_set_ps1(ray_horizontal.x);
+	__m128 m_ray_y      = _mm_set_ps1(ray_horizontal.y);
+	__m128 m_max_scalar = _mm_set_ps1(+ray_casted_wall_side.voxel ? wall_distance : INFINITY);
 
-			state->game.mipmap.wall    = init_mipmap(DATA_DIR "room/wall.jpg", 4);
-			state->game.mipmap.floor   = init_mipmap(DATA_DIR "room/floor.jpg", 4);
-			state->game.mipmap.ceiling = init_mipmap(DATA_DIR "room/ceiling.jpg", 4);
-
-			state->game.texture.screen                          = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET   , SCREEN_RES.x, SCREEN_RES.y);
-			state->game.texture.view                            = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_STREAMING, VIEW_RES.x  , VIEW_RES.y  );
-			state->game.texture.circuit_breaker_switches[false] = IMG_LoadTexture(renderer, DATA_DIR "hud/circuit_breaker_switch_off.png");
-			state->game.texture.circuit_breaker_switches[true ] = IMG_LoadTexture(renderer, DATA_DIR "hud/circuit_breaker_switch_on.png");
-			state->game.texture.circuit_breaker_panel           = IMG_LoadTexture(renderer, DATA_DIR "hud/circuit_breaker_panel.png");
-			state->game.texture.blink                           = IMG_LoadTexture(renderer, DATA_DIR "hud/blink.png");
-			FOR_ELEMS(it, state->game.texture.lucia_states)
-			{
-				*it = IMG_LoadTexture(renderer, LUCIA_STATE_IMG_FILE_PATHS[it_index]);
-			}
-
-			state->game.audio.drone                   = Mix_LoadWAV(DATA_DIR "audio/drone.wav");
-			state->game.audio.drone_low               = Mix_LoadWAV(DATA_DIR "audio/drone_low.wav");
-			state->game.audio.drone_loud              = Mix_LoadWAV(DATA_DIR "audio/drone_loud.wav");
-			state->game.audio.drone_off               = Mix_LoadWAV(DATA_DIR "audio/drone_off.wav");
-			state->game.audio.drone_on                = Mix_LoadWAV(DATA_DIR "audio/drone_on.wav");
-			state->game.audio.blackout                = Mix_LoadWAV(DATA_DIR "audio/blackout.wav");
-			state->game.audio.eletronical             = Mix_LoadWAV(DATA_DIR "audio/eletronical.wav");
-			state->game.audio.pick_up_paper           = Mix_LoadWAV(DATA_DIR "audio/pick_up_paper.wav");
-			state->game.audio.pick_up_heavy           = Mix_LoadWAV(DATA_DIR "audio/pick_up_heavy.wav");
-			state->game.audio.switch_toggle           = Mix_LoadWAV(DATA_DIR "audio/switch_toggle.wav");
-			state->game.audio.circuit_breaker_switch  = Mix_LoadWAV(DATA_DIR "audio/lever_flip.wav");
-			state->game.audio.door_budge              = Mix_LoadWAV(DATA_DIR "audio/door_budge.wav");
-			state->game.audio.panel_open              = Mix_LoadWAV(DATA_DIR "audio/panel_open.wav");
-			state->game.audio.panel_close             = Mix_LoadWAV(DATA_DIR "audio/panel_close.wav");
-			state->game.audio.shock                   = Mix_LoadWAV(DATA_DIR "audio/shock.wav");
-			state->game.audio.night_vision_goggles_on = Mix_LoadWAV(DATA_DIR "audio/night_vision_goggles_on.wav");
-			state->game.audio.first_aid_kit           = Mix_LoadWAV(DATA_DIR "audio/first_aid_kit.wav");
-			state->game.audio.acid_burn               = Mix_LoadWAV(DATA_DIR "audio/acid_burn.wav");
-			state->game.audio.squelch                 = Mix_LoadWAV(DATA_DIR "audio/squelch.wav");
-			state->game.audio.cowbell                 = Mix_LoadWAV(DATA_DIR "audio/cowbell.wav");
-			state->game.audio.gulp                    = Mix_LoadWAV(DATA_DIR "audio/gulp.wav");
-			state->game.audio.horror[0]               = Mix_LoadWAV(DATA_DIR "audio/horror_0.wav");
-			state->game.audio.horror[1]               = Mix_LoadWAV(DATA_DIR "audio/horror_1.wav");
-			state->game.audio.heartbeats[0]           = Mix_LoadWAV(DATA_DIR "audio/heartbeat_0.wav");
-			state->game.audio.heartbeats[1]           = Mix_LoadWAV(DATA_DIR "audio/heartbeat_1.wav");
-			FOR_ELEMS(it, state->game.audio.radio_clips)
-			{
-				*it = Mix_LoadWAV(RADIO_WAV_FILE_PATHS[it_index]);
-			}
-			FOR_ELEMS(it, state->game.audio.walk_steps)
-			{
-				*it = Mix_LoadWAV(WALK_STEP_WAV_FILE_PATHS[it_index]);
-			}
-			FOR_ELEMS(it, state->game.audio.run_steps)
-			{
-				*it = Mix_LoadWAV(RUN_STEP_WAV_FILE_PATHS[it_index]);
-			}
-			FOR_ELEMS(it, state->game.audio.creepy_sounds)
-			{
-				*it = Mix_LoadWAV(CREEPY_SOUND_WAV_FILE_PATHS[it_index]);
-			}
-
-			state->game.music.chases[0] = Mix_LoadMUS(DATA_DIR "audio/chase_0.wav");
-			state->game.music.chases[1] = Mix_LoadMUS(DATA_DIR "audio/chase_1.wav");
-
-			#if DEBUG
-			FOR_ELEMS(it, state->game.textures) { ASSERT(*it); }
-			FOR_ELEMS(it, state->game.audios  ) { ASSERT(*it); }
-			FOR_ELEMS(it, state->game.musics  ) { ASSERT(*it); }
-			#endif
-
-			SDL_SetTextureBlendMode(state->game.texture.screen, SDL_BLENDMODE_BLEND);
-
-			Mix_VolumeChunk(state->game.audio.drone, 0);
-			Mix_PlayChannel(+AudioChannel::r0, state->game.audio.drone, -1);
-
-			Mix_VolumeChunk(state->game.audio.drone_low, 0);
-			Mix_PlayChannel(+AudioChannel::r1, state->game.audio.drone_low, -1);
-
-			Mix_VolumeChunk(state->game.audio.drone_loud, 0);
-			Mix_PlayChannel(+AudioChannel::r2, state->game.audio.drone_loud, -1);
-		} break;
-
-		case StateContext::end:
+	lambda scan =
+		[&](Material material, Image image, vf3 position, vf2 normal, vf2 dimensions)
 		{
-			state->end.audio.door_enter = Mix_LoadWAV(DATA_DIR "audio/door_enter.wav");
-			state->end.audio.shooting   = Mix_LoadWAV(DATA_DIR "audio/shooting.wav");
+			__m128 m_start_x          = _mm_add_ps(_mm_set_ps1(position.x + normal.y * dimensions.x / 2.0f), m_delta_checks_x);
+			__m128 m_end_x            = _mm_add_ps(_mm_set_ps1(position.x - normal.y * dimensions.x / 2.0f), m_delta_checks_x);
+			__m128 m_start_y          = _mm_add_ps(_mm_set_ps1(position.y - normal.x * dimensions.x / 2.0f), m_delta_checks_y);
+			__m128 m_end_y            = _mm_add_ps(_mm_set_ps1(position.y + normal.x * dimensions.x / 2.0f), m_delta_checks_y);
+			__m128 m_start_to_end_x   = _mm_sub_ps(m_end_x, m_start_x);
+			__m128 m_start_to_end_y   = _mm_sub_ps(m_end_y, m_start_y);
+			__m128 m_start_to_lucia_x = _mm_sub_ps(m_lucia_x, m_start_x);
+			__m128 m_start_to_lucia_y = _mm_sub_ps(m_lucia_y, m_start_y);
+			__m128 m_det              = _mm_sub_ps(_mm_mul_ps(m_ray_x, m_start_to_end_y), _mm_mul_ps(m_ray_y, m_start_to_end_x));
+			__m128 m_scalar           = _mm_div_ps(_mm_sub_ps(_mm_mul_ps(m_start_to_lucia_y, m_start_to_end_x), _mm_mul_ps(m_start_to_lucia_x, m_start_to_end_y)), m_det);
+			__m128 m_portion          = _mm_div_ps(_mm_sub_ps(_mm_mul_ps(m_start_to_lucia_y, m_ray_x         ), _mm_mul_ps(m_start_to_lucia_x, m_ray_y         )), m_det);
+			i32    mask               = _mm_movemask_ps(_mm_and_ps(_mm_and_ps(_mm_cmpge_ps(m_scalar, m_zero), _mm_cmplt_ps(m_scalar, m_max_scalar)), _mm_and_ps(_mm_cmpge_ps(m_portion, m_zero), _mm_cmplt_ps(m_portion, m_one))));
 
-			Mix_PlayChannel(+AudioChannel::r2, state->end.audio.door_enter, 0);
+			if (mask)
+			{
+				f32 scalars[4];
+				f32 portions[4];
+				_mm_storeu_ps(scalars, m_scalar);
+				_mm_storeu_ps(portions, m_portion);
 
-			#if DEBUG
-			FOR_ELEMS(it, state->game.audios) { ASSERT(*it); }
-			#endif
+				FOR_RANGE(i, 4)
+				{
+					if (mask & (1 << i))
+					{
+						RenderScanNode** post_node = &render_scan_node;
+						while (*post_node && (*post_node)->distance < scalars[i])
+						{
+							post_node = &(*post_node)->next_node;
+						}
+
+						RenderScanNode* new_node = memory_arena_allocate<RenderScanNode>(&arena);
+						new_node->material   = material;
+						new_node->in_light   = state->game.monster_timeout == 0.0f && exists_clear_way(state, state->game.lucia_position.xy + ray_horizontal * scalars[i] * SHADER_INV_EPSILON, state->game.monster_position.xy);
+						new_node->starting_y = static_cast<i16>(VIEW_RES.y / 2.0f + HORT_TO_VERT_K / state->game.lucia_fov * (position.z - 0.5f * dimensions.y - state->game.lucia_position.z) / (scalars[i] + 0.1f));
+						new_node->ending_y   = static_cast<i16>(VIEW_RES.y / 2.0f + HORT_TO_VERT_K / state->game.lucia_fov * (position.z + 0.5f * dimensions.y - state->game.lucia_position.z) / (scalars[i] + 0.1f));
+						new_node->image      = image;
+						new_node->normal     = normal;
+						new_node->distance   = scalars[i];
+						new_node->portion    = portions[i];
+						new_node->next_node  = *post_node;
+						*post_node = new_node;
+						break;
+					}
+				}
+			}
 		};
+
+#if DEBUG_DISABLE_SPRITES
+#else
+	if (state->game.monster_timeout == 0.0f)
+	{
+		scan(Material::monster, get_image_of_frame(&state->game.animated_sprite.monster), state->game.monster_position, state->game.monster_normal, { 1.0f, 1.0f });
+
+		constexpr i32 FIRE_COUNT = 3;
+		FOR_RANGE(i, FIRE_COUNT)
+		{
+			vf3 fire_position = state->game.monster_position + vx3(polar(state->time + static_cast<f32>(i) / FIRE_COUNT * TAU), 0.0f);
+			if (exists_clear_way(state, state->game.monster_position.xy, fire_position.xy))
+			{
+				scan(Material::fire, get_image_of_frame(&state->game.animated_sprite.fire), fire_position, normalize(ray_to_closest(state->game.monster_position.xy, state->game.lucia_position.xy)), { 1.0f, 1.0f });
+			}
+		}
+	}
+
+	if (state->game.hand_on_state != HandOnState::null)
+	{
+		scan(Material::hand, state->game.texture_sprite.hand.image, state->game.hand_position, normalize(ray_to_closest(state->game.hand_position.xy, state->game.lucia_position.xy)), { 0.1f, 0.1f });
+	}
+
+	FOR_ELEMS(it, state->game.item_buffer, state->game.item_count)
+	{
+		scan(Material::item, state->game.texture_sprite.default_items[+it->type - +ItemType::ITEM_START].image, it->position, it->normal, { 0.5f, 0.5f });
 	}
 #endif
+
+	FOR_RANGE(y, VIEW_RES.y)
+	{
+		vf3 ray        = normalize({ ray_horizontal.x, ray_horizontal.y, (y - VIEW_RES.y / 2.0f) * state->game.lucia_fov / HORT_TO_VERT_K });
+		vf4 scan_pixel = { NAN, NAN, NAN, NAN };
+
+		for (RenderScanNode* node = render_scan_node; node; node = node->next_node)
+		{
+			if (IN_RANGE(y, node->starting_y, node->ending_y) && IN_RANGE(state->game.lucia_position.z + ray.z * node->distance, 0.0f, state->game.percieved_wall_height))
+			{
+				scan_pixel = sample_at(&node->image, { node->portion, (static_cast<f32>(y) - node->starting_y) / (node->ending_y - node->starting_y) });
+				if (scan_pixel.w)
+				{
+#if DEBUG_DISABLE_SAMPLING
+					*current_pixel = pack_color(monochrome(clamp(2.0f / (node->distance + 0.1f) * square(dot(node->normal, ray.xy)), 0.0f, 1.0f)));
+#else
+					*current_pixel = pack_color(shader(state, scan_pixel.xyz, node->material, node->in_light, ray, vx3(node->normal, 0.0f), node->distance));
+#endif
+					goto NEXT_Y;
+				}
+			}
+		}
+
+		if (IN_RANGE(y, wall_starting_y, wall_ending_y))
+		{
+			f32 y_portion = static_cast<f32>(y - wall_starting_y) / (wall_ending_y - wall_starting_y);
+			f32 distance  = sqrtf(square(wall_distance) + square(y_portion * state->game.percieved_wall_height - state->game.lucia_position.z));
+
+#if DEBUG_DISABLE_SAMPLING
+			*current_pixel = pack_color(monochrome(clamp(4.0f / (distance + 0.1f) + square(dot(ray_casted_wall_side.normal, ray.xy)), 0.0f, 1.0f)));
+#else
+			vf4 wall_overlay_color = { NAN, NAN, NAN, 0.0f };
+			if (wall_overlay && IN_RANGE(y_portion, wall_overlay_uv_position.y, wall_overlay_uv_position.y + wall_overlay_uv_dimensions.y))
+			{
+				wall_overlay_color = sample_at(wall_overlay, { (wall_portion - wall_overlay_uv_position.x) / wall_overlay_uv_dimensions.x, (y_portion - wall_overlay_uv_position.y) / wall_overlay_uv_dimensions.y });
+			}
+
+			vf3 wall_color = { NAN, NAN, NAN };
+			if (wall_overlay_color.w < 1.0f)
+			{
+				vf2 wall_uv = { wall_portion * (1.0f + state->game.interpolated_pills_effect_activations[1]) + state->game.interpolated_pills_effect_activations[0] / 2.0f, y_portion * (1.0f + state->game.interpolated_pills_effect_activations[2]) + sinf(state->game.interpolated_pills_effect_activations[0]) };
+				wall_uv = rotate(wall_uv, square(state->game.interpolated_pills_effect_activations[0] * 8.0f) / 4.0f);
+				wall_color =
+					sample_at
+					(
+						&state->game.mipmap.wall,
+						(distance / 4.0f + state->game.mipmap.wall.level_count * square(1.0f - fabsf(dot(ray, vx3(ray_casted_wall_side.normal, 0.0f))))) * (1.0f - state->game.interpolated_eye_drops_activation),
+						{ mod(wall_uv.x, 1.0f), mod(wall_uv.y, 1.0f) }
+					);
+			}
+
+			*current_pixel =
+				pack_color
+				(
+					shader
+					(
+						state,
+						wall_overlay_color.w == 0.0f
+							? wall_color
+							: wall_overlay_color.w == 1.0f
+								? wall_overlay_color.xyz
+								: lerp(wall_color, wall_overlay_color.xyz, wall_overlay_color.w),
+						Material::wall,
+						wall_in_light,
+						ray,
+						vx3(ray_casted_wall_side.normal, 0.0f),
+						distance
+					)
+				);
+#endif
+		}
+		else if (fabs(ray.z) > 0.0001f)
+		{
+#if DEBUG_DISABLE_FLOOR_CEILING
+			*current_pixel = 0;
+#else
+			vf2      uv;
+			f32      distance;
+			vf3      normal;
+			Mipmap*  mipmap;
+			Material material;
+
+			if (y < VIEW_RES.y / 2)
+			{
+				f32 zk   = -state->game.lucia_position.z / ray.z;
+				uv       = state->game.lucia_position.xy + zk * ray.xy;
+				distance = sqrtf(norm_sq(uv - state->game.lucia_position.xy) + square(state->game.lucia_position.z));
+				normal   = { 0.0f, 0.0f, 1.0f };
+				mipmap   = &state->game.mipmap.floor;
+				material = Material::floor;
+
+				f32 floor_dim = MAP_DIM * WALL_SPACING / roundf(MAP_DIM * WALL_SPACING / 4.0f);
+				uv.x = mod(uv.x / floor_dim + cosf(state->time / 5.0f) * state->game.interpolated_pills_effect_activations[2] * 8.0f / (distance + 4.0f), 1.0f);
+				uv.y = mod(uv.y / floor_dim + sinf(state->time / 5.0f) * state->game.interpolated_pills_effect_activations[3] * 8.0f / (distance + 4.0f), 1.0f);
+			}
+			else
+			{
+				f32 zk   = (state->game.percieved_wall_height - state->game.lucia_position.z) / ray.z;
+				uv       = state->game.lucia_position.xy + zk * ray.xy;
+				distance = sqrtf(norm_sq(uv - state->game.lucia_position.xy) + square(state->game.percieved_wall_height - state->game.lucia_position.z));
+				normal   = { 0.0f, 0.0f, -1.0f };
+				mipmap   = &state->game.mipmap.ceiling;
+				material = Material::ceiling;
+
+				f32 ceiling_dim = MAP_DIM * WALL_SPACING / roundf(MAP_DIM * WALL_SPACING / 4.0f) + state->game.interpolated_pills_effect_activations[3];
+				uv.x = mod(uv.x / ceiling_dim + cosf(state->time / 8.0f) * state->game.interpolated_pills_effect_activations[3] * 16.0f / (distance + 3.0f), 1.0f);
+				uv.y = mod(uv.y / ceiling_dim + sinf(state->time / 8.0f) * state->game.interpolated_pills_effect_activations[2] * 16.0f / (distance + 3.0f), 1.0f);
+			}
+
+#if DEBUG_DISABLE_SAMPLING
+			*current_pixel = pack_color(monochrome(clamp(2.0f / (distance + 0.1f) + square(ray.z), 0.0f, 1.0f)));
+#else
+			vf3 floor_ceiling_color =
+				sample_at
+				(
+					mipmap,
+					(distance / 16.0f + mipmap->level_count * square(1.0f - fabsf(dot(ray, normal)))) * (1.0f - state->game.interpolated_eye_drops_activation),
+					uv
+				);
+
+			*current_pixel =
+				pack_color
+				(
+					shader
+					(
+						state,
+						floor_ceiling_color,
+						material,
+						state->game.monster_timeout == 0.0f && exists_clear_way(state, state->game.lucia_position.xy + ray.xy * distance * SHADER_INV_EPSILON, state->game.monster_position.xy),
+						ray,
+						normal,
+						distance
+					)
+				);
+#endif
+#endif
+		}
+
+		NEXT_Y:;
+		current_pixel += 1;
+	}
+}
+
+internal void render_every_nth_vertical_scan_lines(u32* view_pixels, State* state, MemoryArena arena, i32 start_x, i32 delta_x)
+{
+	for (i32 x = start_x; x < VIEW_RES.x; x += delta_x)
+	{
+		render_vertical_scan_line(view_pixels + x * VIEW_RES.y, state, arena, x);
+	}
+}
+
+internal int render_thread_work(void* void_data)
+{
+	RenderThreadData* data = reinterpret_cast<RenderThreadData*>(void_data);
+
+	while (true)
+	{
+		SDL_SemWait(data->state->game.render_thread_clock_in);
+
+		if (data->state->game.render_thread_fired)
+		{
+			return 0;
+		}
+		else
+		{
+			render_every_nth_vertical_scan_lines(data->state->game.render_thread_view_pixels, data->state, data->arena, data->index, ARRAY_CAPACITY(data->state->game.render_thread_datas) + 1);
+			SDL_SemPost(data->state->game.render_thread_clock_out);
+		}
+	}
 }
 
 internal void generate_map(State* state)
@@ -1966,7 +2280,6 @@ internal void init_game(State* state)
 	state->game.hud.circuit_breaker.active_voltage = state->game.hud.circuit_breaker.goal_voltage;
 }
 
-
 #if DEBUG_SHOWCASE_MAP
 internal int DEBUG_showcase_map_generator_thread_worker(void* void_data)
 {
@@ -1974,6 +2287,160 @@ internal int DEBUG_showcase_map_generator_thread_worker(void* void_data)
 	return 0;
 }
 #endif
+
+internal void boot_up_state(SDL_Renderer* renderer, State* state)
+{
+#if DEBUG_SHOWCASE_MAP
+#else
+	switch (state->context)
+	{
+		case StateContext::title_menu:
+		{
+			state->title_menu.texture.desktop      = IMG_LoadTexture(renderer, DATA_DIR "computer/desktop.png");
+			state->title_menu.texture.cursor       = IMG_LoadTexture(renderer, DATA_DIR "computer/cursor.png");
+			state->title_menu.texture.window_close = IMG_LoadTexture(renderer, DATA_DIR "computer/window_close.png");
+
+			FOR_ELEMS(it, WINDOW_ICON_DATA)
+			{
+				state->title_menu.texture.icons[it_index] = IMG_LoadTexture(renderer, it->img_file_path);
+			}
+
+			state->title_menu.audio.ambience = Mix_LoadWAV(DATA_DIR "audio/computer.wav");
+
+			#if DEBUG
+			FOR_ELEMS(it, state->title_menu.textures) { ASSERT(*it); }
+			FOR_ELEMS(it, state->title_menu.audios  ) { ASSERT(*it); }
+			#endif
+
+			Mix_PlayChannel(+AudioChannel::r0, state->title_menu.audio.ambience, -1);
+		} break;
+
+		case StateContext::game:
+		{
+			state->game.render_thread_fired       = false;
+			state->game.render_thread_view_pixels = memory_arena_allocate<u32>(&state->context_arena, VIEW_RES.x * VIEW_RES.y);
+			state->game.render_thread_clock_in    = SDL_CreateSemaphore(0);
+			state->game.render_thread_clock_out   = SDL_CreateSemaphore(0);
+			FOR_ELEMS(it, state->game.render_thread_datas)
+			{
+				it->index  = it_index;
+				it->thread = SDL_CreateThread(render_thread_work, "render_thread_work", it);
+				it->arena  = memory_arena_reserve(&state->context_arena, KIBIBYTES_OF(1));
+				it->state  = state;
+			}
+
+			state->game.image.door             = init_image(DATA_DIR "overlays/door.png");
+			state->game.image.circuit_breaker  = init_image(DATA_DIR "overlays/circuit_breaker.png");
+			state->game.image.wall_left_arrow  = init_image(DATA_DIR "overlays/streak_left_0.png");
+			state->game.image.wall_right_arrow = init_image(DATA_DIR "overlays/streak_right_0.png");
+
+			state->game.texture_sprite.hand                    = init_texture_sprite(renderer, DATA_DIR "hand.png");
+			state->game.texture_sprite.flashlight_on           = init_texture_sprite(renderer, DATA_DIR "items/flashlight_on.png");
+			state->game.texture_sprite.night_vision_goggles_on = init_texture_sprite(renderer, DATA_DIR "items/night_vision_goggles_on.png");
+			FOR_ELEMS(it, state->game.texture_sprite.default_items)
+			{
+				*it = init_texture_sprite(renderer, ITEM_DATA[it_index].img_file_path);
+			}
+			FOR_ELEMS(it, state->game.texture_sprite.papers)
+			{
+				*it = init_texture_sprite(renderer, PAPER_DATA[it_index].file_path);
+			}
+
+			state->game.animated_sprite.monster = init_animated_sprite(DATA_DIR "eye.png", { 1, 1 }, 0.0f);
+			state->game.animated_sprite.fire    = init_animated_sprite(DATA_DIR "fire.png", { 10, 6 }, 60.0f);
+
+			state->game.mipmap.wall    = init_mipmap(DATA_DIR "room/wall.jpg", 4);
+			state->game.mipmap.floor   = init_mipmap(DATA_DIR "room/floor.jpg", 4);
+			state->game.mipmap.ceiling = init_mipmap(DATA_DIR "room/ceiling.jpg", 4);
+
+			state->game.texture.screen                          = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET   , SCREEN_RES.x, SCREEN_RES.y);
+			state->game.texture.view                            = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_STREAMING, VIEW_RES.x  , VIEW_RES.y  );
+			state->game.texture.circuit_breaker_switches[false] = IMG_LoadTexture(renderer, DATA_DIR "hud/circuit_breaker_switch_off.png");
+			state->game.texture.circuit_breaker_switches[true ] = IMG_LoadTexture(renderer, DATA_DIR "hud/circuit_breaker_switch_on.png");
+			state->game.texture.circuit_breaker_panel           = IMG_LoadTexture(renderer, DATA_DIR "hud/circuit_breaker_panel.png");
+			state->game.texture.blink                           = IMG_LoadTexture(renderer, DATA_DIR "hud/blink.png");
+			FOR_ELEMS(it, state->game.texture.lucia_states)
+			{
+				*it = IMG_LoadTexture(renderer, LUCIA_STATE_IMG_FILE_PATHS[it_index]);
+			}
+
+			state->game.audio.drone                   = Mix_LoadWAV(DATA_DIR "audio/drone.wav");
+			state->game.audio.drone_low               = Mix_LoadWAV(DATA_DIR "audio/drone_low.wav");
+			state->game.audio.drone_loud              = Mix_LoadWAV(DATA_DIR "audio/drone_loud.wav");
+			state->game.audio.drone_off               = Mix_LoadWAV(DATA_DIR "audio/drone_off.wav");
+			state->game.audio.drone_on                = Mix_LoadWAV(DATA_DIR "audio/drone_on.wav");
+			state->game.audio.blackout                = Mix_LoadWAV(DATA_DIR "audio/blackout.wav");
+			state->game.audio.eletronical             = Mix_LoadWAV(DATA_DIR "audio/eletronical.wav");
+			state->game.audio.pick_up_paper           = Mix_LoadWAV(DATA_DIR "audio/pick_up_paper.wav");
+			state->game.audio.pick_up_heavy           = Mix_LoadWAV(DATA_DIR "audio/pick_up_heavy.wav");
+			state->game.audio.switch_toggle           = Mix_LoadWAV(DATA_DIR "audio/switch_toggle.wav");
+			state->game.audio.circuit_breaker_switch  = Mix_LoadWAV(DATA_DIR "audio/lever_flip.wav");
+			state->game.audio.door_budge              = Mix_LoadWAV(DATA_DIR "audio/door_budge.wav");
+			state->game.audio.panel_open              = Mix_LoadWAV(DATA_DIR "audio/panel_open.wav");
+			state->game.audio.panel_close             = Mix_LoadWAV(DATA_DIR "audio/panel_close.wav");
+			state->game.audio.shock                   = Mix_LoadWAV(DATA_DIR "audio/shock.wav");
+			state->game.audio.night_vision_goggles_on = Mix_LoadWAV(DATA_DIR "audio/night_vision_goggles_on.wav");
+			state->game.audio.first_aid_kit           = Mix_LoadWAV(DATA_DIR "audio/first_aid_kit.wav");
+			state->game.audio.acid_burn               = Mix_LoadWAV(DATA_DIR "audio/acid_burn.wav");
+			state->game.audio.squelch                 = Mix_LoadWAV(DATA_DIR "audio/squelch.wav");
+			state->game.audio.cowbell                 = Mix_LoadWAV(DATA_DIR "audio/cowbell.wav");
+			state->game.audio.gulp                    = Mix_LoadWAV(DATA_DIR "audio/gulp.wav");
+			state->game.audio.horror[0]               = Mix_LoadWAV(DATA_DIR "audio/horror_0.wav");
+			state->game.audio.horror[1]               = Mix_LoadWAV(DATA_DIR "audio/horror_1.wav");
+			state->game.audio.heartbeats[0]           = Mix_LoadWAV(DATA_DIR "audio/heartbeat_0.wav");
+			state->game.audio.heartbeats[1]           = Mix_LoadWAV(DATA_DIR "audio/heartbeat_1.wav");
+			FOR_ELEMS(it, state->game.audio.radio_clips)
+			{
+				*it = Mix_LoadWAV(RADIO_WAV_FILE_PATHS[it_index]);
+			}
+			FOR_ELEMS(it, state->game.audio.walk_steps)
+			{
+				*it = Mix_LoadWAV(WALK_STEP_WAV_FILE_PATHS[it_index]);
+			}
+			FOR_ELEMS(it, state->game.audio.run_steps)
+			{
+				*it = Mix_LoadWAV(RUN_STEP_WAV_FILE_PATHS[it_index]);
+			}
+			FOR_ELEMS(it, state->game.audio.creepy_sounds)
+			{
+				*it = Mix_LoadWAV(CREEPY_SOUND_WAV_FILE_PATHS[it_index]);
+			}
+
+			state->game.music.chases[0] = Mix_LoadMUS(DATA_DIR "audio/chase_0.wav");
+			state->game.music.chases[1] = Mix_LoadMUS(DATA_DIR "audio/chase_1.wav");
+
+			#if DEBUG
+			FOR_ELEMS(it, state->game.textures) { ASSERT(*it); }
+			FOR_ELEMS(it, state->game.audios  ) { ASSERT(*it); }
+			FOR_ELEMS(it, state->game.musics  ) { ASSERT(*it); }
+			#endif
+
+			SDL_SetTextureBlendMode(state->game.texture.screen, SDL_BLENDMODE_BLEND);
+
+			Mix_VolumeChunk(state->game.audio.drone, 0);
+			Mix_PlayChannel(+AudioChannel::r0, state->game.audio.drone, -1);
+
+			Mix_VolumeChunk(state->game.audio.drone_low, 0);
+			Mix_PlayChannel(+AudioChannel::r1, state->game.audio.drone_low, -1);
+
+			Mix_VolumeChunk(state->game.audio.drone_loud, 0);
+			Mix_PlayChannel(+AudioChannel::r2, state->game.audio.drone_loud, -1);
+		} break;
+
+		case StateContext::end:
+		{
+			state->end.audio.door_enter = Mix_LoadWAV(DATA_DIR "audio/door_enter.wav");
+			state->end.audio.shooting   = Mix_LoadWAV(DATA_DIR "audio/shooting.wav");
+
+			Mix_PlayChannel(+AudioChannel::r2, state->end.audio.door_enter, 0);
+
+			#if DEBUG
+			FOR_ELEMS(it, state->game.audios) { ASSERT(*it); }
+			#endif
+		};
+	}
+#endif
+}
 
 internal void boot_down_state(State* state)
 {
@@ -1987,6 +2454,19 @@ internal void boot_down_state(State* state)
 
 		case StateContext::game:
 		{
+			state->game.render_thread_fired = true;
+			FOR_RANGE(ARRAY_CAPACITY(state->game.render_thread_datas))
+			{
+				SDL_SemPost(state->game.render_thread_clock_in);
+			}
+			FOR_ELEMS(it, state->game.render_thread_datas)
+			{
+				SDL_WaitThread(it->thread, 0);
+			}
+
+			SDL_DestroySemaphore(state->game.render_thread_clock_in);
+			SDL_DestroySemaphore(state->game.render_thread_clock_out);
+
 			FOR_ELEMS(it, state->game.images          ) { deinit_image(it);           }
 			FOR_ELEMS(it, state->game.texture_sprites ) { deinit_texture_sprite(it);  }
 			FOR_ELEMS(it, state->game.animated_sprites) { deinit_animated_sprite(it); }
@@ -4205,437 +4685,29 @@ extern "C" PROTOTYPE_RENDER(render)
 			set_color(platform->renderer, monochrome(0.0f));
 			SDL_RenderClear(platform->renderer);
 
-			u32* new_view_pixels    = memory_arena_allocate<u32>(&state->transient_arena, VIEW_RES.x * VIEW_RES.y);
-			u32* current_view_pixel = new_view_pixels;
+			DEBUG_PROFILER_create_group(RENDERING, VIEW);
 
-			DEBUG_PROFILER_create_group(RENDERING, RAY_CASTING, COLORING, POST_PROCESSING);
+			DEBUG_PROFILER_start(RENDERING, VIEW);
 
-			FOR_RANGE(x, VIEW_RES.x)
+			FOR_RANGE(ARRAY_CAPACITY(state->game.render_thread_datas))
 			{
-				DEBUG_PROFILER_start(RENDERING, RAY_CASTING);
-
-				vf2 ray_horizontal = polar(state->game.lucia_angle + (0.5f - static_cast<f32>(x) / VIEW_RES.x) * state->game.lucia_fov);
-
-				WallSide ray_casted_wall_side       = {};
-				f32      wall_distance              = NAN;
-				f32      wall_portion               = NAN;
-				i32      wall_starting_y            = 0;
-				i32      wall_ending_y              = 0;
-				Image*   wall_overlay               = 0;
-				vf2      wall_overlay_uv_position   = { NAN, NAN };
-				vf2      wall_overlay_uv_dimensions = { NAN, NAN };
-				bool32   wall_in_light              = true;
-
-				{
-					vi2 step    = { sign(ray_horizontal.x), sign(ray_horizontal.y) };
-					vf2 t_delta = vf2 { step.x / ray_horizontal.x, step.y / ray_horizontal.y } * WALL_SPACING;
-					vf2 t_max   =
-						{
-							(floorf(state->game.lucia_position.x / WALL_SPACING + (ray_horizontal.x >= 0.0f)) * WALL_SPACING - state->game.lucia_position.x) / ray_horizontal.x,
-							(floorf(state->game.lucia_position.y / WALL_SPACING + (ray_horizontal.y >= 0.0f)) * WALL_SPACING - state->game.lucia_position.y) / ray_horizontal.y
-						};
-
-					ray_casted_wall_side.coordinates =
-						{
-							static_cast<i32>(floorf(state->game.lucia_position.x / WALL_SPACING)),
-							static_cast<i32>(floorf(state->game.lucia_position.y / WALL_SPACING))
-						};
-
-					FOR_RANGE(MAP_DIM * MAP_DIM)
-					{
-						FOR_ELEMS(voxel_data, WALL_VOXEL_DATA)
-						{
-							if (+(*get_wall_voxel(state, ray_casted_wall_side.coordinates) & voxel_data->voxel))
-							{
-								f32 distance;
-								f32 portion;
-								if
-								(
-									ray_cast_line
-									(
-										&distance,
-										&portion,
-										state->game.lucia_position.xy,
-										ray_horizontal,
-										(ray_casted_wall_side.coordinates + voxel_data->start) * WALL_SPACING,
-										(ray_casted_wall_side.coordinates + voxel_data->end  ) * WALL_SPACING
-									)
-									&& 0.0f <= portion && portion <= 1.0f
-									&& (!+ray_casted_wall_side.voxel || distance < wall_distance)
-								)
-								{
-									ray_casted_wall_side.normal = voxel_data->normal;
-									ray_casted_wall_side.voxel  = voxel_data->voxel;
-									wall_distance               = distance;
-									wall_portion                = portion;
-
-									if (dot(ray_horizontal, voxel_data->normal) > 0.0f)
-									{
-										ray_casted_wall_side.normal *= -1.0f;
-										wall_portion                 = 1.0f - wall_portion;
-									}
-								}
-							}
-						}
-
-						if (+ray_casted_wall_side.voxel)
-						{
-							ray_casted_wall_side.coordinates.x = mod(ray_casted_wall_side.coordinates.x, MAP_DIM);
-							ray_casted_wall_side.coordinates.y = mod(ray_casted_wall_side.coordinates.y, MAP_DIM);
-
-							wall_starting_y = static_cast<i32>(VIEW_RES.y / 2.0f - HORT_TO_VERT_K / state->game.lucia_fov * state->game.lucia_position.z / (wall_distance + lerp(0.01f, 1.0f, state->game.interpolated_pills_effect_activations[0])));
-							wall_ending_y   = static_cast<i32>(VIEW_RES.y / 2.0f + HORT_TO_VERT_K / state->game.lucia_fov * (state->game.percieved_wall_height - state->game.lucia_position.z) / (wall_distance + lerp(0.01f, 3.0f, state->game.interpolated_pills_effect_activations[0])));
-
-							if (equal_wall_sides(ray_casted_wall_side, state->game.door_wall_side))
-							{
-								wall_overlay = &state->game.image.door;
-
-								if (+(state->game.door_wall_side.voxel & (WallVoxel::back_slash | WallVoxel::forward_slash)))
-								{
-									wall_overlay_uv_position   = { 0.5f - 0.5f / 2.0f / SQRT2, 0.0f };
-									wall_overlay_uv_dimensions = { 0.5f / SQRT2, 0.85f };
-								}
-								else
-								{
-									wall_overlay_uv_position   = { 0.25f, 0.0f };
-									wall_overlay_uv_dimensions = { 0.5f, 0.85f };
-								}
-							}
-							else if (equal_wall_sides(ray_casted_wall_side, state->game.circuit_breaker_wall_side))
-							{
-								wall_overlay = &state->game.image.circuit_breaker;
-
-								if (+(state->game.door_wall_side.voxel & (WallVoxel::back_slash | WallVoxel::forward_slash)))
-								{
-									wall_overlay_uv_position   = { 0.5f - 0.30f / 2.0f / SQRT2, 0.25f };
-									wall_overlay_uv_dimensions = { 0.30f / SQRT2, 0.50f };
-								}
-								else
-								{
-									wall_overlay_uv_position   = { 0.35f, 0.25f };
-									wall_overlay_uv_dimensions = { 0.30f, 0.50f };
-								}
-							}
-							else if (rng(static_cast<i32>((ray_casted_wall_side.coordinates.x + ray_casted_wall_side.coordinates.y) * 317.14f + ray_casted_wall_side.coordinates.y * 17102.012f + 962.0f)) < 0.1f)
-							{
-								f32 direction =
-									dot
-									(
-										rotate90(ray_casted_wall_side.normal),
-										normalize(ray_to_closest(get_position_of_wall_side(ray_casted_wall_side, 0.0f), get_position_of_wall_side(state->game.door_wall_side, 0.0f)))
-									);
-
-								constexpr f32 THRESHOLD = 0.7f;
-
-								if (direction < -THRESHOLD)
-								{
-									wall_overlay = &state->game.image.wall_left_arrow;
-								}
-								else if (direction > THRESHOLD)
-								{
-									wall_overlay = &state->game.image.wall_right_arrow;
-								}
-
-								wall_overlay_uv_position   = { 0.0f, 0.0f };
-								wall_overlay_uv_dimensions = { 1.0f, 1.0f };
-							}
-
-							if (wall_overlay && !IN_RANGE(wall_portion, wall_overlay_uv_position.x, wall_overlay_uv_position.x + wall_overlay_uv_dimensions.x))
-							{
-								wall_overlay = 0;
-							}
-
-							wall_in_light =
-								state->game.monster_timeout == 0.0f
-									&& dot(ray_to_closest(state->game.lucia_position.xy + ray_horizontal * wall_distance, state->game.monster_position.xy), ray_casted_wall_side.normal) > 0.0f
-									&& exists_clear_way(state, state->game.monster_position.xy, state->game.lucia_position.xy + ray_horizontal * wall_distance * 0.99f);
-
-							break;
-						}
-
-						if (t_max.x < t_max.y)
-						{
-							t_max.x                            += t_delta.x;
-							ray_casted_wall_side.coordinates.x += step.x;
-						}
-						else
-						{
-							t_max.y                            += t_delta.y;
-							ray_casted_wall_side.coordinates.y += step.y;
-						}
-					}
-				}
-
-				struct RenderScanNode
-				{
-					Material        material;
-					bool32          in_light;
-					Image           image;
-					vf2             normal;
-					f32             distance;
-					f32             portion;
-					i32             starting_y;
-					i32             ending_y;
-					RenderScanNode* next_node;
-				};
-
-				RenderScanNode* render_scan_node = 0;
-
-				__m128 m_delta_checks_x;
-				__m128 m_delta_checks_y;
-				{
-					vf2 lucia_position_uv = state->game.lucia_position.xy / (MAP_DIM * WALL_SPACING);
-
-					m_delta_checks_x = _mm_mul_ps(_mm_set_ps(0.0f, 1.0f, 0.0f, 1.0f), _mm_set_ps1((2.0f * roundf(lucia_position_uv.x) - 1.0f) * MAP_DIM * WALL_SPACING));
-					m_delta_checks_y = _mm_mul_ps(_mm_set_ps(0.0f, 0.0f, 1.0f, 1.0f), _mm_set_ps1((2.0f * roundf(lucia_position_uv.y) - 1.0f) * MAP_DIM * WALL_SPACING));
-
-					if (fabs(lucia_position_uv.x - roundf(lucia_position_uv.x)) > fabs(lucia_position_uv.y - roundf(lucia_position_uv.y)))
-					{
-						m_delta_checks_x = _mm_shuffle_ps(m_delta_checks_x, m_delta_checks_x, _MM_SHUFFLE(3, 1, 2, 0));
-						m_delta_checks_y = _mm_shuffle_ps(m_delta_checks_y, m_delta_checks_y, _MM_SHUFFLE(3, 1, 2, 0));
-					}
-				}
-
-				constexpr f32 SHADER_INV_EPSILON = 0.9f;
-
-				__m128 m_lucia_x    = _mm_set_ps1(state->game.lucia_position.x);
-				__m128 m_lucia_y    = _mm_set_ps1(state->game.lucia_position.y);
-				__m128 m_ray_x      = _mm_set_ps1(ray_horizontal.x);
-				__m128 m_ray_y      = _mm_set_ps1(ray_horizontal.y);
-				__m128 m_max_scalar = _mm_set_ps1(+ray_casted_wall_side.voxel ? wall_distance : INFINITY);
-
-				lambda scan =
-					[&](Material material, Image image, vf3 position, vf2 normal, vf2 dimensions)
-					{
-						__m128 m_start_x          = _mm_add_ps(_mm_set_ps1(position.x + normal.y * dimensions.x / 2.0f), m_delta_checks_x);
-						__m128 m_end_x            = _mm_add_ps(_mm_set_ps1(position.x - normal.y * dimensions.x / 2.0f), m_delta_checks_x);
-						__m128 m_start_y          = _mm_add_ps(_mm_set_ps1(position.y - normal.x * dimensions.x / 2.0f), m_delta_checks_y);
-						__m128 m_end_y            = _mm_add_ps(_mm_set_ps1(position.y + normal.x * dimensions.x / 2.0f), m_delta_checks_y);
-						__m128 m_start_to_end_x   = _mm_sub_ps(m_end_x, m_start_x);
-						__m128 m_start_to_end_y   = _mm_sub_ps(m_end_y, m_start_y);
-						__m128 m_start_to_lucia_x = _mm_sub_ps(m_lucia_x, m_start_x);
-						__m128 m_start_to_lucia_y = _mm_sub_ps(m_lucia_y, m_start_y);
-						__m128 m_det              = _mm_sub_ps(_mm_mul_ps(m_ray_x, m_start_to_end_y), _mm_mul_ps(m_ray_y, m_start_to_end_x));
-						__m128 m_scalar           = _mm_div_ps(_mm_sub_ps(_mm_mul_ps(m_start_to_lucia_y, m_start_to_end_x), _mm_mul_ps(m_start_to_lucia_x, m_start_to_end_y)), m_det);
-						__m128 m_portion          = _mm_div_ps(_mm_sub_ps(_mm_mul_ps(m_start_to_lucia_y, m_ray_x         ), _mm_mul_ps(m_start_to_lucia_x, m_ray_y         )), m_det);
-						i32    mask               = _mm_movemask_ps(_mm_and_ps(_mm_and_ps(_mm_cmpge_ps(m_scalar, m_zero), _mm_cmplt_ps(m_scalar, m_max_scalar)), _mm_and_ps(_mm_cmpge_ps(m_portion, m_zero), _mm_cmplt_ps(m_portion, m_one))));
-
-						if (mask)
-						{
-							f32 scalars[4];
-							f32 portions[4];
-							_mm_storeu_ps(scalars, m_scalar);
-							_mm_storeu_ps(portions, m_portion);
-
-							FOR_RANGE(i, 4)
-							{
-								if (mask & (1 << i))
-								{
-									RenderScanNode** post_node = &render_scan_node;
-									while (*post_node && (*post_node)->distance < scalars[i])
-									{
-										post_node = &(*post_node)->next_node;
-									}
-
-									RenderScanNode* new_node = memory_arena_allocate<RenderScanNode>(&state->transient_arena);
-									new_node->material   = material;
-									new_node->in_light   = state->game.monster_timeout == 0.0f && exists_clear_way(state, state->game.lucia_position.xy + ray_horizontal * scalars[i] * SHADER_INV_EPSILON, state->game.monster_position.xy);
-									new_node->image      = image;
-									new_node->normal     = normal;
-									new_node->distance   = scalars[i];
-									new_node->portion    = portions[i];
-									new_node->next_node  = *post_node;
-									new_node->starting_y = static_cast<i32>(VIEW_RES.y / 2.0f + HORT_TO_VERT_K / state->game.lucia_fov * (position.z - 0.5f * dimensions.y - state->game.lucia_position.z) / (scalars[i] + 0.1f));
-									new_node->ending_y   = static_cast<i32>(VIEW_RES.y / 2.0f + HORT_TO_VERT_K / state->game.lucia_fov * (position.z + 0.5f * dimensions.y - state->game.lucia_position.z) / (scalars[i] + 0.1f));
-									*post_node = new_node;
-									break;
-								}
-							}
-						}
-					};
-
-				memory_arena_checkpoint(&state->transient_arena);
-
-#if DEBUG_DISABLE_SPRITES
-#else
-				if (state->game.monster_timeout == 0.0f)
-				{
-					scan(Material::monster, get_image_of_frame(&state->game.animated_sprite.monster), state->game.monster_position, state->game.monster_normal, { 1.0f, 1.0f });
-
-					constexpr i32 FIRE_COUNT = 3;
-					FOR_RANGE(i, FIRE_COUNT)
-					{
-						vf3 fire_position = state->game.monster_position + vx3(polar(state->time + static_cast<f32>(i) / FIRE_COUNT * TAU), 0.0f);
-						if (exists_clear_way(state, state->game.monster_position.xy, fire_position.xy))
-						{
-							scan(Material::fire, get_image_of_frame(&state->game.animated_sprite.fire), fire_position, normalize(ray_to_closest(state->game.monster_position.xy, state->game.lucia_position.xy)), { 1.0f, 1.0f });
-						}
-					}
-				}
-
-				if (state->game.hand_on_state != HandOnState::null)
-				{
-					scan(Material::hand, state->game.texture_sprite.hand.image, state->game.hand_position, normalize(ray_to_closest(state->game.hand_position.xy, state->game.lucia_position.xy)), { 0.1f, 0.1f });
-				}
-
-				FOR_ELEMS(it, state->game.item_buffer, state->game.item_count)
-				{
-					scan(Material::item, state->game.texture_sprite.default_items[+it->type - +ItemType::ITEM_START].image, it->position, it->normal, { 0.5f, 0.5f });
-				}
-#endif
-
-				DEBUG_PROFILER_end(RENDERING, RAY_CASTING);
-				DEBUG_PROFILER_start(RENDERING, COLORING);
-
-				FOR_RANGE(y, VIEW_RES.y)
-				{
-					vf3 ray        = normalize({ ray_horizontal.x, ray_horizontal.y, (y - VIEW_RES.y / 2.0f) * state->game.lucia_fov / HORT_TO_VERT_K });
-					vf4 scan_pixel = { NAN, NAN, NAN, NAN };
-
-					for (RenderScanNode* node = render_scan_node; node; node = node->next_node)
-					{
-						if (IN_RANGE(y, node->starting_y, node->ending_y) && IN_RANGE(state->game.lucia_position.z + ray.z * node->distance, 0.0f, state->game.percieved_wall_height))
-						{
-							scan_pixel = sample_at(&node->image, { node->portion, (static_cast<f32>(y) - node->starting_y) / (node->ending_y - node->starting_y) });
-							if (scan_pixel.w)
-							{
-#if DEBUG_DISABLE_SAMPLING
-								*current_view_pixel = pack_color(monochrome(clamp(2.0f / (node->distance + 0.1f) * square(dot(node->normal, ray.xy)), 0.0f, 1.0f)));
-#else
-								*current_view_pixel = pack_color(shader(state, scan_pixel.xyz, node->material, node->in_light, ray, vx3(node->normal, 0.0f), node->distance));
-#endif
-								goto NEXT_Y;
-							}
-						}
-					}
-
-					if (IN_RANGE(y, wall_starting_y, wall_ending_y))
-					{
-						f32 y_portion          = static_cast<f32>(y - wall_starting_y) / (wall_ending_y - wall_starting_y);
-						f32 distance           = sqrtf(square(wall_distance) + square(y_portion * state->game.percieved_wall_height - state->game.lucia_position.z));
-
-#if DEBUG_DISABLE_SAMPLING
-						*current_view_pixel = pack_color(monochrome(clamp(4.0f / (distance + 0.1f) + square(dot(ray_casted_wall_side.normal, ray.xy)), 0.0f, 1.0f)));
-#else
-						vf4 wall_overlay_color = { NAN, NAN, NAN, 0.0f };
-						if (wall_overlay && IN_RANGE(y_portion, wall_overlay_uv_position.y, wall_overlay_uv_position.y + wall_overlay_uv_dimensions.y))
-						{
-							wall_overlay_color = sample_at(wall_overlay, { (wall_portion - wall_overlay_uv_position.x) / wall_overlay_uv_dimensions.x, (y_portion - wall_overlay_uv_position.y) / wall_overlay_uv_dimensions.y });
-						}
-
-						vf3 wall_color = { NAN, NAN, NAN };
-						if (wall_overlay_color.w < 1.0f)
-						{
-							vf2 wall_uv = { wall_portion * (1.0f + state->game.interpolated_pills_effect_activations[1]) + state->game.interpolated_pills_effect_activations[0] / 2.0f, y_portion * (1.0f + state->game.interpolated_pills_effect_activations[2]) + sinf(state->game.interpolated_pills_effect_activations[0]) };
-							wall_uv = rotate(wall_uv, square(state->game.interpolated_pills_effect_activations[0] * 8.0f) / 4.0f);
-							wall_color =
-								sample_at
-								(
-									&state->game.mipmap.wall,
-									(distance / 4.0f + state->game.mipmap.wall.level_count * square(1.0f - fabsf(dot(ray, vx3(ray_casted_wall_side.normal, 0.0f))))) * (1.0f - state->game.interpolated_eye_drops_activation),
-									{ mod(wall_uv.x, 1.0f), mod(wall_uv.y, 1.0f) }
-								);
-						}
-
-						*current_view_pixel =
-							pack_color
-							(
-								shader
-								(
-									state,
-									wall_overlay_color.w == 0.0f
-										? wall_color
-										: wall_overlay_color.w == 1.0f
-											? wall_overlay_color.xyz
-											: lerp(wall_color, wall_overlay_color.xyz, wall_overlay_color.w),
-									Material::wall,
-									wall_in_light,
-									ray,
-									vx3(ray_casted_wall_side.normal, 0.0f),
-									distance
-								)
-							);
-#endif
-					}
-					else if (fabs(ray.z) > 0.0001f)
-					{
-#if DEBUG_DISABLE_FLOOR_CEILING
-						*current_view_pixel = 0;
-#else
-						vf2      uv;
-						f32      distance;
-						vf3      normal;
-						Mipmap*  mipmap;
-						Material material;
-
-						if (y < VIEW_RES.y / 2)
-						{
-							f32 zk   = -state->game.lucia_position.z / ray.z;
-							uv       = state->game.lucia_position.xy + zk * ray.xy;
-							distance = sqrtf(norm_sq(uv - state->game.lucia_position.xy) + square(state->game.lucia_position.z));
-							normal   = { 0.0f, 0.0f, 1.0f };
-							mipmap   = &state->game.mipmap.floor;
-							material = Material::floor;
-
-							f32 floor_dim = MAP_DIM * WALL_SPACING / roundf(MAP_DIM * WALL_SPACING / 4.0f);
-							uv.x = mod(uv.x / floor_dim + cosf(state->time / 5.0f) * state->game.interpolated_pills_effect_activations[2] * 8.0f / (distance + 4.0f), 1.0f);
-							uv.y = mod(uv.y / floor_dim + sinf(state->time / 5.0f) * state->game.interpolated_pills_effect_activations[3] * 8.0f / (distance + 4.0f), 1.0f);
-						}
-						else
-						{
-							f32 zk   = (state->game.percieved_wall_height - state->game.lucia_position.z) / ray.z;
-							uv       = state->game.lucia_position.xy + zk * ray.xy;
-							distance = sqrtf(norm_sq(uv - state->game.lucia_position.xy) + square(state->game.percieved_wall_height - state->game.lucia_position.z));
-							normal   = { 0.0f, 0.0f, -1.0f };
-							mipmap   = &state->game.mipmap.ceiling;
-							material = Material::ceiling;
-
-							f32 ceiling_dim = MAP_DIM * WALL_SPACING / roundf(MAP_DIM * WALL_SPACING / 4.0f) + state->game.interpolated_pills_effect_activations[3];
-							uv.x = mod(uv.x / ceiling_dim + cosf(state->time / 8.0f) * state->game.interpolated_pills_effect_activations[3] * 16.0f / (distance + 3.0f), 1.0f);
-							uv.y = mod(uv.y / ceiling_dim + sinf(state->time / 8.0f) * state->game.interpolated_pills_effect_activations[2] * 16.0f / (distance + 3.0f), 1.0f);
-						}
-
-#if DEBUG_DISABLE_SAMPLING
-						*current_view_pixel = pack_color(monochrome(clamp(2.0f / (distance + 0.1f) + square(ray.z), 0.0f, 1.0f)));
-#else
-						vf3 floor_ceiling_color =
-							sample_at
-							(
-								mipmap,
-								(distance / 16.0f + mipmap->level_count * square(1.0f - fabsf(dot(ray, normal)))) * (1.0f - state->game.interpolated_eye_drops_activation),
-								uv
-							);
-
-						*current_view_pixel =
-							pack_color
-							(
-								shader
-								(
-									state,
-									floor_ceiling_color,
-									material,
-									state->game.monster_timeout == 0.0f && exists_clear_way(state, state->game.lucia_position.xy + ray.xy * distance * SHADER_INV_EPSILON, state->game.monster_position.xy),
-									ray,
-									normal,
-									distance
-								)
-							);
-#endif
-#endif
-					}
-
-					NEXT_Y:;
-					current_view_pixel += 1;
-				}
-
-				DEBUG_PROFILER_end(RENDERING, COLORING);
+				SDL_SemPost(state->game.render_thread_clock_in);
 			}
+
+			render_every_nth_vertical_scan_lines(state->game.render_thread_view_pixels, state, state->transient_arena, ARRAY_CAPACITY(state->game.render_thread_datas), ARRAY_CAPACITY(state->game.render_thread_datas) + 1);
+
+			FOR_RANGE(ARRAY_CAPACITY(state->game.render_thread_datas))
+			{
+				SDL_SemWait(state->game.render_thread_clock_out);
+			}
+
+			DEBUG_PROFILER_end(RENDERING, VIEW);
 
 			u32* view_texture_pixels;
 			i32  view_pitch_;
 			SDL_LockTexture(state->game.texture.view, 0, reinterpret_cast<void**>(&view_texture_pixels), &view_pitch_);
 
-			DEBUG_PROFILER_start(RENDERING, POST_PROCESSING);
+			//DEBUG_PROFILER_start(RENDERING, POST_PROCESSING);
 
 			__m128 m_blur =
 				state->game.interpolated_blur > 0.001f
@@ -4672,7 +4744,7 @@ extern "C" PROTOTYPE_RENDER(render)
 					FOR_RANGE(xi, x, fminf(x + 4.0f, static_cast<f32>(VIEW_RES.x)))
 					{
 						old_view_colors[xi - x] = view_texture_pixels[y * VIEW_RES.x + xi];
-						new_view_colors[xi - x] = new_view_pixels[xi * VIEW_RES.y + (VIEW_RES.y - 1 - y)];
+						new_view_colors[xi - x] = state->game.render_thread_view_pixels[xi * VIEW_RES.y + (VIEW_RES.y - 1 - y)];
 					}
 
 					__m128i mi_rgba = _mm_loadu_si128(reinterpret_cast<__m128i*>(old_view_colors));
@@ -4730,9 +4802,9 @@ extern "C" PROTOTYPE_RENDER(render)
 				}
 			}
 
-			DEBUG_PROFILER_end(RENDERING, POST_PROCESSING);
+			//DEBUG_PROFILER_end(RENDERING, POST_PROCESSING);
 
-			DEBUG_PROFILER_flush_group(RENDERING, 32);
+			DEBUG_PROFILER_flush_group(RENDERING, 32, 1.0f / 60.0f);
 
 			SDL_UnlockTexture(state->game.texture.view);
 			render_texture(platform->renderer, state->game.texture.view, { 0.0f, 0.0f }, { static_cast<f32>(VIEW_RES.x) / SCREEN_RES.x * DISPLAY_RES.x, static_cast<f32>(VIEW_RES.y) / SCREEN_RES.y * DISPLAY_RES.y });
