@@ -14,4 +14,5 @@ Will she find her way out? What will happen? Frankly, I don't know either.
 
 ---
 
-Meow
+The game was made in two months for STEM Project of Excellence. Written in C++ with SDL2, some extensions of it, and stb_image.
+Art done by Mila Matthews. Ren Stolebarger for emotional support. Majority of inspiration and assets from SCP:CB.
