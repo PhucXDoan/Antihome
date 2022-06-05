@@ -377,7 +377,7 @@ enum struct Orientation : u8
 
 bool32 is_point_on_line_segment(vf2 p, vf2 q, vf2 r)
 {
-	return q.x <= fmaxf(p.x, r.x) && q.x >= fminf(p.x, r.x) && q.y <= fmaxf(p.y, r.y) && q.y >= fminf(p.y, r.y);
+	return q.x <= max(p.x, r.x) && q.x >= min(p.x, r.x) && q.y <= max(p.y, r.y) && q.y >= min(p.y, r.y);
 }
 
 internal Orientation orientation_of(vf2 p, vf2 q, vf2 r)
@@ -540,12 +540,12 @@ internal CollisionData collide_circle(vf2 position, vf2 ray, vf2 center, f32 rad
 		}
 		else if (sign(k0) == sign(k1))
 		{
-			if (fminf(k0, k1) <= 1.0f)
+			if (min(k0, k1) <= 1.0f)
 			{
 				CollisionData data;
 				data.exists       = true;
 				data.inside       = false;
-				data.displacement = fminf(k0, k1) * ray;
+				data.displacement = min(k0, k1) * ray;
 				data.normal       = normalize(position + data.displacement - center);
 				return data;
 			}
@@ -752,7 +752,7 @@ internal void render_text(SDL_Renderer* renderer, FC_Font* font, vf2 coordinates
 template <typename... ARGUMENTS>
 internal void render_text(SDL_Renderer* renderer, FC_Font* font, vf2 coordinates, f32 baseline_offset, FC_AlignEnum alignment, f32 scalar, vf3 color, strlit fstr, ARGUMENTS... arguments)
 {
-	render_text(renderer, font, coordinates, baseline_offset, alignment, scalar, vx4(color, 1.0f), fstr, arguments...);
+	render_text(renderer, font, coordinates, baseline_offset, alignment, scalar, vxx(color, 1.0f), fstr, arguments...);
 }
 
 template <typename... ARGUMENTS>
