@@ -3,6 +3,7 @@
 #include <SDL_ttf.h>
 #include <SDL_FontCache.h>
 #include <SDL_Mixer.h>
+
 #include <SDL_image.h>
 
 enum_loose (Input, u32)

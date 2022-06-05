@@ -241,10 +241,10 @@ flag_struct (WallVoxel, u8)
 
 global constexpr struct WallVoxelData { WallVoxel voxel; vf2 start; vf2 end; vf2 normal; } WALL_VOXEL_DATA[] =
 	{
-		{ WallVoxel::left         , { 0.0f, 0.0f }, { 0.0f, 1.0f }, {     1.0f,      0.0f } },
-		{ WallVoxel::bottom       , { 0.0f, 0.0f }, { 1.0f, 0.0f }, {     0.0f,     -1.0f } },
-		{ WallVoxel::back_slash   , { 1.0f, 0.0f }, { 0.0f, 1.0f }, { INVSQRT2,  INVSQRT2 } },
-		{ WallVoxel::forward_slash, { 0.0f, 0.0f }, { 1.0f, 1.0f }, { INVSQRT2, -INVSQRT2 } }
+		{ WallVoxel::left         , { 0.0f, 0.0f }, { 0.0f, 1.0f }, {         1.0f,          0.0f } },
+		{ WallVoxel::bottom       , { 0.0f, 0.0f }, { 1.0f, 0.0f }, {         0.0f,         -1.0f } },
+		{ WallVoxel::back_slash   , { 1.0f, 0.0f }, { 0.0f, 1.0f }, { 1.0f / SQRT2,  1.0f / SQRT2 } },
+		{ WallVoxel::forward_slash, { 0.0f, 0.0f }, { 1.0f, 1.0f }, { 1.0f / SQRT2, -1.0f / SQRT2 } }
 	};
 
 struct WallSide
@@ -386,8 +386,8 @@ global constexpr struct
 			{ 200.0f, 100.0f },
 			+WindowButtonFamily::POWER_COUNT,
 			{
-				{ "No" , monochrome(0.6f), { 0.75f, 0.25f }, { 50.0f, 25.0f } },
-				{ "Yes", monochrome(0.6f), { 0.25f, 0.25f }, { 50.0f, 25.0f } }
+				{ "No" , vx3(0.6f), { 0.75f, 0.25f }, { 50.0f, 25.0f } },
+				{ "Yes", vx3(0.6f), { 0.25f, 0.25f }, { 50.0f, 25.0f } }
 			},
 			+WindowSliderFamily::POWER_COUNT,
 			{}
@@ -1771,7 +1771,7 @@ internal void render_vertical_scan_line(u32* vertical_scan_line, State* state, M
 			__m128 m_det              = _mm_sub_ps(_mm_mul_ps(m_ray_x, m_start_to_end_y), _mm_mul_ps(m_ray_y, m_start_to_end_x));
 			__m128 m_scalar           = _mm_div_ps(_mm_sub_ps(_mm_mul_ps(m_start_to_lucia_y, m_start_to_end_x), _mm_mul_ps(m_start_to_lucia_x, m_start_to_end_y)), m_det);
 			__m128 m_portion          = _mm_div_ps(_mm_sub_ps(_mm_mul_ps(m_start_to_lucia_y, m_ray_x         ), _mm_mul_ps(m_start_to_lucia_x, m_ray_y         )), m_det);
-			i32    mask               = _mm_movemask_ps(_mm_and_ps(_mm_and_ps(_mm_cmpge_ps(m_scalar, m_zero), _mm_cmplt_ps(m_scalar, m_max_scalar)), _mm_and_ps(_mm_cmpge_ps(m_portion, m_zero), _mm_cmplt_ps(m_portion, m_one))));
+			i32    mask               = _mm_movemask_ps(_mm_and_ps(_mm_and_ps(_mm_cmpge_ps(m_scalar, m_0), _mm_cmplt_ps(m_scalar, m_max_scalar)), _mm_and_ps(_mm_cmpge_ps(m_portion, m_0), _mm_cmplt_ps(m_portion, m_1))));
 
 			if (mask)
 			{
@@ -1837,7 +1837,7 @@ internal void render_vertical_scan_line(u32* vertical_scan_line, State* state, M
 
 	FOR_RANGE(y, VIEW_RES.y)
 	{
-		vf3 ray        = normalize({ ray_horizontal.x, ray_horizontal.y, (y - VIEW_RES.y / 2.0f) * state->game.lucia_fov / HORT_TO_VERT_K });
+		vf3 ray        = normalize(vf3 { ray_horizontal.x, ray_horizontal.y, (y - VIEW_RES.y / 2.0f) * state->game.lucia_fov / HORT_TO_VERT_K });
 		vf4 scan_pixel = { NAN, NAN, NAN, NAN };
 
 		for (RenderScanNode* node = render_scan_node; node; node = node->next_node)
@@ -1848,7 +1848,7 @@ internal void render_vertical_scan_line(u32* vertical_scan_line, State* state, M
 				if (scan_pixel.w)
 				{
 #if DEBUG_DISABLE_SAMPLING
-					*current_pixel = pack_color(monochrome(clamp(2.0f / (node->distance + 0.1f) * square(dot(node->normal, ray.xy)), 0.0f, 1.0f)));
+					*current_pixel = pack_color(vx3(clamp(2.0f / (node->distance + 0.1f) * square(dot(node->normal, ray.xy)), 0.0f, 1.0f)));
 #else
 					*current_pixel = pack_color(shader(state, scan_pixel.xyz, node->material, node->in_light, ray, vxx(node->normal, 0.0f), node->distance));
 #endif
@@ -1863,7 +1863,7 @@ internal void render_vertical_scan_line(u32* vertical_scan_line, State* state, M
 			f32 distance  = sqrtf(square(wall_distance) + square(y_portion * state->game.percieved_wall_height - state->game.lucia_position.z));
 
 #if DEBUG_DISABLE_SAMPLING
-			*current_pixel = pack_color(monochrome(clamp(4.0f / (distance + 0.1f) + square(dot(ray_casted_wall_side.normal, ray.xy)), 0.0f, 1.0f)));
+			*current_pixel = pack_color(vx3(clamp(4.0f / (distance + 0.1f) + square(dot(ray_casted_wall_side.normal, ray.xy)), 0.0f, 1.0f)));
 #else
 			vf4 wall_overlay_color = { NAN, NAN, NAN, 0.0f };
 			if (wall_overlay && IN_RANGE(y_portion, wall_overlay_uv_position.y, wall_overlay_uv_position.y + wall_overlay_uv_dimensions.y))
@@ -1944,7 +1944,7 @@ internal void render_vertical_scan_line(u32* vertical_scan_line, State* state, M
 			}
 
 #if DEBUG_DISABLE_SAMPLING
-			*current_pixel = pack_color(monochrome(clamp(2.0f / (distance + 0.1f) + square(ray.z), 0.0f, 1.0f)));
+			*current_pixel = pack_color(vx3(clamp(2.0f / (distance + 0.1f) + square(ray.z), 0.0f, 1.0f)));
 #else
 			vf3 floor_ceiling_color =
 				sample_at
@@ -2633,11 +2633,11 @@ extern "C" PROTOTYPE_UPDATE(update)
 					{
 						tm.window_type = WindowType::null;
 					}
-					else if (in_rect(tm.cursor, { tm.window_position.x, max(tm.window_position.y, COMPUTER_TASKBAR_HEIGHT) }, { window_data.dimensions.x, window_data.dimensions.y + tm.window_position.y - max(tm.window_position.y, COMPUTER_TASKBAR_HEIGHT) }))
+					else if (in_rect(tm.cursor, { tm.window_position.x, max<f32>(tm.window_position.y, COMPUTER_TASKBAR_HEIGHT) }, { window_data.dimensions.x, window_data.dimensions.y + tm.window_position.y - max<f32>(tm.window_position.y, COMPUTER_TASKBAR_HEIGHT) }))
 					{
 						FOR_ELEMS(button, window_data.button_buffer, window_data.button_count)
 						{
-							if (in_rect_centered(tm.cursor, tm.window_position + hadamard_multiply(button->rel_centered_uv_position, window_data.dimensions), button->dimensions))
+							if (in_rect_centered(tm.cursor, tm.window_position + button->rel_centered_uv_position * window_data.dimensions, button->dimensions))
 							{
 								switch (tm.window_type)
 								{
@@ -2683,7 +2683,7 @@ extern "C" PROTOTYPE_UPDATE(update)
 						{
 							ASSERT(tm.window_type == WindowType::settings);
 
-							if (norm(tm.cursor - tm.window_position - hadamard_multiply(it->start_uv_position + vf2 { it->u_length * (state->settings_slider_values[it_index] - it->min_value) / (it->max_value - it->min_value), 0.0f }, window_data.dimensions)) < COMPUTER_SLIDER_KNOB_RADIUS)
+							if (norm(tm.cursor - tm.window_position - (it->start_uv_position + vf2 { it->u_length * (state->settings_slider_values[it_index] - it->min_value) / (it->max_value - it->min_value), 0.0f }) * window_data.dimensions) < COMPUTER_SLIDER_KNOB_RADIUS)
 							{
 								tm.cursor_dragging_slider = static_cast<WindowSliderFamily>(+WindowSliderFamily::SETTINGS_START + it_index);
 							}
@@ -2889,14 +2889,14 @@ extern "C" PROTOTYPE_UPDATE(update)
 			DEBUG_once
 			{
 				REFILL:;
-				//state->game.hud.inventory.array[0][0].type = ItemType::cheap_batteries;
-				//state->game.hud.inventory.array[0][1].type = ItemType::military_grade_batteries;
-				//state->game.hud.inventory.array[0][2].type = ItemType::military_grade_batteries;
-				//state->game.hud.inventory.array[0][3].type = ItemType::eye_drops;
-				//state->game.hud.inventory.array[1][0].type = ItemType::flashlight;
-				//state->game.hud.inventory.array[1][1].type = ItemType::flashlight;
-				//state->game.hud.inventory.array[1][2].type = ItemType::night_vision_goggles;
-				//state->game.hud.inventory.array[1][3].type = ItemType::pills;
+				state->game.hud.inventory.array[0][0].type = ItemType::cheap_batteries;
+				state->game.hud.inventory.array[0][1].type = ItemType::military_grade_batteries;
+				state->game.hud.inventory.array[0][2].type = ItemType::military_grade_batteries;
+				state->game.hud.inventory.array[0][3].type = ItemType::eye_drops;
+				state->game.hud.inventory.array[1][0].type = ItemType::flashlight;
+				state->game.hud.inventory.array[1][1].type = ItemType::flashlight;
+				state->game.hud.inventory.array[1][2].type = ItemType::night_vision_goggles;
+				state->game.hud.inventory.array[1][3].type = ItemType::pills;
 			}
 
 			persist bool32 DEBUG_monster = false;
@@ -4445,7 +4445,7 @@ extern "C" PROTOTYPE_RENDER(render)
 			{
 				aliasing window_data = WINDOW_DATA[+tm.window_type - +WindowType::TYPE_START];
 
-				set_color(platform->renderer, monochrome(0.5f));
+				set_color(platform->renderer, vx3(0.5f));
 				render_filled_rect(platform->renderer, vf2 { tm.window_position.x, DISPLAY_RES.y - COMPUTER_TITLE_BAR_HEIGHT - tm.window_position.y - window_data.dimensions.y }, { window_data.dimensions.x, COMPUTER_TITLE_BAR_HEIGHT });
 
 				render_texture
@@ -4491,7 +4491,7 @@ extern "C" PROTOTYPE_RENDER(render)
 
 						case WindowType::room_protocol:
 						{
-							set_color(platform->renderer, monochrome(0.4f));
+							set_color(platform->renderer, vx3(0.4f));
 							render_filled_rect(platform->renderer, { tm.window_position.x, DISPLAY_RES.y - window_data.dimensions.y - tm.window_position.y }, window_data.dimensions);
 
 							render_text
@@ -4527,7 +4527,7 @@ extern "C" PROTOTYPE_RENDER(render)
 
 						case WindowType::power:
 						{
-							set_color(platform->renderer, monochrome(0.8f));
+							set_color(platform->renderer, vx3(0.8f));
 							render_filled_rect(platform->renderer, { tm.window_position.x, DISPLAY_RES.y - window_data.dimensions.y - tm.window_position.y }, window_data.dimensions);
 
 							render_text
@@ -4557,7 +4557,7 @@ extern "C" PROTOTYPE_RENDER(render)
 							0.5f,
 							FC_ALIGN_CENTER,
 							0.6f,
-							monochrome(1.0f),
+							vx3(1.0f),
 							"%s",
 							it->text
 						);
@@ -4567,7 +4567,7 @@ extern "C" PROTOTYPE_RENDER(render)
 					{
 						ASSERT(tm.window_type == WindowType::settings);
 
-						set_color(platform->renderer, monochrome(0.8f));
+						set_color(platform->renderer, vx3(0.8f));
 						render_line
 						(
 							platform->renderer,
@@ -4581,7 +4581,7 @@ extern "C" PROTOTYPE_RENDER(render)
 							}
 						);
 
-						set_color(platform->renderer, monochrome(1.0f));
+						set_color(platform->renderer, vx3(1.0f));
 						render_filled_circle
 						(
 							platform->renderer,
@@ -4605,7 +4605,7 @@ extern "C" PROTOTYPE_RENDER(render)
 				}
 			}
 
-			set_color(platform->renderer, monochrome(0.3f));
+			set_color(platform->renderer, vx3(0.3f));
 			render_filled_rect(platform->renderer, { 0.0f, static_cast<f32>(DISPLAY_RES.y - COMPUTER_TASKBAR_HEIGHT) }, { static_cast<f32>(DISPLAY_RES.x), static_cast<f32>(COMPUTER_TASKBAR_HEIGHT) });
 
 			render_texture
@@ -4628,7 +4628,7 @@ extern "C" PROTOTYPE_RENDER(render)
 		case StateContext::game:
 		{
 #if DEBUG_SHOWCASE_MAP
-			set_color(platform->renderer, monochrome(1.0f));
+			set_color(platform->renderer, vx3(1.0f));
 			SDL_RenderClear(platform->renderer);
 
 			lambda position_to_screen =
@@ -4638,7 +4638,7 @@ extern "C" PROTOTYPE_RENDER(render)
 					return vf2 { DISPLAY_RES.x / 2.0f + (position.x - MAP_DIM * WALL_SPACING / 2.0f) * PIXELS_PER_METER, DISPLAY_RES.y / 2.0f - (position.y - MAP_DIM * WALL_SPACING / 2.0f) * PIXELS_PER_METER };
 				};
 
-			set_color(platform->renderer, monochrome(0.8f));
+			set_color(platform->renderer, vx3(0.8f));
 			FOR_RANGE(y, MAP_DIM)
 			{
 				FOR_RANGE(x, MAP_DIM)
@@ -4647,7 +4647,7 @@ extern "C" PROTOTYPE_RENDER(render)
 				}
 			}
 
-			set_color(platform->renderer, monochrome(0.0f));
+			set_color(platform->renderer, vx3(0.0f));
 			FOR_RANGE(y, MAP_DIM)
 			{
 				FOR_RANGE(x, MAP_DIM)
@@ -4682,7 +4682,7 @@ extern "C" PROTOTYPE_RENDER(render)
 			set_color(platform->renderer, vf3 { 1.0f, 0.0f, 0.0f });
 			render_filled_circle(platform->renderer, position_to_screen(state->game.monster_position.xy), 4.0f);
 #else
-			set_color(platform->renderer, monochrome(0.0f));
+			set_color(platform->renderer, vx3(0.0f));
 			SDL_RenderClear(platform->renderer);
 
 			DEBUG_PROFILER_create_group(RENDERING, VIEW, POST_PROCESSING);
@@ -4712,17 +4712,18 @@ extern "C" PROTOTYPE_RENDER(render)
 			__m128 m_blur =
 				state->game.interpolated_blur > 0.001f
 					? _mm_set_ps1(1.0f - expf(-platform->seconds_per_update / state->game.interpolated_blur))
-					: m_one;
+					: m_1;
 
 			__m128 m_max_x = _mm_set_ps1(static_cast<f32>(VIEW_RES.x));
 
-			__m128 m_night_vision_goggles_activation        = _mm_set_ps1(state->game.night_vision_goggles_activation);
-			__m128 m_night_vision_goggles_scan_line_keytime = _mm_set_ps1(state->game.night_vision_goggles_scan_line_keytime);
-			__m128 m_night_vision_goggles_low_scan          = _mm_set_ps1(1.2f);
-			__m128 m_night_vision_goggles_r                 = _mm_set_ps1(0.0f);
-			__m128 m_night_vision_goggles_g                 = _mm_set_ps1(2.4f);
-			__m128 m_night_vision_goggles_b                 = _mm_set_ps1(0.0f);
-			__m128 m_flash                                  = _mm_set_ps1(1.0f + 128.0f * square(state->game.flash_stun_activation));
+			__m128i mi_byte_mask                             = _mm_set_epi32(0xFF, 0xFF, 0xFF, 0xFF);
+			__m128  m_night_vision_goggles_activation        = _mm_set_ps1(state->game.night_vision_goggles_activation);
+			__m128  m_night_vision_goggles_scan_line_keytime = _mm_set_ps1(state->game.night_vision_goggles_scan_line_keytime);
+			__m128  m_night_vision_goggles_low_scan          = _mm_set_ps1(1.2f);
+			__m128  m_night_vision_goggles_r                 = _mm_set_ps1(0.0f);
+			__m128  m_night_vision_goggles_g                 = _mm_set_ps1(2.4f);
+			__m128  m_night_vision_goggles_b                 = _mm_set_ps1(0.0f);
+			__m128  m_flash                                  = _mm_set_ps1(1.0f + 128.0f * square(state->game.flash_stun_activation));
 
 			f32 interpolated_pill_dosage_total = 0.0f;
 			FOR_ELEMS(it, state->game.interpolated_pills_effect_activations)
@@ -4730,13 +4731,13 @@ extern "C" PROTOTYPE_RENDER(render)
 				interpolated_pill_dosage_total += *it;
 			}
 
-			__m128 m_high = _mm_add_ps(m_one, _mm_set_ps1(square(min(interpolated_pill_dosage_total, 0.15f))));
+			__m128 m_high = _mm_add_ps(m_1, _mm_set_ps1(square(min(interpolated_pill_dosage_total, 0.15f))));
 
 			FOR_RANGE(y, VIEW_RES.y)
 			{
 				__m128 m_night_vision_goggles_scan_line = _mm_set_ps1(fabsf(0.5f - y % 3 / 3.0f));
 				__m128 m_x                              = _mm_set_ps(3.0f, 2.0f, 1.0f, 0.0f);
-				__m128 m_blink                          = clamp(_mm_set_ps1(square(1.0f - state->game.lucia_blink_activation) - fabsf(1.0f - 2.0f * static_cast<f32>(y) / VIEW_RES.y) * state->game.lucia_blink_activation), m_zero, m_one);
+				__m128 m_blink                          = clamp(_mm_set_ps1(square(1.0f - state->game.lucia_blink_activation) - fabsf(1.0f - 2.0f * static_cast<f32>(y) / VIEW_RES.y) * state->game.lucia_blink_activation), m_0, m_1);
 				for (i32 x = 0; x < VIEW_RES.x; x += 4)
 				{
 					u32 old_view_colors[4];
@@ -4748,31 +4749,31 @@ extern "C" PROTOTYPE_RENDER(render)
 					}
 
 					__m128i mi_rgba = _mm_loadu_si128(reinterpret_cast<__m128i*>(old_view_colors));
-					__m128 m_old_r = _mm_div_ps(_mm_cvtepi32_ps(_mm_and_epi32(_mm_bsrli_si128(mi_rgba, 3), mi_byte_mask)), m_max_rgb);
-					__m128 m_old_g = _mm_div_ps(_mm_cvtepi32_ps(_mm_and_epi32(_mm_bsrli_si128(mi_rgba, 2), mi_byte_mask)), m_max_rgb);
-					__m128 m_old_b = _mm_div_ps(_mm_cvtepi32_ps(_mm_and_epi32(_mm_bsrli_si128(mi_rgba, 1), mi_byte_mask)), m_max_rgb);
+					__m128 m_old_r = _mm_div_ps(_mm_cvtepi32_ps(_mm_and_epi32(_mm_bsrli_si128(mi_rgba, 3), mi_byte_mask)), m_255);
+					__m128 m_old_g = _mm_div_ps(_mm_cvtepi32_ps(_mm_and_epi32(_mm_bsrli_si128(mi_rgba, 2), mi_byte_mask)), m_255);
+					__m128 m_old_b = _mm_div_ps(_mm_cvtepi32_ps(_mm_and_epi32(_mm_bsrli_si128(mi_rgba, 1), mi_byte_mask)), m_255);
 
 					mi_rgba = _mm_loadu_si128(reinterpret_cast<__m128i*>(new_view_colors));
-					__m128 m_new_r = _mm_div_ps(_mm_cvtepi32_ps(_mm_and_epi32(_mm_bsrli_si128(mi_rgba, 3), mi_byte_mask)), m_max_rgb);
-					__m128 m_new_g = _mm_div_ps(_mm_cvtepi32_ps(_mm_and_epi32(_mm_bsrli_si128(mi_rgba, 2), mi_byte_mask)), m_max_rgb);
-					__m128 m_new_b = _mm_div_ps(_mm_cvtepi32_ps(_mm_and_epi32(_mm_bsrli_si128(mi_rgba, 1), mi_byte_mask)), m_max_rgb);
+					__m128 m_new_r = _mm_div_ps(_mm_cvtepi32_ps(_mm_and_epi32(_mm_bsrli_si128(mi_rgba, 3), mi_byte_mask)), m_255);
+					__m128 m_new_g = _mm_div_ps(_mm_cvtepi32_ps(_mm_and_epi32(_mm_bsrli_si128(mi_rgba, 2), mi_byte_mask)), m_255);
+					__m128 m_new_b = _mm_div_ps(_mm_cvtepi32_ps(_mm_and_epi32(_mm_bsrli_si128(mi_rgba, 1), mi_byte_mask)), m_255);
 
 					#if DEBUG_DISABLE_POSTPROCESSOR
 					__m128 m_r = m_new_r;
 					__m128 m_g = m_new_g;
 					__m128 m_b = m_new_b;
 					#else
-					__m128 m_r = _mm_add_ps(_mm_mul_ps(m_old_r, _mm_sub_ps(m_one, m_blur)), _mm_mul_ps(m_new_r, m_blur));
-					__m128 m_g = _mm_add_ps(_mm_mul_ps(m_old_g, _mm_sub_ps(m_one, m_blur)), _mm_mul_ps(m_new_g, m_blur));
-					__m128 m_b = _mm_add_ps(_mm_mul_ps(m_old_b, _mm_sub_ps(m_one, m_blur)), _mm_mul_ps(m_new_b, m_blur));
+					__m128 m_r = _mm_add_ps(_mm_mul_ps(m_old_r, _mm_sub_ps(m_1, m_blur)), _mm_mul_ps(m_new_r, m_blur));
+					__m128 m_g = _mm_add_ps(_mm_mul_ps(m_old_g, _mm_sub_ps(m_1, m_blur)), _mm_mul_ps(m_new_g, m_blur));
+					__m128 m_b = _mm_add_ps(_mm_mul_ps(m_old_b, _mm_sub_ps(m_1, m_blur)), _mm_mul_ps(m_new_b, m_blur));
 
-					__m128 m_night_vision_non_green_channel = _mm_sub_ps(m_one, m_night_vision_goggles_activation);
-					__m128 m_scan_line_delta                = _mm_mul_ps(_mm_sub_ps(_mm_div_ps(m_x, m_max_x), m_night_vision_goggles_scan_line_keytime), m_eight);
-					m_scan_line_delta = _mm_min_ps(_mm_max_ps(_mm_mul_ps(m_scan_line_delta, m_scan_line_delta), m_zero), m_one);
+					__m128 m_night_vision_non_green_channel = _mm_sub_ps(m_1, m_night_vision_goggles_activation);
+					__m128 m_scan_line_delta                = _mm_mul_ps(_mm_sub_ps(_mm_div_ps(m_x, m_max_x), m_night_vision_goggles_scan_line_keytime), m_8);
+					m_scan_line_delta = _mm_min_ps(_mm_max_ps(_mm_mul_ps(m_scan_line_delta, m_scan_line_delta), m_0), m_1);
 
-					__m128 m_avg_rgb = _mm_div_ps(_mm_add_ps(_mm_add_ps(m_r, m_g), m_b), m_three);
+					__m128 m_avg_rgb = _mm_div_ps(_mm_add_ps(_mm_add_ps(m_r, m_g), m_b), m_3);
 
-					__m128 m_t = _mm_add_ps(m_night_vision_goggles_low_scan, _mm_mul_ps(_mm_mul_ps(_mm_sub_ps(m_one, m_scan_line_delta), m_night_vision_goggles_scan_line), m_night_vision_goggles_activation));
+					__m128 m_t = _mm_add_ps(m_night_vision_goggles_low_scan, _mm_mul_ps(_mm_mul_ps(_mm_sub_ps(m_1, m_scan_line_delta), m_night_vision_goggles_scan_line), m_night_vision_goggles_activation));
 
 					m_r = _mm_mul_ps(lerp(m_r, _mm_mul_ps(m_avg_rgb, _mm_mul_ps(m_night_vision_goggles_r, m_t)), m_night_vision_goggles_activation), m_flash);
 					m_g = _mm_mul_ps(lerp(m_g, _mm_mul_ps(m_avg_rgb, _mm_mul_ps(m_night_vision_goggles_g, m_t)), m_night_vision_goggles_activation), m_flash);
@@ -4780,9 +4781,9 @@ extern "C" PROTOTYPE_RENDER(render)
 
 					m_r = _mm_mul_ps(m_r, m_high);
 
-					m_r = _mm_mul_ps(clamp(m_r, m_zero, m_one), m_blink);
-					m_g = _mm_mul_ps(clamp(m_g, m_zero, m_one), m_blink);
-					m_b = _mm_mul_ps(clamp(m_b, m_zero, m_one), m_blink);
+					m_r = _mm_mul_ps(clamp(m_r, m_0, m_1), m_blink);
+					m_g = _mm_mul_ps(clamp(m_g, m_0, m_1), m_blink);
+					m_b = _mm_mul_ps(clamp(m_b, m_0, m_1), m_blink);
 					#endif
 
 					mi_rgba =
@@ -4790,15 +4791,15 @@ extern "C" PROTOTYPE_RENDER(render)
 						(
 							_mm_or_epi32
 							(
-								_mm_bslli_si128(_mm_cvtps_epi32(_mm_mul_ps(m_r, m_max_rgb)), 3),
-								_mm_bslli_si128(_mm_cvtps_epi32(_mm_mul_ps(m_g, m_max_rgb)), 2)
+								_mm_bslli_si128(_mm_cvtps_epi32(_mm_mul_ps(m_r, m_255)), 3),
+								_mm_bslli_si128(_mm_cvtps_epi32(_mm_mul_ps(m_g, m_255)), 2)
 							),
-							_mm_bslli_si128(_mm_cvtps_epi32(_mm_mul_ps(m_b, m_max_rgb)), 1)
+							_mm_bslli_si128(_mm_cvtps_epi32(_mm_mul_ps(m_b, m_255)), 1)
 						);
 
 					_mm_maskmoveu_si128(mi_rgba, _mm_castps_si128(_mm_cmplt_ps(m_x, m_max_x)), reinterpret_cast<char*>(view_texture_pixels + y * VIEW_RES.x + x));
 
-					m_x = _mm_add_ps(m_x, m_four);
+					m_x = _mm_add_ps(m_x, m_4);
 				}
 			}
 
@@ -4842,14 +4843,14 @@ extern "C" PROTOTYPE_RENDER(render)
 									}
 								}
 
-								set_color(platform->renderer, monochrome(0.5f));
+								set_color(platform->renderer, vx3(0.5f));
 							}
 
 
 							BREAK:;
 							render_rect(platform->renderer, position, vxx(vx2(INVENTORY_DIM)));
 
-							set_color(platform->renderer, monochrome(0.3f));
+							set_color(platform->renderer, vx3(0.3f));
 							render_filled_rect(platform->renderer, position + vf2 { 1.0f, 1.0f }, vx2(INVENTORY_DIM) - vf2 { 2.0f, 2.0f });
 
 							TextureSprite* sprite = get_corresponding_texture_sprite_of_item(state, &state->game.hud.inventory.array[y][x]);
@@ -4926,7 +4927,7 @@ extern "C" PROTOTYPE_RENDER(render)
 						}
 						else
 						{
-							set_color(platform->renderer, monochrome(0.2f));
+							set_color(platform->renderer, vx3(0.2f));
 						}
 						render_line
 						(
@@ -4936,7 +4937,7 @@ extern "C" PROTOTYPE_RENDER(render)
 						);
 					}
 
-					set_color(platform->renderer, monochrome(0.9f));
+					set_color(platform->renderer, vx3(0.9f));
 					render_filled_rect
 					(
 						platform->renderer,
@@ -4952,7 +4953,7 @@ extern "C" PROTOTYPE_RENDER(render)
 				render_texture(platform->renderer, state->game.texture_sprite.hand.texture, vf2 { state->game.hud.cursor.x, VIEW_RES.y - state->game.hud.cursor.y } - vx2(cursor_dim) / 2.0f, vx2(cursor_dim));
 			}
 
-			set_color(platform->renderer, monochrome(0.1f));
+			set_color(platform->renderer, vx3(0.1f));
 			render_filled_rect(platform->renderer, { 0.0f, static_cast<f32>(SCREEN_RES.y - STATUS_HUD_HEIGHT) }, vxx(vi2 { SCREEN_RES.x, STATUS_HUD_HEIGHT }));
 
 			if (state->game.hud.status.battery_display_keytime > 0.0f)
@@ -4963,7 +4964,7 @@ extern "C" PROTOTYPE_RENDER(render)
 
 				f32 battery_x = lerp(-BATTERY_DIMENSIONS.x - BATTERY_OUTLINE, 15.0f, 1.0f - square(1.0f - state->game.hud.status.battery_display_keytime));
 
-				set_color(platform->renderer, monochrome(0.25f));
+				set_color(platform->renderer, vx3(0.25f));
 
 				render_filled_rect
 				(
@@ -4987,7 +4988,7 @@ extern "C" PROTOTYPE_RENDER(render)
 						platform->renderer,
 						lerp
 						(
-							monochrome((level->x + level->y + level->z) / (3.0f + level_index)),
+							vx3((level->x + level->y + level->z) / (3.0f + level_index)),
 							*level,
 							clamp((state->game.hud.status.battery_level_keytime - static_cast<f32>(level_index) / ARRAY_CAPACITY(BATTERY_LEVEL_COLORS)) * ARRAY_CAPACITY(BATTERY_LEVEL_COLORS), 0.0f, 1.0f)
 						)
@@ -5005,7 +5006,7 @@ extern "C" PROTOTYPE_RENDER(render)
 			constexpr vf2 HEART_RATE_MONITOR_DIMENSIONS  = { 65.0f, STATUS_HUD_HEIGHT * 0.6f };
 			constexpr vf2 HEART_RATE_MONITOR_COORDINATES = vf2 { SCREEN_RES.x - 15.0f - HEART_RATE_MONITOR_DIMENSIONS.x, SCREEN_RES.y - (STATUS_HUD_HEIGHT + HEART_RATE_MONITOR_DIMENSIONS.y) / 2.0f };
 
-			set_color(platform->renderer, monochrome(0.0f));
+			set_color(platform->renderer, vx3(0.0f));
 			render_rect(platform->renderer, HEART_RATE_MONITOR_COORDINATES + vf2 { -1.0f, -1.0f }, HEART_RATE_MONITOR_DIMENSIONS + vf2 { 2.0f, 2.0f });
 			set_color(platform->renderer, vf3 { lerp(0.15f, 0.7f, clamp(1.0f - state->game.heart_pulse_time_since, 0.0f, 1.0f) * square(1.0f - state->game.interpolated_lucia_health)), 0.15f, 0.15f });
 			render_filled_rect(platform->renderer, HEART_RATE_MONITOR_COORDINATES, HEART_RATE_MONITOR_DIMENSIONS);
@@ -5026,7 +5027,7 @@ extern "C" PROTOTYPE_RENDER(render)
 
 			constexpr f32 HEALTH_DISPLAY_WIDTH = 10.0f;
 
-			set_color(platform->renderer, monochrome(0.0f));
+			set_color(platform->renderer, vx3(0.0f));
 			render_filled_rect(platform->renderer, HEART_RATE_MONITOR_COORDINATES + vf2 { -HEALTH_DISPLAY_WIDTH, 0.0f } + vf2 { -1.0f, -1.0f }, vf2 { HEALTH_DISPLAY_WIDTH, HEART_RATE_MONITOR_DIMENSIONS.y } + vf2 { 2.0f, 2.0f });
 			set_color(platform->renderer, vf3 { lerp(0.1f, 1.0f, clamp(1.0f - square(state->game.heart_pulse_time_since), 0.0f, 1.0f)), 0.1f, 0.1f });
 			render_filled_rect(platform->renderer, HEART_RATE_MONITOR_COORDINATES + vf2 { -HEALTH_DISPLAY_WIDTH, 0.0f }, { HEALTH_DISPLAY_WIDTH, HEART_RATE_MONITOR_DIMENSIONS.y });
@@ -5036,13 +5037,13 @@ extern "C" PROTOTYPE_RENDER(render)
 			constexpr vf2 BLINK_DISPLAY_DIMENSIONS =  { HEALTH_DISPLAY_WIDTH, HEART_RATE_MONITOR_DIMENSIONS.y };
 			constexpr vf2 BLINK_DISPLAY_COORDINATES = { SCREEN_RES.x - (HEART_RATE_MONITOR_COORDINATES.x - HEALTH_DISPLAY_WIDTH) - BLINK_DISPLAY_DIMENSIONS.x, HEART_RATE_MONITOR_COORDINATES.y };
 
-			set_color(platform->renderer, monochrome(0.0f));
+			set_color(platform->renderer, vx3(0.0f));
 			render_filled_rect(platform->renderer, BLINK_DISPLAY_COORDINATES + vf2 { -1.0f, -1.0f }, BLINK_DISPLAY_DIMENSIONS + vf2 { 2.0f, 2.0f });
 
-			set_color(platform->renderer, monochrome(0.3f));
+			set_color(platform->renderer, vx3(0.3f));
 			render_filled_rect(platform->renderer, BLINK_DISPLAY_COORDINATES, BLINK_DISPLAY_DIMENSIONS);
 
-			set_color(platform->renderer, monochrome(0.7f));
+			set_color(platform->renderer, vx3(0.7f));
 			render_filled_rect(platform->renderer, { BLINK_DISPLAY_COORDINATES.x, BLINK_DISPLAY_COORDINATES.y + BLINK_DISPLAY_DIMENSIONS.y * (1.0f - state->game.lucia_blink_countdown_keytime) }, { BLINK_DISPLAY_DIMENSIONS.x, BLINK_DISPLAY_DIMENSIONS.y * state->game.lucia_blink_countdown_keytime });
 
 			render_texture(platform->renderer, state->game.texture.blink, BLINK_DISPLAY_COORDINATES + vf2 { -10.0f, BLINK_DISPLAY_DIMENSIONS.y / 2.0f } - vf2 { 15.0f, 15.0f } / 2.0f, { 15.0f, 15.0f });
@@ -5060,11 +5061,11 @@ extern "C" PROTOTYPE_RENDER(render)
 					(
 						platform->renderer,
 						state->font.minor,
-						{ VIEW_RES.x / SCREEN_RES.x * DISPLAY_RES.x * (0.5f - sign_angle(mod(argument(ray) - state->game.lucia_angle, TAU)) / state->game.lucia_fov), VIEW_RES.y * DISPLAY_RES.y * 0.5f / SCREEN_RES.y },
+						{ VIEW_RES.x / SCREEN_RES.x * DISPLAY_RES.x * (0.5f - atan2(rotate(ray, -state->game.lucia_angle)) / state->game.lucia_fov), VIEW_RES.y * DISPLAY_RES.y * 0.5f / SCREEN_RES.y },
 						0.5f,
 						FC_ALIGN_CENTER,
 						clamp(32.0f / (distance + 1.0f), 0.75f, 2.0f),
-						{ 0.0f, 0.8f, 0.0f, clamp(32.0f / (distance + 1.0f), 0.0f, state->game.night_vision_goggles_activation * square(1.0f - state->game.lucia_blink_activation)) / 4.0f },
+						{ 0.0f, 0.8f, 0.0f, clamp(32.0f / (distance + 1.0f), 0.0f, state->game.night_vision_goggles_activation * cube(1.0f - state->game.lucia_blink_activation)) },
 						"%s\n%.2fm",
 						name, distance
 					);

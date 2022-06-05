@@ -73,6 +73,8 @@ typedef double      f64;
 	#include <stdio.h>
 	#include <windows.h>
 	#undef interface
+	#undef min
+	#undef max
 
 	#define ASSERT(EXPRESSION) do { if (!(EXPRESSION)) { *((i32*)(0)) = 0; } } while (false)
 
@@ -254,6 +256,9 @@ using std::clamp;
 using std::min;
 using std::max;
 
+global constexpr f32 TAU   = 6.28318530717f;
+global constexpr f32 SQRT2 = 1.41421356237f;
+
 struct vf2
 {
 	union
@@ -305,6 +310,9 @@ internal constexpr vf4    operator- (vf4  u, vf4 v) { return { u.x - v.x, u.y - 
 internal constexpr vf2    operator/ (vf2  v, f32 k) { return { v.x / k, v.y / k                   }; }
 internal constexpr vf3    operator/ (vf3  v, f32 k) { return { v.x / k, v.y / k, v.z / k          }; }
 internal constexpr vf4    operator/ (vf4  v, f32 k) { return { v.x / k, v.y / k, v.z / k, v.w / k }; }
+internal constexpr vf2    operator* (vf2  u, vf2 v) { return { u.x * v.x, u.y * v.y                       }; }
+internal constexpr vf3    operator* (vf3  u, vf3 v) { return { u.x * v.x, u.y * v.y, u.z * v.z            }; }
+internal constexpr vf4    operator* (vf4  u, vf4 v) { return { u.x * v.x, u.y * v.y, u.z * v.z, u.w * v.w }; }
 internal constexpr vf2    operator* (vf2  v, f32 k) { return { v.x * k, v.y * k                   }; }
 internal constexpr vf3    operator* (vf3  v, f32 k) { return { v.x * k, v.y * k, v.z * k          }; }
 internal constexpr vf4    operator* (vf4  v, f32 k) { return { v.x * k, v.y * k, v.z * k, v.w * k }; }
@@ -317,6 +325,9 @@ internal constexpr vf4&   operator+=(vf4& u, vf4 v) { return u = u + v; }
 internal constexpr vf2&   operator-=(vf2& u, vf2 v) { return u = u - v; }
 internal constexpr vf3&   operator-=(vf3& u, vf3 v) { return u = u - v; }
 internal constexpr vf4&   operator-=(vf4& u, vf4 v) { return u = u - v; }
+internal constexpr vf2&   operator*=(vf2& u, vf2 v) { return u = u * v; }
+internal constexpr vf3&   operator*=(vf3& u, vf3 v) { return u = u * v; }
+internal constexpr vf4&   operator*=(vf4& u, vf4 v) { return u = u * v; }
 internal constexpr vf2&   operator*=(vf2& v, f32 k) { return v = v * k; }
 internal constexpr vf3&   operator*=(vf3& v, f32 k) { return v = v * k; }
 internal constexpr vf4&   operator*=(vf4& v, f32 k) { return v = v * k; }
@@ -375,6 +386,9 @@ internal constexpr vi4    operator- (vi4  u, vi4 v) { return { u.x - v.x, u.y - 
 internal constexpr vi2    operator/ (vi2  v, i32 k) { return { v.x / k, v.y / k                   }; }
 internal constexpr vi3    operator/ (vi3  v, i32 k) { return { v.x / k, v.y / k, v.z / k          }; }
 internal constexpr vi4    operator/ (vi4  v, i32 k) { return { v.x / k, v.y / k, v.z / k, v.w / k }; }
+internal constexpr vi2    operator* (vi2  u, vi2 v) { return { u.x * v.x, u.y * v.y                       }; }
+internal constexpr vi3    operator* (vi3  u, vi3 v) { return { u.x * v.x, u.y * v.y, u.z * v.z            }; }
+internal constexpr vi4    operator* (vi4  u, vi4 v) { return { u.x * v.x, u.y * v.y, u.z * v.z, u.w * v.w }; }
 internal constexpr vi2    operator* (vi2  v, i32 k) { return { v.x * k, v.y * k                   }; }
 internal constexpr vi3    operator* (vi3  v, i32 k) { return { v.x * k, v.y * k, v.z * k          }; }
 internal constexpr vi4    operator* (vi4  v, i32 k) { return { v.x * k, v.y * k, v.z * k, v.w * k }; }
@@ -387,6 +401,9 @@ internal constexpr vi4&   operator+=(vi4& u, vi4 v) { return u = u + v; }
 internal constexpr vi2&   operator-=(vi2& u, vi2 v) { return u = u - v; }
 internal constexpr vi3&   operator-=(vi3& u, vi3 v) { return u = u - v; }
 internal constexpr vi4&   operator-=(vi4& u, vi4 v) { return u = u - v; }
+internal constexpr vi2&   operator*=(vi2& u, vi2 v) { return u = u * v; }
+internal constexpr vi3&   operator*=(vi3& u, vi3 v) { return u = u * v; }
+internal constexpr vi4&   operator*=(vi4& u, vi4 v) { return u = u * v; }
 internal constexpr vi2&   operator*=(vi2& v, i32 k) { return v = v * k; }
 internal constexpr vi3&   operator*=(vi3& v, i32 k) { return v = v * k; }
 internal constexpr vi4&   operator*=(vi4& v, i32 k) { return v = v * k; }
@@ -406,15 +423,42 @@ internal constexpr vf4    operator- (vf4  u, vi4 v) { return { u.x - static_cast
 internal constexpr vf2    operator- (vi2  u, vf2 v) { return { static_cast<f32>(u.x) - v.x, static_cast<f32>(u.y) - v.y                                                           }; }
 internal constexpr vf3    operator- (vi3  u, vf3 v) { return { static_cast<f32>(u.x) - v.x, static_cast<f32>(u.y) - v.y, static_cast<f32>(u.z) - v.z                              }; }
 internal constexpr vf4    operator- (vi4  u, vf4 v) { return { static_cast<f32>(u.x) - v.x, static_cast<f32>(u.y) - v.y, static_cast<f32>(u.z) - v.z, static_cast<f32>(u.w) - v.w }; }
+internal constexpr vf2    operator/ (vf2  v, i32 k) { return { v.x / k, v.y / k                   }; }
+internal constexpr vf3    operator/ (vf3  v, i32 k) { return { v.x / k, v.y / k, v.z / k          }; }
+internal constexpr vf4    operator/ (vf4  v, i32 k) { return { v.x / k, v.y / k, v.z / k, v.w / k }; }
 internal constexpr vf2    operator/ (vi2  v, f32 k) { return { v.x / k, v.y / k                   }; }
 internal constexpr vf3    operator/ (vi3  v, f32 k) { return { v.x / k, v.y / k, v.z / k          }; }
 internal constexpr vf4    operator/ (vi4  v, f32 k) { return { v.x / k, v.y / k, v.z / k, v.w / k }; }
+internal constexpr vf2    operator* (vf2  u, vi2 v) { return { u.x * v.x, u.y * v.y                       }; }
+internal constexpr vf3    operator* (vf3  u, vi3 v) { return { u.x * v.x, u.y * v.y, u.z * v.z            }; }
+internal constexpr vf4    operator* (vf4  u, vi4 v) { return { u.x * v.x, u.y * v.y, u.z * v.z, u.w * v.w }; }
+internal constexpr vf2    operator* (vi2  u, vf2 v) { return { u.x * v.x, u.y * v.y                       }; }
+internal constexpr vf3    operator* (vi3  u, vf3 v) { return { u.x * v.x, u.y * v.y, u.z * v.z            }; }
+internal constexpr vf4    operator* (vi4  u, vf4 v) { return { u.x * v.x, u.y * v.y, u.z * v.z, u.w * v.w }; }
+internal constexpr vf2    operator* (vf2  v, i32 k) { return { v.x * k, v.y * k                   }; }
+internal constexpr vf3    operator* (vf3  v, i32 k) { return { v.x * k, v.y * k, v.z * k          }; }
+internal constexpr vf4    operator* (vf4  v, i32 k) { return { v.x * k, v.y * k, v.z * k, v.w * k }; }
 internal constexpr vf2    operator* (vi2  v, f32 k) { return { v.x * k, v.y * k                   }; }
 internal constexpr vf3    operator* (vi3  v, f32 k) { return { v.x * k, v.y * k, v.z * k          }; }
 internal constexpr vf4    operator* (vi4  v, f32 k) { return { v.x * k, v.y * k, v.z * k, v.w * k }; }
 internal constexpr vf2    operator* (f32  k, vi2 v) { return v * k; }
 internal constexpr vf3    operator* (f32  k, vi3 v) { return v * k; }
 internal constexpr vf4    operator* (f32  k, vi4 v) { return v * k; }
+internal constexpr vf2&   operator+=(vf2& u, vi2 v) { return u = u + v; }
+internal constexpr vf3&   operator+=(vf3& u, vi3 v) { return u = u + v; }
+internal constexpr vf4&   operator+=(vf4& u, vi4 v) { return u = u + v; }
+internal constexpr vf2&   operator-=(vf2& u, vi2 v) { return u = u - v; }
+internal constexpr vf3&   operator-=(vf3& u, vi3 v) { return u = u - v; }
+internal constexpr vf4&   operator-=(vf4& u, vi4 v) { return u = u - v; }
+internal constexpr vf2&   operator*=(vf2& u, vi2 v) { return u = u * v; }
+internal constexpr vf3&   operator*=(vf3& u, vi3 v) { return u = u * v; }
+internal constexpr vf4&   operator*=(vf4& u, vi4 v) { return u = u * v; }
+internal constexpr vf2&   operator*=(vf2& v, i32 k) { return v = v * k; }
+internal constexpr vf3&   operator*=(vf3& v, i32 k) { return v = v * k; }
+internal constexpr vf4&   operator*=(vf4& v, i32 k) { return v = v * k; }
+internal constexpr vf2&   operator/=(vf2& v, i32 k) { return v = v / k; }
+internal constexpr vf3&   operator/=(vf3& v, i32 k) { return v = v / k; }
+internal constexpr vf4&   operator/=(vf4& v, i32 k) { return v = v / k; }
 
 internal constexpr vf2    vxx(vi2 v              ) { return { static_cast<f32>(v.x), static_cast<f32>(v.y)                                               }; }
 internal constexpr vi2    vxx(vf2 v              ) { return { static_cast<i32>(v.x), static_cast<i32>(v.y)                                               }; }
@@ -432,3 +476,73 @@ internal constexpr vf3    vx3(f32 a) { return {   a,   a,   a      }; }
 internal constexpr vi3    vx3(i32 a) { return {   a,   a,   a      }; }
 internal constexpr vf4    vx4(f32 a) { return {   a,   a,   a,   a }; }
 internal constexpr vi4    vx4(i32 a) { return {   a,   a,   a,   a }; }
+
+template <typename TYPE>
+i32 sign(TYPE x)
+{
+	return (static_cast<TYPE>(0) < x) - (x < static_cast<TYPE>(0));
+}
+
+internal constexpr f32 square(f32 x) { return x * x;     }
+internal constexpr f32 cube  (f32 x) { return x * x * x; }
+
+internal constexpr vf4 lerp(vf4 a, vf4 b, f32 t) { return a * (1.0f - t) + b * t; }
+internal constexpr vf3 lerp(vf3 a, vf3 b, f32 t) { return a * (1.0f - t) + b * t; }
+internal constexpr vf2 lerp(vf2 a, vf2 b, f32 t) { return a * (1.0f - t) + b * t; }
+internal constexpr f32 lerp(f32 a, f32 b, f32 t) { return a * (1.0f - t) + b * t; }
+
+internal constexpr vf2 conjugate(vf2 v) { return {  v.x, -v.y }; }
+internal constexpr vi2 conjugate(vi2 v) { return {  v.x, -v.y }; }
+internal constexpr vf2 rotate90 (vf2 v) { return { -v.y,  v.x }; }
+
+internal vf2 polar(f32 angle) { return { cosf(angle), sinf(angle) }; }
+
+internal vf2 rotate(vf2 v, f32 angle)
+{
+	vf2 p = polar(angle);
+	return { v.x * p.x - v.y * p.y, v.x * p.y + v.y * p.x };
+}
+
+internal constexpr f32 dampen(f32 a, f32 b, f32 k, f32 dt) { return lerp(a, b, 1.0f - expf(-k * dt)); }
+internal constexpr vf2 dampen(vf2 a, vf2 b, f32 k, f32 dt) { return lerp(a, b, 1.0f - expf(-k * dt)); }
+internal constexpr vf3 dampen(vf3 a, vf3 b, f32 k, f32 dt) { return lerp(a, b, 1.0f - expf(-k * dt)); }
+internal constexpr vf4 dampen(vf4 a, vf4 b, f32 k, f32 dt) { return lerp(a, b, 1.0f - expf(-k * dt)); }
+
+internal constexpr f32 dot(vf2 u, vf2 v) { return u.x * v.x + u.y * v.y;                         }
+internal constexpr f32 dot(vf3 u, vf3 v) { return u.x * v.x + u.y * v.y + u.z * v.z;             }
+internal constexpr f32 dot(vf4 u, vf4 v) { return u.x * v.x + u.y * v.y + u.z * v.z + u.w * v.w; }
+
+internal constexpr vf3 cross(vf3 u, vf3 v) { return { u.y * v.z - u.z * v.y, u.z * v.x - u.x * v.z, u.x * v.y - u.y * v.x }; }
+
+internal constexpr f32 norm_sq(vf2 v) { return v.x * v.x + v.y * v.y;                         }
+internal constexpr f32 norm_sq(vf3 v) { return v.x * v.x + v.y * v.y + v.z * v.z;             }
+internal constexpr f32 norm_sq(vf4 v) { return v.x * v.x + v.y * v.y + v.z * v.z + v.w * v.w; }
+
+internal f32 norm(vf2 v) { return sqrtf(norm_sq(v)); }
+internal f32 norm(vf3 v) { return sqrtf(norm_sq(v)); }
+internal f32 norm(vf4 v) { return sqrtf(norm_sq(v)); }
+
+internal vf2 normalize(vf2 v) { return v / norm(v); }
+internal vf3 normalize(vf3 v) { return v / norm(v); }
+internal vf4 normalize(vf4 v) { return v / norm(v); }
+
+internal constexpr i32 mod(i32 x, i32 m) { return (x % m + m) % m; }
+internal           f32 mod(f32 x, f32 m) { f32 y = fmodf(x, m); return y < 0.0f ? y + m : y; }
+
+internal f32 atan2(vf2 v) { return atan2f(v.y, v.x); }
+
+#include <xmmintrin.h>
+
+global const __m128 m_0   = _mm_set_ps1(0.0f);
+global const __m128 m_1   = _mm_set_ps1(1.0f);
+global const __m128 m_2   = _mm_set_ps1(2.0f);
+global const __m128 m_3   = _mm_set_ps1(3.0f);
+global const __m128 m_4   = _mm_set_ps1(4.0f);
+global const __m128 m_8   = _mm_set_ps1(8.0f);
+global const __m128 m_inf = _mm_set_ps1(INFINITY);
+global const __m128 m_255 = _mm_set_ps1(255.0f);
+
+internal __m128 square(__m128 x                    ) { return _mm_mul_ps(x, x); }
+internal __m128 cube  (__m128 x                    ) { return _mm_mul_ps(_mm_mul_ps(x, x), x); }
+internal __m128 lerp  (__m128 a, __m128 b, __m128 t) { return _mm_add_ps(_mm_mul_ps(a, _mm_sub_ps(m_1, t)), _mm_mul_ps(b, t)); }
+internal __m128 clamp (__m128 x, __m128 a, __m128 b) { return _mm_min_ps(_mm_max_ps(x, a), b); }

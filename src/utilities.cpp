@@ -2,20 +2,6 @@
 #define HOLDING(INPUT)  (!!platform->inputs[+(INPUT)].curr)
 #define RELEASED(INPUT) (!platform->inputs[+(INPUT)].curr && !!platform->inputs[+(INPUT)].prev)
 
-global constexpr f32 TAU           = 6.28318530717f;
-global constexpr f32 SQRT2         = 1.41421356237f;
-global constexpr f32 INVSQRT2      = 0.70710678118f;
-
-global const __m128  m_zero       = _mm_set_ps1(0.0f);
-global const __m128  m_one        = _mm_set_ps1(1.0f);
-global const __m128  m_three      = _mm_set_ps1(3.0f);
-global const __m128  m_four       = _mm_set_ps1(4.0f);
-global const __m128  m_eight      = _mm_set_ps1(8.0f);
-global const __m128  m_inf        = _mm_set_ps1(INFINITY);
-global const __m128  m_max_rgb    = _mm_set_ps1(255.0f);
-global const __m128i mi_byte_mask = _mm_set_epi32(0xFF, 0xFF, 0xFF, 0xFF);
-
-
 struct RGBA
 {
 	union
@@ -60,66 +46,6 @@ struct Mipmap
 	vi2   base_dim;
 	RGBA* data;
 };
-
-template <typename TYPE>
-i32 sign(TYPE x)
-{
-	return (static_cast<TYPE>(0) < x) - (x < static_cast<TYPE>(0));
-}
-
-internal constexpr vf2 conjugate(vf2 v) { return {  v.x, -v.y }; }
-internal constexpr vi2 conjugate(vi2 v) { return {  v.x, -v.y }; }
-internal constexpr vf2 rotate90(vf2 v)  { return { -v.y,  v.x }; }
-internal vf2 rotate(vf2 v, f32 angle)  { return { v.x * cosf(angle) - v.y * sinf(angle), v.x * sinf(angle) + v.y * cosf(angle) }; }
-
-internal constexpr f32 square(f32 x) { return x * x; }
-internal constexpr f32 cube(f32 x) { return x * x * x; }
-
-internal constexpr vf4 lerp(vf4 a, vf4 b, f32 t) { return a * (1.0f - t) + b * t; }
-internal constexpr vf3 lerp(vf3 a, vf3 b, f32 t) { return a * (1.0f - t) + b * t; }
-internal constexpr vf2 lerp(vf2 a, vf2 b, f32 t) { return a * (1.0f - t) + b * t; }
-internal constexpr f32 lerp(f32 a, f32 b, f32 t) { return a * (1.0f - t) + b * t; }
-
-internal __m128 lerp(__m128 a, __m128 b, __m128 t) { return _mm_add_ps(_mm_mul_ps(a, _mm_sub_ps(m_one, t)), _mm_mul_ps(b, t)); }
-internal __m128 clamp(__m128 x, __m128 a, __m128 b) { return _mm_min_ps(_mm_max_ps(x, a), b); }
-internal __m128 square(__m128 x) { return _mm_mul_ps(x, x); }
-
-internal constexpr f32 dampen(f32 a, f32 b, f32 k, f32 dt) { return lerp(a, b, 1.0f - expf(-k * dt)); }
-internal constexpr vf2 dampen(vf2 a, vf2 b, f32 k, f32 dt) { return lerp(a, b, 1.0f - expf(-k * dt)); }
-internal constexpr vf3 dampen(vf3 a, vf3 b, f32 k, f32 dt) { return lerp(a, b, 1.0f - expf(-k * dt)); }
-internal constexpr vf4 dampen(vf4 a, vf4 b, f32 k, f32 dt) { return lerp(a, b, 1.0f - expf(-k * dt)); }
-
-internal constexpr f32 dot(vf3 u, vf3 v) { return u.x * v.x + u.y * v.y + u.z * v.z; }
-internal constexpr f32 dot(vf2 u, vf2 v) { return u.x * v.x + u.y * v.y;             }
-
-internal constexpr vf3 cross(vf3 u, vf3 v) { return { u.y * v.z - u.z * v.y, u.z * v.x - u.x * v.z, u.x * v.y - u.y * v.x }; }
-
-internal constexpr vf2 hadamard_multiply(vf2 u, vf2 v) { return { u.x * v.x, u.y * v.y                       }; }
-internal constexpr vf3 hadamard_multiply(vf3 u, vf3 v) { return { u.x * v.x, u.y * v.y, u.z * v.z            }; }
-internal constexpr vf4 hadamard_multiply(vf4 u, vf4 v) { return { u.x * v.x, u.y * v.y, u.z * v.z, u.w * v.w }; }
-
-internal constexpr vf2 hadamard_divide(vf2 u, vf2 v) { return { u.x / v.x, u.y / v.y }; }
-
-internal constexpr vf3 monochrome(f32 x) { return { x, x, x }; }
-
-internal f32 norm_sq(vf3 v) { return v.x * v.x + v.y * v.y + v.z * v.z; }
-internal f32 norm_sq(vf2 v) { return v.x * v.x + v.y * v.y            ; }
-
-internal f32 norm(vf3 v) { return sqrtf(v.x * v.x + v.y * v.y + v.z * v.z); }
-internal f32 norm(vf2 v) { return sqrtf(v.x * v.x + v.y * v.y            ); }
-
-internal vf3 normalize(vf3 v) { return v / norm(v); }
-internal vf2 normalize(vf2 v) { return v / norm(v); }
-
-internal f32 distance(vf3 u, vf3 v) { return norm(u - v); }
-internal f32 distance(vf2 u, vf2 v) { return norm(u - v); }
-
-internal i32 mod(i32 x, i32 m) { return (x % m + m) % m; }
-internal f32 mod(f32 x, f32 m) { f32 y = fmodf(x, m); return y < 0.0f ? y + m : y; }
-
-internal vf2 polar(f32 angle) { return { cosf(angle), sinf(angle) }; }
-internal f32 argument(vf2 v) { f32 a = atanf(v.y / v.x); return v.x < 0.0f ? a + TAU / 2.0f : v.y < 0.0f ? a + TAU : a; }
-internal f32 sign_angle(f32 a) { return a > TAU / 2.0f ? a - TAU : a; }
 
 internal bool32 in_rect(vf2 position, vf2 bottom_left, vf2 dimensions)
 {
@@ -603,40 +529,6 @@ internal void set_color(SDL_Renderer* renderer, vf4 color)
 		static_cast<u8>(color.z * 255.0f),
 		static_cast<u8>(color.w * 255.0f)
 	);
-}
-
-internal i32 iterate_repeated_movement(Platform* platform, Input negative_input, Input positive_input, f32* current_repeat_countdown, f32 repeat_threshold = 0.3f, f32 repeat_frequency = 0.1f)
-{
-	i32 delta = 0;
-
-	if (HOLDING(negative_input) != HOLDING(positive_input))
-	{
-		if (*current_repeat_countdown <= 0.0f)
-		{
-			if (HOLDING(negative_input))
-			{
-				delta                     = -1;
-				*current_repeat_countdown =
-					PRESSED(negative_input)
-						? repeat_threshold
-						: repeat_frequency;
-			}
-			else
-			{
-				delta                     = 1;
-				*current_repeat_countdown =
-					PRESSED(positive_input)
-						? repeat_threshold
-						: repeat_frequency;
-			}
-		}
-	}
-	else
-	{
-		*current_repeat_countdown = 0.0f;
-	}
-
-	return delta;
 }
 
 internal void render_circle(SDL_Renderer* renderer, vf2 center, f32 radius)
